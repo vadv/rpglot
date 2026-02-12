@@ -68,9 +68,18 @@ pub fn render_pg_detail(
     ])
     .split(popup_area);
 
-    // Clamp scroll offset
+    // Estimate visual lines after wrapping (inner width = popup width - 2 for borders)
+    let inner_width = chunks[0].width.saturating_sub(2) as usize;
+    let visual_lines: usize = if inner_width > 0 {
+        content.iter().map(|line| {
+            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            if line_width == 0 { 1 } else { line_width.div_ceil(inner_width) }
+        }).sum()
+    } else {
+        content.len()
+    };
     let visible_lines = chunks[0].height.saturating_sub(2) as usize; // -2 for borders
-    let max_scroll = content.len().saturating_sub(visible_lines);
+    let max_scroll = visual_lines.saturating_sub(visible_lines);
     state.pg_detail_scroll = state.pg_detail_scroll.min(max_scroll);
 
     // Render content with scroll

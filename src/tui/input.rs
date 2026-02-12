@@ -59,24 +59,24 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyAction::Quit,
 
-        // Tab navigation
-        KeyCode::Tab => {
+        // Tab navigation (blocked when a detail popup is open)
+        KeyCode::Tab if !state.any_popup_open() => {
             state.switch_tab(state.current_tab.next());
             KeyAction::None
         }
-        KeyCode::BackTab => {
+        KeyCode::BackTab if !state.any_popup_open() => {
             state.switch_tab(state.current_tab.prev());
             KeyAction::None
         }
-        KeyCode::Char('1') => {
+        KeyCode::Char('1') if !state.any_popup_open() => {
             state.switch_tab(Tab::Processes);
             KeyAction::None
         }
-        KeyCode::Char('2') => {
+        KeyCode::Char('2') if !state.any_popup_open() => {
             state.switch_tab(Tab::PostgresActive);
             KeyAction::None
         }
-        KeyCode::Char('3') => {
+        KeyCode::Char('3') if !state.any_popup_open() => {
             state.switch_tab(Tab::PgStatements);
             KeyAction::None
         }

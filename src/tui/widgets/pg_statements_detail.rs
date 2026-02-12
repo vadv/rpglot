@@ -2,7 +2,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::Modifier;
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -32,7 +32,7 @@ pub fn render_pgs_detail(
         let block = Block::default()
             .title(" pg_stat_statements detail ")
             .borders(Borders::ALL)
-            .style(Styles::default());
+            .style(Style::default().fg(Color::White).bg(Color::Black));
         frame.render_widget(
             Paragraph::new("Statement not found in current snapshot").block(block),
             popup_area,
@@ -52,13 +52,20 @@ pub fn render_pgs_detail(
     let block = Block::default()
         .title(" pg_stat_statements detail ")
         .borders(Borders::ALL)
-        .style(Styles::default());
+        .style(Style::default().fg(Color::White).bg(Color::Black));
 
-    // Clamp scroll
-    let max_scroll = content
-        .len()
-        .saturating_sub(chunks[0].height as usize)
-        .saturating_add(1);
+    // Estimate visual lines after wrapping (inner width = popup width - 2 for borders)
+    let inner_width = chunks[0].width.saturating_sub(2) as usize;
+    let visual_lines: usize = if inner_width > 0 {
+        content.iter().map(|line| {
+            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            if line_width == 0 { 1 } else { line_width.div_ceil(inner_width) }
+        }).sum()
+    } else {
+        content.len()
+    };
+    let visible_height = chunks[0].height.saturating_sub(2) as usize; // -2 for borders
+    let max_scroll = visual_lines.saturating_sub(visible_height);
     if state.pgs_detail_scroll > max_scroll {
         state.pgs_detail_scroll = max_scroll;
     }

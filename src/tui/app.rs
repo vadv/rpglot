@@ -331,9 +331,9 @@ impl App {
                 // If not a PostgreSQL backend, do nothing (could show message in future)
             }
             Tab::PostgresActive => {
-                // PGA -> PGS: Get query_id from selected session using pg_detail_pid
+                // PGA -> PGS: Get query_id from selected session using pg_tracked_pid
                 // (which is set by render based on pg_selected)
-                let query_id = self.state.pg_detail_pid.and_then(|pid| {
+                let query_id = self.state.pg_tracked_pid.and_then(|pid| {
                     snapshot
                         .blocks
                         .iter()

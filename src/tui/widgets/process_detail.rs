@@ -62,7 +62,8 @@ pub fn render_process_detail(frame: &mut Frame, area: Rect, state: &mut AppState
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Cyan));
+        .border_style(Style::default().fg(Color::Cyan))
+        .style(Style::default().bg(Color::Black));
 
     let inner = block.inner(popup_area);
     frame.render_widget(block, popup_area);
@@ -78,8 +79,17 @@ pub fn render_process_detail(frame: &mut Frame, area: Rect, state: &mut AppState
     let content = build_content(selected_row, process_info, prev_process_info, interval_secs);
     let total_lines = content.len();
 
-    // Apply scroll offset (clamp to valid range and update state)
-    let max_scroll = total_lines.saturating_sub(chunks[0].height as usize);
+    // Estimate visual lines after wrapping (account for long lines)
+    let inner_width = chunks[0].width as usize;
+    let visual_lines: usize = if inner_width > 0 {
+        content.iter().map(|line| {
+            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+            if line_width == 0 { 1 } else { line_width.div_ceil(inner_width) }
+        }).sum()
+    } else {
+        total_lines
+    };
+    let max_scroll = visual_lines.saturating_sub(chunks[0].height as usize);
     if state.process_detail_scroll > max_scroll {
         state.process_detail_scroll = max_scroll;
     }

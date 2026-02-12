@@ -650,6 +650,11 @@ impl AppState {
         }
     }
 
+    /// Returns true if any detail popup is currently open.
+    pub fn any_popup_open(&self) -> bool {
+        self.show_process_detail || self.show_pg_detail || self.show_pgs_detail
+    }
+
     /// Switches to a new tab, saving current and restoring target state.
     pub fn switch_tab(&mut self, new_tab: Tab) {
         if self.current_tab != new_tab {
@@ -1216,7 +1221,7 @@ impl ProcessRow {
     /// Returns minimum column widths for Generic view mode.
     pub fn min_widths_generic() -> Vec<u16> {
         // PID SYSCPU USRCPU RDELAY VGROW RGROW RUID EUID ST EXC THR S CPUNR CPU CMD
-        vec![5, 5, 5, 5, 5, 5, 4, 4, 2, 3, 3, 1, 3, 4, 8]
+        vec![5, 7, 7, 7, 7, 7, 4, 4, 2, 3, 3, 1, 3, 6, 8]
     }
 
     /// Returns minimum column widths for Command view mode.
