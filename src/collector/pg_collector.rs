@@ -10,6 +10,8 @@ use crate::storage::model::{PgStatActivityInfo, PgStatStatementsInfo};
 
 const STATEMENTS_EXT_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const STATEMENTS_COLLECT_INTERVAL: Duration = Duration::from_secs(30);
+/// Maximum number of statements to cache. Limits memory usage when there are many unique queries.
+const MAX_CACHED_STATEMENTS: usize = 1000;
 
 fn statements_collect_due(last_collect: Option<Instant>, now: Instant, interval: Duration) -> bool {
     if interval.is_zero() {
@@ -405,6 +407,12 @@ impl PostgresCollector {
                         usename,
                     });
                     out.push(info);
+                }
+
+                // Limit cache size to prevent unbounded memory growth
+                if entries.len() > MAX_CACHED_STATEMENTS {
+                    entries.truncate(MAX_CACHED_STATEMENTS);
+                    out.truncate(MAX_CACHED_STATEMENTS);
                 }
 
                 self.statements_cache = entries;

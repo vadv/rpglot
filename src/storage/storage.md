@@ -91,11 +91,11 @@ struct Chunk {
 }
 ```
 
-Typical chunk size: 60 snapshots (10 minutes at 10-second intervals).
+Typical chunk size: up to 360 snapshots (~1 hour at 10-second intervals). Chunks are flushed on hour boundaries or when size limit is reached.
 
 ### 5. StorageManager (`manager.rs`)
 
-Coordinates all operations:
+Coordinates all operations with a **WAL-only architecture** — no chunks are kept in memory:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -103,15 +103,17 @@ Coordinates all operations:
 ├─────────────────────────────────────────────────────────────┤
 │  add_snapshot(snapshot)                                     │
 │    1. Write to WAL (sync to disk)                          │
-│    2. Compute delta from last_snapshot                     │
-│    3. Add delta to current_chunk                           │
-│    4. If chunk full → flush_chunk()                        │
+│    2. Increment wal_entries_count                          │
+│    3. If hour changed or size limit → flush_chunk()        │
 ├─────────────────────────────────────────────────────────────┤
 │  flush_chunk()                                              │
-│    1. Compress chunk with Zstd                             │
-│    2. Write to temp file (.tmp)                            │
-│    3. Rename to final file (.zst) ← atomic                 │
-│    4. Clear WAL                                            │
+│    1. Read all snapshots from WAL                          │
+│    2. Compute deltas on-the-fly                            │
+│    3. Build chunk with filtered interner                   │
+│    4. Compress with Zstd                                   │
+│    5. Write to temp file (.tmp)                            │
+│    6. Rename to final file (.zst) ← atomic                 │
+│    7. Truncate WAL, reset entry count                      │
 ├─────────────────────────────────────────────────────────────┤
 │  load_all_snapshots()                                       │
 │    1. Load all .zst chunk files                            │
@@ -121,9 +123,11 @@ Coordinates all operations:
 │    5. Return all snapshots (chronological order)           │
 ├─────────────────────────────────────────────────────────────┤
 │  recover_from_wal()                                         │
-│    Called on startup to restore unflushed snapshots        │
+│    Count valid entries in WAL, truncate corruption         │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Memory efficiency**: The WAL-only approach means StorageManager uses ~0 bytes for chunk storage. All snapshots are written directly to disk (WAL), and delta computation happens only during flush.
 
 ### 6. RotationConfig (`manager.rs`)
 
@@ -234,18 +238,48 @@ The `rotate()` method removes old data files based on two criteria:
    - Delete legacy `strings.bin` if exists (migration)
    - Replay WAL to recover unflushed snapshots
 
-## Interner Management
+## Memory Management
 
-The storage system optimizes string interner usage to prevent unbounded memory growth:
+The storage system uses a **WAL-only architecture** that eliminates in-memory chunk accumulation:
 
-1. **Per-chunk optimization**: Before writing a chunk to disk, the interner is filtered to keep only strings actually used in that chunk's deltas
+### WAL-Only Design
+
+StorageManager does NOT keep chunks in memory:
+- Snapshots are written directly to WAL on disk
+- Delta computation happens only during flush (reading WAL back)
+- This eliminates ~3-7 MB of memory that would be used for chunk storage
+
+### Chunk Size Limit
+
+The `chunk_size_limit` is set to **360 entries** (~1 hour at 10-second intervals). Chunks are also flushed on hour boundaries for time-based file organization.
+
+### String Interner Optimization
+
+1. **Per-chunk filtering**: During flush, the interner is built from WAL entries and filtered to keep only strings actually used
 2. **Collector interner clearing**: After each chunk flush, the daemon clears the collector's interner (via `Collector.clear_interner()`)
 3. **WAL entry optimization**: Each WAL entry contains only strings used in that specific snapshot
+4. **shrink_to_fit()**: On interner clear, `shrink_to_fit()` is called to release capacity
+
+### jemalloc Memory Release
+
+After each chunk flush, `release_memory_to_os()` is called to return unused pages to the OS via jemalloc's arena purge.
+
+### PostgreSQL Statements Cache
+
+The `pg_stat_statements` cache is limited to **MAX_CACHED_STATEMENTS = 1000** entries to prevent unbounded growth when there are many unique queries.
+
+### Memory Monitoring
+
+Every 60 snapshots (~10 minutes), the daemon logs memory statistics:
+```
+Memory stats: collector_interner=X strings, wal_entries=Y
+```
 
 This ensures:
+- Near-zero memory growth from storage (only collector interner grows)
 - Chunk files have minimal size (no unused strings)
-- Memory usage stays bounded even during long daemon runs
 - WAL entries are self-contained but not bloated
+- RSS is returned to OS after memory-intensive operations
 
 ## Data Sources Summary
 

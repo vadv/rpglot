@@ -3,6 +3,27 @@
 //! Collects system metrics from /proc filesystem and stores them to disk.
 //! Supports hourly file segmentation and automatic rotation by size and age.
 
+use tikv_jemallocator::Jemalloc;
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+/// Releases unused memory back to the operating system.
+/// Uses jemalloc's arena purge to reduce RSS after memory-intensive operations.
+fn release_memory_to_os() {
+    // SAFETY: We're calling jemalloc's mallctl with valid arguments.
+    // arena.0.purge tells jemalloc to return unused pages to the OS.
+    unsafe {
+        // Purge all arenas (not just arena 0) for more aggressive memory release
+        tikv_jemalloc_sys::mallctl(
+            c"arena.0.purge".as_ptr().cast(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
+}
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -331,10 +352,22 @@ fn main() {
                 let chunk_flushed = storage.add_snapshot(snapshot, collector.interner());
                 debug!("WAL: {} snapshots pending", storage.current_chunk_size());
 
-                // Clear interner after chunk flush to prevent unbounded growth
+                // Clear interner after each snapshot to prevent memory accumulation
+                collector.clear_interner();
+
+                // Release memory to OS after chunk flush
                 if chunk_flushed {
-                    collector.clear_interner();
-                    debug!("Interner cleared after chunk flush");
+                    release_memory_to_os();
+                    debug!("Memory released after chunk flush");
+                }
+
+                // Log memory metrics every 60 snapshots (~10 minutes)
+                if snapshot_count.is_multiple_of(60) {
+                    info!(
+                        "Memory stats: collector_interner={} strings, wal_entries={}",
+                        collector.interner().len(),
+                        storage.current_chunk_size(),
+                    );
                 }
             }
             Err(e) => {

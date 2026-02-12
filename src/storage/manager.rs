@@ -52,10 +52,10 @@ struct WalEntry {
 
 pub struct StorageManager {
     base_path: PathBuf,
-    current_chunk: Chunk,
-    last_snapshot: Option<Snapshot>,
     chunk_size_limit: usize,
     wal_file: File,
+    /// Number of entries currently in WAL (for size limit checking)
+    wal_entries_count: usize,
     /// Current hour (0-23) for hourly file segmentation
     current_hour: Option<u32>,
     /// Current date for hourly file segmentation
@@ -86,10 +86,9 @@ impl StorageManager {
 
         let mut manager = Self {
             base_path,
-            current_chunk: Chunk::new(),
-            last_snapshot: None,
-            chunk_size_limit: 400, // ~1 hour at 10-second intervals (360 snapshots + buffer)
+            chunk_size_limit: 360, // ~1 hour at 10-second intervals
             wal_file,
+            wal_entries_count: 0,
             current_hour: None,
             current_date: None,
         };
@@ -98,6 +97,8 @@ impl StorageManager {
         manager
     }
 
+    /// Recovers WAL state on startup.
+    /// Counts valid entries and truncates any corrupted data at the end.
     fn recover_from_wal(&mut self) {
         let wal_path = self.base_path.join("wal.log");
 
@@ -116,14 +117,13 @@ impl StorageManager {
         let mut valid_end_position = 0u64;
         let mut recovered_count = 0usize;
 
-        // Read WAL entries until we hit an error or EOF
-        while let Ok(entry) = bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
+        // Count valid WAL entries and find valid end position
+        while let Ok(_entry) = bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
             valid_end_position = cursor.position();
-            // Merge interner from WAL entry into current chunk
-            self.current_chunk.interner.merge(&entry.interner);
-            self.add_snapshot_internal(entry.snapshot, false);
             recovered_count += 1;
         }
+
+        self.wal_entries_count = recovered_count;
 
         // Check if there's garbage after valid records (corruption detected)
         let file_size = data.len() as u64;
@@ -201,7 +201,7 @@ impl StorageManager {
     }
 
     /// Adds a snapshot to storage with hourly segmentation.
-    /// Returns true if a chunk was flushed (hour boundary crossed).
+    /// Returns true if a chunk was flushed (hour boundary crossed or size limit reached).
     pub fn add_snapshot(&mut self, snapshot: Snapshot, interner: &StringInterner) -> bool {
         // Check if hour changed and flush if needed
         let now = Utc::now();
@@ -211,7 +211,7 @@ impl StorageManager {
 
         if let (Some(prev_hour), Some(prev_date)) = (self.current_hour, self.current_date)
             && (prev_hour != current_hour || prev_date != current_date)
-            && !self.current_chunk.deltas.is_empty()
+            && self.wal_entries_count > 0
         {
             // Hour changed, flush the current chunk
             let _ = self.flush_chunk_with_time(prev_date, prev_hour);
@@ -222,24 +222,23 @@ impl StorageManager {
         self.current_hour = Some(current_hour);
         self.current_date = Some(current_date);
 
-        // Merge interner into current chunk's interner
-        self.current_chunk.interner.merge(interner);
-
         // Create minimal interner for this WAL entry (only hashes used in this snapshot)
         let used_hashes = Self::collect_snapshot_hashes(&snapshot);
         let wal_interner = interner.filter(&used_hashes);
 
-        // 1. Write to WAL first for SIGKILL resilience
+        // Write to WAL for SIGKILL resilience
         let wal_entry = WalEntry {
-            snapshot: snapshot.clone(),
+            snapshot,
             interner: wal_interner,
         };
         let encoded = bincode::serialize(&wal_entry).unwrap();
         self.wal_file.write_all(&encoded).unwrap();
         self.wal_file.sync_all().unwrap();
+        self.wal_entries_count += 1;
 
-        // 2. Add to current chunk
-        if self.add_snapshot_internal(snapshot, true) {
+        // Check if size limit reached
+        if self.wal_entries_count >= self.chunk_size_limit {
+            let _ = self.flush_chunk();
             flushed = true;
         }
 
@@ -260,7 +259,7 @@ impl StorageManager {
 
         if let (Some(prev_hour), Some(prev_date)) = (self.current_hour, self.current_date)
             && (prev_hour != hour || prev_date != date)
-            && !self.current_chunk.deltas.is_empty()
+            && self.wal_entries_count > 0
         {
             let _ = self.flush_chunk_with_time(prev_date, prev_hour);
             flushed = true;
@@ -269,45 +268,27 @@ impl StorageManager {
         self.current_hour = Some(hour);
         self.current_date = Some(date);
 
-        // Merge interner into current chunk's interner
-        self.current_chunk.interner.merge(interner);
-
         // Create minimal interner for this WAL entry
         let used_hashes = Self::collect_snapshot_hashes(&snapshot);
         let wal_interner = interner.filter(&used_hashes);
 
         // Write to WAL
         let wal_entry = WalEntry {
-            snapshot: snapshot.clone(),
+            snapshot,
             interner: wal_interner,
         };
         let encoded = bincode::serialize(&wal_entry).unwrap();
         self.wal_file.write_all(&encoded).unwrap();
         self.wal_file.sync_all().unwrap();
+        self.wal_entries_count += 1;
 
-        if self.add_snapshot_internal(snapshot, true) {
+        // Check if size limit reached
+        if self.wal_entries_count >= self.chunk_size_limit {
+            let _ = self.flush_chunk_with_time(date, hour);
             flushed = true;
         }
 
         flushed
-    }
-
-    /// Returns true if chunk was flushed due to size limit.
-    fn add_snapshot_internal(&mut self, snapshot: Snapshot, auto_flush: bool) -> bool {
-        let delta = if let Some(last) = &self.last_snapshot {
-            self.compute_delta(last, &snapshot)
-        } else {
-            Delta::Full(snapshot.clone())
-        };
-
-        self.current_chunk.deltas.push(delta);
-        self.last_snapshot = Some(snapshot);
-
-        if auto_flush && self.current_chunk.deltas.len() >= self.chunk_size_limit {
-            self.flush_chunk().unwrap();
-            return true;
-        }
-        false
     }
 
     fn compute_delta(&self, last: &Snapshot, current: &Snapshot) -> Delta {
@@ -754,18 +735,39 @@ impl StorageManager {
         self.flush_chunk_with_time(date, hour)
     }
 
-    /// Flushes the current chunk with a specific date/hour for the filename.
+    /// Flushes WAL to a compressed chunk file.
+    /// Reads all snapshots from WAL, computes deltas on-the-fly, and writes compressed chunk.
     /// File naming format: rpglot_YYYY-MM-DD_HH.zst
     fn flush_chunk_with_time(&mut self, date: NaiveDate, hour: u32) -> std::io::Result<()> {
-        if self.current_chunk.deltas.is_empty() {
-            return Err(std::io::Error::other("Empty chunk"));
+        if self.wal_entries_count == 0 {
+            return Err(std::io::Error::other("Empty WAL"));
         }
 
-        // Optimize interner: keep only strings that are actually used in this chunk
-        let used_hashes = self.current_chunk.collect_used_hashes();
-        self.current_chunk.interner = self.current_chunk.interner.filter(&used_hashes);
+        // Read all snapshots from WAL and build chunk
+        let (snapshots, interner) = self.load_wal_snapshots_with_interner()?;
+        if snapshots.is_empty() {
+            return Err(std::io::Error::other("No snapshots in WAL"));
+        }
 
-        let compressed = self.current_chunk.compress()?;
+        // Build chunk with deltas computed on-the-fly
+        let mut chunk = Chunk::new();
+        let mut last_snapshot: Option<&Snapshot> = None;
+
+        for snapshot in &snapshots {
+            let delta = if let Some(last) = last_snapshot {
+                self.compute_delta(last, snapshot)
+            } else {
+                Delta::Full(snapshot.clone())
+            };
+            chunk.deltas.push(delta);
+            last_snapshot = Some(snapshot);
+        }
+
+        // Build optimized interner with only used hashes
+        let used_hashes = chunk.collect_used_hashes();
+        chunk.interner = interner.filter(&used_hashes);
+
+        let compressed = chunk.compress()?;
         let filename = format!("rpglot_{}_{:02}.zst", date.format("%Y-%m-%d"), hour);
         let final_path = self.base_path.join(&filename);
 
@@ -796,10 +798,8 @@ impl StorageManager {
         self.wal_file.set_len(0)?;
         self.wal_file.sync_all()?;
 
-        // Clear current chunk and prepare for next
-        self.current_chunk = Chunk::new();
-        // Force Full snapshot for the first entry of the new chunk to make chunks independent
-        self.last_snapshot = None;
+        // Reset WAL entry count
+        self.wal_entries_count = 0;
 
         Ok(())
     }
@@ -1155,10 +1155,10 @@ impl StorageManager {
         }
     }
 
-    /// Returns the number of snapshots in the current (unflushed) chunk.
+    /// Returns the number of snapshots in the WAL (unflushed).
     #[allow(dead_code)]
     pub fn current_chunk_size(&self) -> usize {
-        self.current_chunk.deltas.len()
+        self.wal_entries_count
     }
 
     /// Rotates data files according to the given configuration.
@@ -1352,14 +1352,14 @@ mod tests {
             // Drop manager without flushing chunk to disk (simulated crash)
         }
 
-        // New manager should recover from WAL
+        // New manager should recover WAL entry count
         let manager = StorageManager::new(dir.path());
-        assert_eq!(manager.current_chunk.deltas.len(), 1);
-        if let Delta::Full(s) = &manager.current_chunk.deltas[0] {
-            assert_eq!(s.timestamp, 100);
-        } else {
-            panic!("Expected Delta::Full");
-        }
+        assert_eq!(manager.current_chunk_size(), 1);
+
+        // Verify snapshot can be loaded from WAL
+        let snapshots = manager.load_all_snapshots().unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].timestamp, 100);
     }
 
     #[test]

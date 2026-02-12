@@ -29,6 +29,7 @@ impl StringInterner {
     #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.strings.clear();
+        self.strings.shrink_to_fit();
     }
 
     /// Merges another interner into this one.
