@@ -154,10 +154,24 @@ fn get_pgs_help(mode: PgStatementsViewMode) -> (&'static str, Vec<Line<'static>>
             lines.extend([
                 Line::from("CALLS/s - executions per second"),
                 Line::from("TIME/s  - execution time per second (ms/s)"),
+                Line::from("          divide by 1000 to get CPU count used by this query type"),
+                Line::from("          e.g. TIME/s=2500 means ~2.5 CPUs for CPU-bound queries"),
                 Line::from("MEAN    - mean execution time per call (ms)"),
                 Line::from("ROWS/s  - rows per second"),
                 Line::from("DB/USER - database and role name"),
                 Line::from("QUERY   - normalized query text"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Sort by TIME/s to find queries consuming most CPU time"),
+                Line::from("High MEAN + low CALLS/s = single slow query (optimize it)"),
+                Line::from("Low MEAN + high CALLS/s = hot path (caching/batching helps)"),
+                Line::from("MEAN suddenly increased = plan regression, check EXPLAIN"),
+                Line::from("SUM of all TIME/s / 1000 ~= total CPU used by PostgreSQL"),
             ]);
             ("PostgreSQL Statements Help (PGS) - Time (t)", lines)
         }
@@ -173,6 +187,16 @@ fn get_pgs_help(mode: PgStatementsViewMode) -> (&'static str, Vec<Line<'static>>
                 Line::from("MEAN    - mean execution time per call (ms)"),
                 Line::from("DB/USER - database and role name"),
                 Line::from("QUERY   - normalized query text"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("High CALLS/s = hot path, consider caching or batching"),
+                Line::from("R/CALL >> expected = missing WHERE clause or bad join"),
+                Line::from("R/CALL = 0 with high CALLS/s = possible UPDATE/DELETE overhead"),
             ]);
             ("PostgreSQL Statements Help (PGS) - Calls (c)", lines)
         }
@@ -190,6 +214,18 @@ fn get_pgs_help(mode: PgStatementsViewMode) -> (&'static str, Vec<Line<'static>>
                 Line::from("DB      - database name"),
                 Line::from("QUERY   - normalized query text"),
             ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("HIT% < 99% for OLTP = consider increasing shared_buffers"),
+                Line::from("HIT% < 90% = query reads much data from disk, check indexes"),
+                Line::from("High BLK_RD/s = missing index or seq scan on large table"),
+                Line::from("High BLK_DIRT/s = heavy writes, check checkpoint frequency"),
+                Line::from("1 block = 8 KiB, so BLK_RD/s * 8 / 1024 = read MB/s"),
+            ]);
             ("PostgreSQL Statements Help (PGS) - I/O (i)", lines)
         }
         PgStatementsViewMode::Temp => {
@@ -205,6 +241,19 @@ fn get_pgs_help(mode: PgStatementsViewMode) -> (&'static str, Vec<Line<'static>>
                 Line::from("LOC_RD/s, LOC_WR/s - local blocks read/written per second"),
                 Line::from("DB           - database name"),
                 Line::from("QUERY        - normalized query text"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("TMP_WR/s > 0 = query spills to disk, increase work_mem"),
+                Line::from("  caused by: sorts, hash joins, hash aggregations"),
+                Line::from("  try: SET work_mem = '256MB' for specific queries"),
+                Line::from("High LOC blocks = temp tables, consider optimizing queries"),
+                Line::from("Persistent temp usage = set work_mem in postgresql.conf"),
+                Line::from("  but beware: work_mem is per-operation, not per-query"),
             ]);
             ("PostgreSQL Statements Help (PGS) - Temp (e)", lines)
         }
@@ -246,6 +295,19 @@ fn get_process_help(mode: ProcessViewMode) -> (&'static str, Vec<Line<'static>>)
                 Line::from("CMD     - Process name (executable name)"),
                 Line::from(""),
                 Line::from(Span::styled(
+                    "Troubleshooting Tips:",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(""),
+                Line::from("High RDELAY - CPU saturation, processes wait in run queue"),
+                Line::from("  check CPL avg1 vs num_cpus in summary panel"),
+                Line::from("State D     - process blocked on disk I/O (uninterruptible)"),
+                Line::from("  many D-state processes indicate I/O bottleneck"),
+                Line::from("VGROW rising - possible memory leak if grows without bound"),
+                Line::from("  compare VGROW and RGROW over time for suspect processes"),
+                Line::from("THR growing - thread leak if count increases without bound"),
+                Line::from(""),
+                Line::from(Span::styled(
                     "PostgreSQL Integration:",
                     Style::default().fg(Color::Yellow),
                 )),
@@ -253,6 +315,7 @@ fn get_process_help(mode: ProcessViewMode) -> (&'static str, Vec<Line<'static>>)
                 Line::from("When process PID matches pg_stat_activity:"),
                 Line::from("  CMD shows: name [query] or name [backend_type]"),
                 Line::from("  (highlighted in cyan, backend_type if query is empty)"),
+                Line::from("Use > or J to drill-down from PRC to PGA for PG processes"),
             ],
         ),
         ProcessViewMode::Command => (
@@ -275,6 +338,14 @@ fn get_process_help(mode: ProcessViewMode) -> (&'static str, Vec<Line<'static>>)
                 Line::from("CPU     - CPU usage percentage over sample interval"),
                 Line::from("MEM     - Resident memory size (physical memory used)"),
                 Line::from("CMDLINE - Full command line with arguments"),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Tip:",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(""),
+                Line::from("Command view is useful for identifying processes by full path"),
+                Line::from("  e.g. distinguishing multiple java/python/node instances"),
                 Line::from(""),
                 Line::from(Span::styled(
                     "PostgreSQL Integration:",
@@ -318,6 +389,19 @@ fn get_process_help(mode: ProcessViewMode) -> (&'static str, Vec<Line<'static>>)
                 Line::from("EUID    - Effective user name (current privileges)"),
                 Line::from("MEM     - Memory usage as % of total system RAM"),
                 Line::from("CMD     - Process name (executable name)"),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Troubleshooting Tips:",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(""),
+                Line::from("MAJFLT > 0 - process pages are being read from swap/disk"),
+                Line::from("  high MAJFLT = severe performance degradation"),
+                Line::from("SWAPSZ > 0 - process memory was swapped out (memory pressure)"),
+                Line::from("VSIZE >> RSIZE - large address space but low actual usage"),
+                Line::from("  normal for Java/Go (pre-allocated heap)"),
+                Line::from("RGROW rising without VGROW - process is touching more pages"),
+                Line::from("LOCKSZ > 0 - memory pinned in RAM (e.g. shared_buffers huge pages)"),
                 Line::from(""),
                 Line::from(Span::styled(
                     "PostgreSQL Integration:",
@@ -465,6 +549,22 @@ fn get_postgres_help() -> Vec<Line<'static>> {
         Line::from("Yellow - idle in transaction, QDUR > 1min, WAIT event"),
         Line::from("Red    - QDUR > 5min (for active queries)"),
         Line::from("Gray   - idle sessions (shown at bottom)"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Troubleshooting Tips:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from("idle in transaction - holds locks, blocks autovacuum/vacuum"),
+        Line::from("  long idle-in-transaction = danger of table bloat"),
+        Line::from("  check XDUR to see how long the transaction has been open"),
+        Line::from("WAIT Lock:* - session is waiting for a lock held by another"),
+        Line::from("  sort by QDUR to find the longest-waiting sessions"),
+        Line::from("QDUR > 5min (red) - likely needs EXPLAIN ANALYZE investigation"),
+        Line::from("Many active sessions - possible connection pool exhaustion"),
+        Line::from("  compare active count vs max_connections"),
+        Line::from("BDUR very long - consider connection pooling (pgbouncer)"),
+        Line::from("  long-lived connections use resources even when idle"),
         Line::from(""),
         Line::from(Span::styled(
             "Session Detail Popup:",

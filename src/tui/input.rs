@@ -60,23 +60,29 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyAction::Quit,
 
         // Tab navigation (blocked when a detail popup is open)
-        KeyCode::Tab if !state.any_popup_open() => {
+        KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3')
+            if state.any_popup_open() =>
+        {
+            state.status_message = Some("Close popup (Esc) before switching tabs".to_string());
+            KeyAction::None
+        }
+        KeyCode::Tab => {
             state.switch_tab(state.current_tab.next());
             KeyAction::None
         }
-        KeyCode::BackTab if !state.any_popup_open() => {
+        KeyCode::BackTab => {
             state.switch_tab(state.current_tab.prev());
             KeyAction::None
         }
-        KeyCode::Char('1') if !state.any_popup_open() => {
+        KeyCode::Char('1') => {
             state.switch_tab(Tab::Processes);
             KeyAction::None
         }
-        KeyCode::Char('2') if !state.any_popup_open() => {
+        KeyCode::Char('2') => {
             state.switch_tab(Tab::PostgresActive);
             KeyAction::None
         }
-        KeyCode::Char('3') if !state.any_popup_open() => {
+        KeyCode::Char('3') => {
             state.switch_tab(Tab::PgStatements);
             KeyAction::None
         }
@@ -433,11 +439,9 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
 
         // Drill-down navigation (PRC -> PGA -> PGS)
         KeyCode::Char('>') | KeyCode::Char('J') => {
-            // Navigation is handled by the render layer which has access to snapshot data.
-            // Here we just set a flag that render will check.
-            // The actual navigation (setting filters, switching tabs) happens in app.rs
-            // after render provides the necessary data.
-            if state.current_tab == Tab::Processes || state.current_tab == Tab::PostgresActive {
+            if state.any_popup_open() {
+                state.status_message = Some("Close popup (Esc) before drill-down".to_string());
+            } else if state.current_tab == Tab::Processes || state.current_tab == Tab::PostgresActive {
                 state.drill_down_requested = true;
             }
             KeyAction::None
@@ -445,6 +449,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
 
         // Close popups with Escape
         KeyCode::Esc => {
+            state.status_message = None;
             if state.show_process_detail {
                 state.show_process_detail = false;
                 state.process_detail_pid = None;
@@ -598,6 +603,41 @@ mod tests {
         let action = handle_key(&mut state, key(KeyCode::Enter));
         assert_eq!(action, KeyAction::Quit);
         assert!(!state.show_quit_confirm);
+    }
+
+    #[test]
+    fn tab_switch_blocked_when_popup_open() {
+        let mut state = AppState::new(true);
+        state.show_process_detail = true;
+
+        // Tab should be blocked
+        let _ = handle_key(&mut state, key(KeyCode::Tab));
+        assert_eq!(state.current_tab, Tab::Processes);
+        assert!(state.status_message.is_some());
+
+        // Number keys should be blocked too
+        state.status_message = None;
+        let _ = handle_key(&mut state, key(KeyCode::Char('2')));
+        assert_eq!(state.current_tab, Tab::Processes);
+        assert!(state.status_message.is_some());
+
+        // After closing popup, tab switch works
+        let _ = handle_key(&mut state, key(KeyCode::Esc));
+        assert!(!state.show_process_detail);
+        assert!(state.status_message.is_none());
+
+        let _ = handle_key(&mut state, key(KeyCode::Char('2')));
+        assert_eq!(state.current_tab, Tab::PostgresActive);
+    }
+
+    #[test]
+    fn drill_down_blocked_when_popup_open() {
+        let mut state = AppState::new(true);
+        state.show_process_detail = true;
+
+        let _ = handle_key(&mut state, key(KeyCode::Char('>')));
+        assert!(!state.drill_down_requested);
+        assert!(state.status_message.is_some());
     }
 }
 

@@ -507,6 +507,10 @@ pub struct AppState {
     /// Current `collected_at` timestamp from the latest snapshot (for debugging).
     pub pgs_current_collected_at: Option<i64>,
 
+    // ===== Status message =====
+    /// Temporary status message shown in the header (e.g., why an action was blocked).
+    pub status_message: Option<String>,
+
     // ===== Ratatui TableState for scrolling =====
     /// Ratatui table state for PRC tab (enables auto-scrolling).
     pub prc_ratatui_state: RatatuiTableState,
@@ -589,6 +593,8 @@ impl AppState {
             pgs_last_real_update_ts: None,
             pgs_dt_secs: None,
             pgs_current_collected_at: None,
+
+            status_message: None,
 
             prc_ratatui_state: RatatuiTableState::default(),
             pga_ratatui_state: RatatuiTableState::default(),

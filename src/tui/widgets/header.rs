@@ -17,7 +17,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         Constraint::Length(12), // Mode
         Constraint::Min(20),    // Tabs
         Constraint::Length(16), // PIDs (container)
-        Constraint::Length(30), // Position/Filter
+        Constraint::Length(42), // Position/Filter/Status
     ])
     .split(area);
 
@@ -99,32 +99,35 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
     };
     frame.render_widget(Paragraph::new(pids_text).style(pids_style), chunks[3]);
 
-    // Position or Filter input
+    // Position, Filter input, or status message
     let current_filter = match state.current_tab {
         Tab::Processes => state.process_table.filter.as_deref(),
         Tab::PostgresActive => state.pg_filter.as_deref(),
         Tab::PgStatements => state.pgs_filter.as_deref(),
     };
-    let right_content = match state.input_mode {
-        InputMode::Filter => {
-            format!("Filter: {}█", state.filter_input)
-        }
-        InputMode::TimeJump => {
-            format!("Jump: {}█", state.time_jump_input)
-        }
-        InputMode::Normal => {
-            if let Some((pos, total)) = state.history_position {
-                format!("{}/{}", pos + 1, total)
-            } else if let Some(filter) = current_filter {
-                format!("/{}", filter)
-            } else {
-                String::new()
+    let (right_content, right_style) = if let Some(msg) = &state.status_message {
+        (msg.clone(), Styles::modified_item())
+    } else {
+        match state.input_mode {
+            InputMode::Filter => (
+                format!("Filter: {}█", state.filter_input),
+                Styles::filter_input(),
+            ),
+            InputMode::TimeJump => (
+                format!("Jump: {}█", state.time_jump_input),
+                Styles::filter_input(),
+            ),
+            InputMode::Normal => {
+                let text = if let Some((pos, total)) = state.history_position {
+                    format!("{}/{}", pos + 1, total)
+                } else if let Some(filter) = current_filter {
+                    format!("/{}", filter)
+                } else {
+                    String::new()
+                };
+                (text, Styles::header())
             }
         }
-    };
-    let right_style = match state.input_mode {
-        InputMode::Filter | InputMode::TimeJump => Styles::filter_input(),
-        InputMode::Normal => Styles::header(),
     };
     let right = Paragraph::new(right_content).style(right_style);
     frame.render_widget(right, chunks[4]);

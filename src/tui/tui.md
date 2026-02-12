@@ -219,6 +219,8 @@ pub enum DiffStatus {
 
 Drill-down navigation allows you to follow the data flow: from OS process (PRC) to PostgreSQL session (PGA) to query statistics (PGS).
 
+**Popup restrictions:** Tab switching (`Tab`, `Shift+Tab`, `1`/`2`/`3`) and drill-down (`>`/`J`) are blocked while a detail popup is open. A yellow status message appears in the header explaining to close the popup first (`Esc`). The message is cleared when the popup is closed.
+
 **Persistent selection tracking:**
 - After drill-down, the selection is tracked by PID (PGA) or queryid (PGS), not by row index
 - When data updates (new snapshot, re-sort), the same session/statement stays selected
