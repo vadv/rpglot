@@ -33,8 +33,8 @@ mod system;
 // Re-export all public types for convenient access
 pub use cgroup::{CgroupCpuInfo, CgroupInfo, CgroupIoInfo, CgroupMemoryInfo, CgroupPidsInfo};
 pub use postgres::{
-    PgStatActivityInfo, PgStatDatabaseInfo, PgStatStatementsInfo, PgStatUserIndexesInfo,
-    PgStatUserTablesInfo,
+    PgLockTreeNode, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 #[allow(unused_imports)]
 pub use process::{ProcessCpuInfo, ProcessDskInfo, ProcessInfo, ProcessMemInfo};

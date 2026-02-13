@@ -105,6 +105,7 @@ fn get_help_content(
         Tab::PgStatements => get_pgs_help(pgs_view_mode),
         Tab::PgTables => get_pgt_help(pgt_view_mode),
         Tab::PgIndexes => get_pgi_help(pgi_view_mode),
+        Tab::PgLocks => ("PostgreSQL Lock Tree Help (PGL)", get_pgl_help()),
     }
 }
 
@@ -590,7 +591,7 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
     let mut lines = Vec::new();
 
     lines.push(Line::from(Span::styled(
-        "View modes: a=Activity, x=Scans, n=Maintenance",
+        "View modes: a=Reads, w=Writes, x=Scans, n=Maintenance, i=I/O",
         Style::default().fg(Color::Cyan),
     )));
     lines.push(Line::from(""));
@@ -613,20 +614,21 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
     lines.push(Line::from(""));
 
     match mode {
-        PgTablesViewMode::Activity => {
+        PgTablesViewMode::Reads => {
             lines.push(Line::from(Span::styled(
-                "Columns (Activity):",
+                "Columns (Reads):",
                 Style::default().fg(Color::Yellow),
             )));
             lines.extend([
-                Line::from("SEQ/s  - sequential scans per second (missing indexes?)"),
-                Line::from("IDX/s  - index scans per second (healthy usage)"),
-                Line::from("INS/s  - rows inserted per second"),
-                Line::from("UPD/s  - rows updated per second"),
-                Line::from("DEL/s  - rows deleted per second"),
-                Line::from("LIVE   - estimated live rows"),
-                Line::from("DEAD   - estimated dead rows (bloat)"),
-                Line::from("TABLE  - schema.table"),
+                Line::from("SEQ_RD/s - rows read by sequential scans per second"),
+                Line::from("IDX_FT/s - rows fetched by index scans per second"),
+                Line::from("TOT_RD/s - total rows read per second (seq + idx)"),
+                Line::from("SEQ/s    - sequential scans per second"),
+                Line::from("IDX/s    - index scans per second"),
+                Line::from("HIT%     - buffer cache hit ratio (higher is better)"),
+                Line::from("DISK/s   - disk read throughput in bytes/s (blocks × 8 KB)"),
+                Line::from("SIZE     - table relation size on disk"),
+                Line::from("TABLE    - schema.table"),
             ]);
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -634,9 +636,9 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
                 Style::default().fg(Color::Yellow),
             )));
             lines.extend([
-                Line::from("High SEQ/s + large table = missing index, check EXPLAIN"),
-                Line::from("DEAD >> LIVE = autovacuum falling behind"),
-                Line::from("  check autovacuum_max_workers and per-table settings"),
+                Line::from("High SEQ_RD/s + large SIZE = heavy seq reads, check indexes"),
+                Line::from("High TOT_RD/s = hot table, consider caching or partitioning"),
+                Line::from("SEQ_RD/s >> IDX_FT/s = most reads are sequential scans"),
                 Line::from("> or J to drill-down to indexes (PGI) for selected table"),
             ]);
             lines.push(Line::from(""));
@@ -648,7 +650,43 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
                 Line::from("Red    - dead% > 20% (severe bloat)"),
                 Line::from("Yellow - dead% > 5% or seq% > 80%"),
             ]);
-            ("PostgreSQL Tables Help (PGT) - Activity (a)", lines)
+            ("PostgreSQL Tables Help (PGT) - Reads (a)", lines)
+        }
+        PgTablesViewMode::Writes => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Writes):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("INS/s  - rows inserted per second"),
+                Line::from("UPD/s  - rows updated per second"),
+                Line::from("DEL/s  - rows deleted per second"),
+                Line::from("HOT/s  - HOT updates per second (no index update needed)"),
+                Line::from("LIVE   - estimated live rows"),
+                Line::from("DEAD   - estimated dead rows (bloat)"),
+                Line::from("TABLE  - schema.table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("DEAD >> LIVE = autovacuum falling behind"),
+                Line::from("Low HOT/s vs UPD/s = many index columns updated, check design"),
+                Line::from("High DEL/s = consider partitioning for time-series data"),
+                Line::from("> or J to drill-down to indexes (PGI) for selected table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Red    - dead% > 20% (severe bloat)"),
+                Line::from("Yellow - dead% > 5% or seq% > 80%"),
+            ]);
+            ("PostgreSQL Tables Help (PGT) - Writes (w)", lines)
         }
         PgTablesViewMode::Scans => {
             lines.push(Line::from(Span::styled(
@@ -714,6 +752,44 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
             ]);
             ("PostgreSQL Tables Help (PGT) - Maintenance (n)", lines)
         }
+        PgTablesViewMode::Io => {
+            lines.push(Line::from(Span::styled(
+                "Columns (I/O):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("HEAP_RD/s  - heap disk read throughput in bytes/s (blocks × 8 KB)"),
+                Line::from("HEAP_HIT/s - heap buffer cache throughput in bytes/s"),
+                Line::from("IDX_RD/s   - index disk read throughput in bytes/s"),
+                Line::from("IDX_HIT/s  - index buffer cache throughput in bytes/s"),
+                Line::from("HIT%       - cache hit ratio: hits / (hits + reads) * 100"),
+                Line::from("DISK/s     - total disk read throughput in bytes/s"),
+                Line::from("SIZE       - table relation size on disk"),
+                Line::from("TABLE      - schema.table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("HIT% < 90% = significant disk I/O, consider shared_buffers"),
+                Line::from("HIT% < 70% = critical, table data not fitting in cache"),
+                Line::from("High HEAP_RD/s + low HIT% = hot table with cold cache"),
+                Line::from("High IDX_RD/s = index too large for cache, check bloat"),
+                Line::from("Data source: pg_statio_user_tables (block-level I/O counters)"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Red    - HIT% < 70% (critical, heavy disk I/O)"),
+                Line::from("Yellow - HIT% < 90% (significant disk reads)"),
+            ]);
+            ("PostgreSQL Tables Help (PGT) - I/O (i)", lines)
+        }
     }
 }
 
@@ -721,7 +797,7 @@ fn get_pgi_help(mode: PgIndexesViewMode) -> (&'static str, Vec<Line<'static>>) {
     let mut lines = Vec::new();
 
     lines.push(Line::from(Span::styled(
-        "View modes: u=Usage, w=Unused",
+        "View modes: u=Usage, w=Unused, i=I/O",
         Style::default().fg(Color::Cyan),
     )));
     lines.push(Line::from(""));
@@ -745,6 +821,8 @@ fn get_pgi_help(mode: PgIndexesViewMode) -> (&'static str, Vec<Line<'static>>) {
                 Line::from("IDX/s     - index scans per second"),
                 Line::from("TUP_RD/s  - index entries read per second"),
                 Line::from("TUP_FT/s  - live table rows fetched per second"),
+                Line::from("HIT%      - buffer cache hit ratio (higher is better)"),
+                Line::from("DISK/s    - disk read throughput in bytes/s (blocks × 8 KB)"),
                 Line::from("SIZE      - index size on disk"),
                 Line::from("TABLE     - parent table"),
                 Line::from("INDEX     - index name"),
@@ -804,5 +882,101 @@ fn get_pgi_help(mode: PgIndexesViewMode) -> (&'static str, Vec<Line<'static>>) {
             lines.extend([Line::from("Yellow - idx_scan = 0 (unused index)")]);
             ("PostgreSQL Indexes Help (PGI) - Unused (w)", lines)
         }
+        PgIndexesViewMode::Io => {
+            lines.push(Line::from(Span::styled(
+                "Columns (I/O):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("IDX_RD/s  - index disk read throughput in bytes/s (blocks × 8 KB)"),
+                Line::from("IDX_HIT/s - index buffer cache throughput in bytes/s"),
+                Line::from("HIT%      - cache hit ratio: hits / (hits + reads) * 100"),
+                Line::from("DISK/s    - total disk read throughput in bytes/s"),
+                Line::from("SIZE      - index size on disk"),
+                Line::from("TABLE     - parent table"),
+                Line::from("INDEX     - index name"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("HIT% < 90% = index not fitting in shared_buffers"),
+                Line::from("HIT% < 70% = critical, heavy disk I/O for index lookups"),
+                Line::from("High IDX_RD/s + low HIT% = hot index with cold cache"),
+                Line::from("Large SIZE + low HIT% = consider increasing shared_buffers"),
+                Line::from("Data source: pg_statio_user_indexes (block-level I/O counters)"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Red    - HIT% < 70% (critical, heavy disk I/O)"),
+                Line::from("Yellow - HIT% < 90% (significant disk reads)"),
+            ]);
+            ("PostgreSQL Indexes Help (PGI) - I/O (i)", lines)
+        }
     }
+}
+
+fn get_pgl_help() -> Vec<Line<'static>> {
+    vec![
+        Line::from(Span::styled(
+            "Lock Tree: shows PostgreSQL blocking chains",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Data source: pg_locks + pg_stat_activity + pg_blocking_pids()",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "Empty table means no blocking chains detected",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled("Columns:", Style::default().fg(Color::Yellow))),
+        Line::from("PID       - PostgreSQL backend PID with depth indentation"),
+        Line::from("            dots indicate nesting: .456 = blocked by parent"),
+        Line::from("STATE     - backend state (active, idle in transaction, etc.)"),
+        Line::from("WAIT      - wait_event_type:wait_event (- for root blocker)"),
+        Line::from("DURATION  - age of transaction (root) or state change (waiter)"),
+        Line::from("LOCK_MODE - lock mode (AccExcl, RowExcl, Share, etc.)"),
+        Line::from("TARGET    - locked object (schema.table or lock type)"),
+        Line::from("QUERY     - current/last query text"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Color coding:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from("Red    - root blocker (depth=1, holds the lock)"),
+        Line::from("Yellow - waiting session (lock not yet granted)"),
+        Line::from("Default- intermediate session (lock granted)"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Navigation:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from("Enter  - open detail popup for selected row"),
+        Line::from("/      - filter by PID, query, target, or state"),
+        Line::from("?      - toggle this help"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Troubleshooting Tips:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from("Red row = root blocker causing the chain"),
+        Line::from("  check its QUERY and DURATION to understand the cause"),
+        Line::from("Multiple trees = independent blocking chains"),
+        Line::from("Long DURATION on root = long-held lock, possible issue"),
+        Line::from("AccExcl lock = DDL or VACUUM FULL, blocks everything"),
+        Line::from("RowExcl lock = DML (INSERT/UPDATE/DELETE)"),
+        Line::from("  concurrent DML rarely blocks unless explicit LOCK TABLE"),
+        Line::from("idle in transaction + lock = common cause of blocking"),
+        Line::from("  application forgot to COMMIT or ROLLBACK"),
+    ]
 }

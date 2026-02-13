@@ -12,6 +12,84 @@ use super::{
     PgTablesRates, PgTablesViewMode,
 };
 
+// ===========================================================================
+// PGL (pg_locks tree) tab state
+// ===========================================================================
+
+/// State for the PostgreSQL Locks (PGL) tab.
+#[derive(Debug)]
+pub struct PgLocksTabState {
+    pub selected: usize,
+    pub filter: Option<String>,
+    pub tracked_pid: Option<i32>,
+    pub ratatui_state: RatatuiTableState,
+}
+
+impl Default for PgLocksTabState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            filter: None,
+            tracked_pid: None,
+            ratatui_state: RatatuiTableState::default(),
+        }
+    }
+}
+
+impl PgLocksTabState {
+    pub fn select_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+        self.tracked_pid = None;
+    }
+
+    pub fn select_down(&mut self) {
+        self.selected = self.selected.saturating_add(1);
+        self.tracked_pid = None;
+    }
+
+    pub fn page_up(&mut self, n: usize) {
+        self.selected = self.selected.saturating_sub(n);
+        self.tracked_pid = None;
+    }
+
+    pub fn page_down(&mut self, n: usize) {
+        self.selected = self.selected.saturating_add(n);
+        self.tracked_pid = None;
+    }
+
+    pub fn home(&mut self) {
+        self.selected = 0;
+        self.tracked_pid = None;
+    }
+
+    pub fn end(&mut self) {
+        self.selected = usize::MAX;
+        self.tracked_pid = None;
+    }
+
+    /// Resolves selection after filtering: applies tracked PID,
+    /// clamps selected index, and syncs ratatui state.
+    pub fn resolve_selection(&mut self, row_pids: &[i32]) {
+        if let Some(tracked) = self.tracked_pid {
+            if let Some(idx) = row_pids.iter().position(|&pid| pid == tracked) {
+                self.selected = idx;
+            } else {
+                self.tracked_pid = None;
+            }
+        }
+
+        if !row_pids.is_empty() {
+            self.selected = self.selected.min(row_pids.len() - 1);
+            self.tracked_pid = Some(row_pids[self.selected]);
+        } else {
+            self.selected = 0;
+            self.tracked_pid = None;
+        }
+
+        self.ratatui_state.select(Some(self.selected));
+    }
+}
+
 /// State for the PostgreSQL Activity (PGA) tab.
 #[derive(Debug)]
 pub struct PgActivityTabState {
@@ -511,6 +589,10 @@ pub struct PgTablesTabState {
     pub rates: HashMap<u32, PgTablesRates>,
     pub prev_sample_ts: Option<i64>,
     pub prev_sample: HashMap<u32, PgStatUserTablesInfo>,
+    /// Contains the sample that was `prev_sample` before the last rate computation.
+    /// Used by detail popup to compute deltas (since `prev_sample` is already overwritten
+    /// with current data by the time render happens).
+    pub delta_base: HashMap<u32, PgStatUserTablesInfo>,
     pub dt_secs: Option<f64>,
 }
 
@@ -519,14 +601,15 @@ impl Default for PgTablesTabState {
         Self {
             selected: 0,
             filter: None,
-            sort_column: PgTablesViewMode::Activity.default_sort_column(),
+            sort_column: PgTablesViewMode::Reads.default_sort_column(),
             sort_ascending: false,
-            view_mode: PgTablesViewMode::Activity,
+            view_mode: PgTablesViewMode::Reads,
             tracked_relid: None,
             ratatui_state: RatatuiTableState::default(),
             rates: HashMap::new(),
             prev_sample_ts: None,
             prev_sample: HashMap::new(),
+            delta_base: HashMap::new(),
             dt_secs: None,
         }
     }
@@ -600,6 +683,7 @@ impl PgTablesTabState {
         self.rates.clear();
         self.prev_sample_ts = None;
         self.prev_sample.clear();
+        self.delta_base.clear();
         self.dt_secs = None;
     }
 
@@ -627,6 +711,7 @@ impl PgTablesTabState {
                 // Time went backwards — reset baseline
                 self.rates.clear();
                 self.prev_sample_ts = Some(now_ts);
+                self.delta_base = std::mem::take(&mut self.prev_sample);
                 self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
                 return;
             }
@@ -638,6 +723,7 @@ impl PgTablesTabState {
         let Some(prev_ts) = self.prev_sample_ts else {
             // First sample — just store baseline
             self.prev_sample_ts = Some(now_ts);
+            self.delta_base = std::mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
             self.rates.clear();
             return;
@@ -667,15 +753,22 @@ impl PgTablesTabState {
                 r.n_tup_ins_s = delta(t.n_tup_ins, p.n_tup_ins).map(|d| d as f64 / dt);
                 r.n_tup_upd_s = delta(t.n_tup_upd, p.n_tup_upd).map(|d| d as f64 / dt);
                 r.n_tup_del_s = delta(t.n_tup_del, p.n_tup_del).map(|d| d as f64 / dt);
+                r.n_tup_hot_upd_s = delta(t.n_tup_hot_upd, p.n_tup_hot_upd).map(|d| d as f64 / dt);
                 r.vacuum_count_s = delta(t.vacuum_count, p.vacuum_count).map(|d| d as f64 / dt);
                 r.autovacuum_count_s =
                     delta(t.autovacuum_count, p.autovacuum_count).map(|d| d as f64 / dt);
+                r.heap_blks_read_s =
+                    delta(t.heap_blks_read, p.heap_blks_read).map(|d| d as f64 / dt);
+                r.heap_blks_hit_s = delta(t.heap_blks_hit, p.heap_blks_hit).map(|d| d as f64 / dt);
+                r.idx_blks_read_s = delta(t.idx_blks_read, p.idx_blks_read).map(|d| d as f64 / dt);
+                r.idx_blks_hit_s = delta(t.idx_blks_hit, p.idx_blks_hit).map(|d| d as f64 / dt);
             }
             rates.insert(t.relid, r);
         }
 
         self.rates = rates;
         self.prev_sample_ts = Some(now_ts);
+        self.delta_base = std::mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
         self.dt_secs = Some(dt);
     }
@@ -702,6 +795,9 @@ pub struct PgIndexesTabState {
     pub rates: HashMap<u32, PgIndexesRates>,
     pub prev_sample_ts: Option<i64>,
     pub prev_sample: HashMap<u32, PgStatUserIndexesInfo>,
+    /// Contains the sample that was `prev_sample` before the last rate computation.
+    /// Used by detail popup to compute deltas.
+    pub delta_base: HashMap<u32, PgStatUserIndexesInfo>,
     pub dt_secs: Option<f64>,
 }
 
@@ -720,6 +816,7 @@ impl Default for PgIndexesTabState {
             rates: HashMap::new(),
             prev_sample_ts: None,
             prev_sample: HashMap::new(),
+            delta_base: HashMap::new(),
             dt_secs: None,
         }
     }
@@ -798,6 +895,7 @@ impl PgIndexesTabState {
         self.rates.clear();
         self.prev_sample_ts = None;
         self.prev_sample.clear();
+        self.delta_base.clear();
         self.dt_secs = None;
     }
 
@@ -824,6 +922,7 @@ impl PgIndexesTabState {
             if now_ts < prev_ts {
                 self.rates.clear();
                 self.prev_sample_ts = Some(now_ts);
+                self.delta_base = std::mem::take(&mut self.prev_sample);
                 self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
                 return;
             }
@@ -834,6 +933,7 @@ impl PgIndexesTabState {
 
         let Some(prev_ts) = self.prev_sample_ts else {
             self.prev_sample_ts = Some(now_ts);
+            self.delta_base = std::mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
             self.rates.clear();
             return;
@@ -860,12 +960,16 @@ impl PgIndexesTabState {
                 r.idx_tup_read_s = delta(idx.idx_tup_read, p.idx_tup_read).map(|d| d as f64 / dt);
                 r.idx_tup_fetch_s =
                     delta(idx.idx_tup_fetch, p.idx_tup_fetch).map(|d| d as f64 / dt);
+                r.idx_blks_read_s =
+                    delta(idx.idx_blks_read, p.idx_blks_read).map(|d| d as f64 / dt);
+                r.idx_blks_hit_s = delta(idx.idx_blks_hit, p.idx_blks_hit).map(|d| d as f64 / dt);
             }
             rates.insert(idx.indexrelid, r);
         }
 
         self.rates = rates;
         self.prev_sample_ts = Some(now_ts);
+        self.delta_base = std::mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
         self.dt_secs = Some(dt);
     }

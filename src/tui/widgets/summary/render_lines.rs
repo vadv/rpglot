@@ -8,7 +8,8 @@ use crate::tui::style::Styles;
 
 use super::metric_widths::*;
 use super::{
-    CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics, VmstatRates,
+    BgwSummary, CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics,
+    VmstatRates,
 };
 
 fn line_with_padding(spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
@@ -370,6 +371,98 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
     ));
 
     line_with_padding(spans, width)
+}
+
+/// Renders PostgreSQL bgwriter summary line.
+/// Format: BGW │ ckpt: 0.1/m  wr: 125ms  be:  45/s  cln: 1.2K/s  mxw:     0  alloc: 5.6K/s
+pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
+    let mut spans = vec![Span::styled("BGW", Styles::cpu()), Span::raw(" │ ")];
+
+    let ckpt_style = if bgw.checkpoints_per_min > 2.0 {
+        Styles::critical()
+    } else if bgw.checkpoints_per_min > 0.5 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "ckpt",
+        &format!("{:.1}/m", bgw.checkpoints_per_min),
+        BGW_CKPT,
+        ckpt_style,
+    ));
+    spans.push(Span::raw("  "));
+
+    let wr_style = if bgw.ckpt_write_time_ms >= 30_000.0 {
+        Styles::critical()
+    } else if bgw.ckpt_write_time_ms >= 5_000.0 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "wr",
+        &format_ms(bgw.ckpt_write_time_ms),
+        BGW_WR,
+        wr_style,
+    ));
+    spans.push(Span::raw("  "));
+
+    let be_style = if bgw.buffers_backend_s > 100.0 {
+        Styles::critical()
+    } else if bgw.buffers_backend_s > 0.0 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "be",
+        &format_rate(bgw.buffers_backend_s),
+        BGW_BE,
+        be_style,
+    ));
+    spans.push(Span::raw("  "));
+
+    spans.extend(metric_spans_default(
+        "cln",
+        &format_rate(bgw.buffers_clean_s),
+        BGW_CLN,
+    ));
+    spans.push(Span::raw("  "));
+
+    let mxw_style = if bgw.maxwritten_clean > 10 {
+        Styles::critical()
+    } else if bgw.maxwritten_clean > 0 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "mxw",
+        &format!("{}", bgw.maxwritten_clean),
+        BGW_MXW,
+        mxw_style,
+    ));
+    spans.push(Span::raw("  "));
+
+    spans.extend(metric_spans_default(
+        "alloc",
+        &format_rate(bgw.buffers_alloc_s),
+        BGW_ALLOC,
+    ));
+
+    line_with_padding(spans, width)
+}
+
+/// Formats milliseconds to human-readable form (ms/s/m).
+fn format_ms(ms: f64) -> String {
+    if ms >= 60_000.0 {
+        format!("{:.1}m", ms / 60_000.0)
+    } else if ms >= 1_000.0 {
+        format!("{:.1}s", ms / 1_000.0)
+    } else {
+        format!("{:.0}ms", ms)
+    }
 }
 
 /// Formats a rate value with K/M suffix if needed.
@@ -750,15 +843,16 @@ pub(super) fn render_help_line(width: usize, tab: Tab) -> Line<'static> {
             spans.push(Span::styled(":view ", Styles::help()));
         }
         Tab::PgTables => {
-            spans.push(Span::styled("a/x/n", Styles::help_key()));
+            spans.push(Span::styled("a/w/x/n/i", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));
             spans.push(Span::styled(">", Styles::help_key()));
             spans.push(Span::styled(":drill ", Styles::help()));
         }
         Tab::PgIndexes => {
-            spans.push(Span::styled("u/w", Styles::help_key()));
+            spans.push(Span::styled("u/w/i", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));
         }
+        Tab::PgLocks => {}
     }
 
     spans.push(Span::styled("?", Styles::help_key()));

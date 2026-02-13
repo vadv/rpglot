@@ -118,6 +118,21 @@ impl Chunk {
                         hashes.insert(i.indexrelname_hash);
                     }
                 }
+                DataBlock::PgLockTree(nodes) => {
+                    for n in nodes {
+                        hashes.insert(n.datname_hash);
+                        hashes.insert(n.usename_hash);
+                        hashes.insert(n.state_hash);
+                        hashes.insert(n.wait_event_type_hash);
+                        hashes.insert(n.wait_event_hash);
+                        hashes.insert(n.query_hash);
+                        hashes.insert(n.application_name_hash);
+                        hashes.insert(n.backend_type_hash);
+                        hashes.insert(n.lock_type_hash);
+                        hashes.insert(n.lock_mode_hash);
+                        hashes.insert(n.lock_target_hash);
+                    }
+                }
                 // These blocks don't contain string hashes
                 DataBlock::SystemCpu(_)
                 | DataBlock::SystemLoad(_)
@@ -127,7 +142,8 @@ impl Chunk {
                 | DataBlock::SystemFile(_)
                 | DataBlock::SystemStat(_)
                 | DataBlock::SystemNetSnmp(_)
-                | DataBlock::Cgroup(_) => {}
+                | DataBlock::Cgroup(_)
+                | DataBlock::PgStatBgwriter(_) => {}
             }
         }
     }
@@ -197,6 +213,21 @@ impl Chunk {
                         hashes.insert(i.indexrelname_hash);
                     }
                 }
+                DataBlockDiff::PgLockTree { updates, .. } => {
+                    for n in updates {
+                        hashes.insert(n.datname_hash);
+                        hashes.insert(n.usename_hash);
+                        hashes.insert(n.state_hash);
+                        hashes.insert(n.wait_event_type_hash);
+                        hashes.insert(n.wait_event_hash);
+                        hashes.insert(n.query_hash);
+                        hashes.insert(n.application_name_hash);
+                        hashes.insert(n.backend_type_hash);
+                        hashes.insert(n.lock_type_hash);
+                        hashes.insert(n.lock_mode_hash);
+                        hashes.insert(n.lock_target_hash);
+                    }
+                }
                 // These diffs don't contain string hashes
                 DataBlockDiff::SystemCpu { .. }
                 | DataBlockDiff::SystemLoad(_)
@@ -206,7 +237,8 @@ impl Chunk {
                 | DataBlockDiff::SystemFile(_)
                 | DataBlockDiff::SystemStat(_)
                 | DataBlockDiff::SystemNetSnmp(_)
-                | DataBlockDiff::Cgroup(_) => {}
+                | DataBlockDiff::Cgroup(_)
+                | DataBlockDiff::PgStatBgwriter(_) => {}
             }
         }
     }

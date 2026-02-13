@@ -197,7 +197,8 @@ pub(super) fn build_stat_user_tables_query() -> &'static str {
             COALESCE(EXTRACT(EPOCH FROM last_vacuum)::bigint, 0) as last_vacuum,
             COALESCE(EXTRACT(EPOCH FROM last_autovacuum)::bigint, 0) as last_autovacuum,
             COALESCE(EXTRACT(EPOCH FROM last_analyze)::bigint, 0) as last_analyze,
-            COALESCE(EXTRACT(EPOCH FROM last_autoanalyze)::bigint, 0) as last_autoanalyze
+            COALESCE(EXTRACT(EPOCH FROM last_autoanalyze)::bigint, 0) as last_autoanalyze,
+            COALESCE(pg_relation_size(relid), 0)::bigint as size_bytes
         FROM pg_stat_user_tables
         ORDER BY COALESCE(seq_scan, 0) + COALESCE(idx_scan, 0) DESC
         LIMIT 500
@@ -222,6 +223,176 @@ pub(super) fn build_stat_user_indexes_query() -> &'static str {
             COALESCE(pg_relation_size(i.indexrelid), 0)::bigint as size_bytes
         FROM pg_stat_user_indexes i
         ORDER BY COALESCE(i.idx_scan, 0) DESC
+        LIMIT 500
+    "#
+}
+
+/// Builds a recursive CTE query for the PostgreSQL lock tree.
+///
+/// Returns blocking chains as a flat tree in DFS order.
+/// Each row represents a session participating in a blocking relationship.
+/// Compatible with PostgreSQL 10+ (uses `pg_blocking_pids()` from PG 9.6+).
+///
+/// Returns 0 rows when there are no blocking chains (fast path).
+pub(super) fn build_lock_tree_query() -> &'static str {
+    r#"
+        WITH RECURSIVE activity AS (
+            SELECT
+                a.pid,
+                pg_blocking_pids(a.pid) AS blocked_by,
+                COALESCE(a.datname, '') AS datname,
+                COALESCE(a.usename, '') AS usename,
+                COALESCE(a.state, '') AS state,
+                COALESCE(a.wait_event_type, '') AS wait_event_type,
+                COALESCE(a.wait_event, '') AS wait_event,
+                COALESCE(a.query, '') AS query,
+                COALESCE(a.application_name, '') AS application_name,
+                COALESCE(a.backend_type, '') AS backend_type,
+                COALESCE(EXTRACT(EPOCH FROM a.xact_start)::bigint, 0) AS xact_start,
+                COALESCE(EXTRACT(EPOCH FROM a.query_start)::bigint, 0) AS query_start,
+                COALESCE(EXTRACT(EPOCH FROM a.state_change)::bigint, 0) AS state_change
+            FROM pg_stat_activity a
+            WHERE a.state IS DISTINCT FROM 'idle'
+        ),
+        blockers AS (
+            SELECT array_agg(DISTINCT c ORDER BY c) AS pids
+            FROM (SELECT unnest(blocked_by) AS c FROM activity) dt
+        ),
+        tree AS (
+            SELECT
+                activity.*,
+                1 AS depth,
+                activity.pid AS root_pid,
+                ARRAY[activity.pid] AS path,
+                ARRAY[activity.pid]::int[] AS all_above
+            FROM activity, blockers
+            WHERE ARRAY[activity.pid] <@ blockers.pids
+              AND activity.blocked_by = '{}'::int[]
+            UNION ALL
+            SELECT
+                activity.*,
+                tree.depth + 1,
+                tree.root_pid,
+                tree.path || activity.pid,
+                tree.all_above || array_agg(activity.pid) OVER ()
+            FROM activity, tree
+            WHERE activity.blocked_by <> '{}'::int[]
+              AND activity.blocked_by <@ tree.all_above
+              AND NOT ARRAY[activity.pid] <@ tree.all_above
+        ),
+        lock_info AS (
+            SELECT DISTINCT ON (l.pid)
+                l.pid,
+                COALESCE(l.locktype, '') AS lock_type,
+                COALESCE(l.mode, '') AS lock_mode,
+                l.granted AS lock_granted,
+                COALESCE(n.nspname || '.' || c.relname, l.relation::text, '') AS lock_target
+            FROM pg_locks l
+            LEFT JOIN pg_class c ON c.oid = l.relation
+            LEFT JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE l.pid IN (SELECT pid FROM tree)
+            ORDER BY l.pid, l.granted ASC, l.relation NULLS LAST
+        )
+        SELECT
+            t.pid,
+            t.depth,
+            t.root_pid,
+            t.datname,
+            t.usename,
+            t.state,
+            t.wait_event_type,
+            t.wait_event,
+            t.query,
+            t.application_name,
+            t.backend_type,
+            t.xact_start,
+            t.query_start,
+            t.state_change,
+            COALESCE(li.lock_type, '') AS lock_type,
+            COALESCE(li.lock_mode, '') AS lock_mode,
+            COALESCE(li.lock_granted, true) AS lock_granted,
+            COALESCE(li.lock_target, '') AS lock_target
+        FROM tree t
+        LEFT JOIN lock_info li ON li.pid = t.pid
+        ORDER BY t.root_pid, t.path
+    "#
+}
+
+/// Builds version-aware query for pg_stat_bgwriter (+ pg_stat_checkpointer on PG 17+).
+///
+/// PG < 17: all fields in pg_stat_bgwriter (single view).
+/// PG 17+:  bgwriter fields from pg_stat_bgwriter,
+///          checkpoint fields from pg_stat_checkpointer.
+///          buffers_backend/buffers_backend_fsync default to 0 (moved to pg_stat_io).
+pub(super) fn build_stat_bgwriter_query(server_version_num: Option<i32>) -> String {
+    let v = server_version_num.unwrap_or(0);
+
+    if v >= 170000 {
+        r#"
+            SELECT
+                COALESCE(c.num_timed, 0)::bigint AS checkpoints_timed,
+                COALESCE(c.num_requested, 0)::bigint AS checkpoints_req,
+                COALESCE(c.write_time, 0)::double precision AS checkpoint_write_time,
+                COALESCE(c.sync_time, 0)::double precision AS checkpoint_sync_time,
+                COALESCE(c.buffers_written, 0)::bigint AS buffers_checkpoint,
+                COALESCE(b.buffers_clean, 0)::bigint AS buffers_clean,
+                COALESCE(b.maxwritten_clean, 0)::bigint AS maxwritten_clean,
+                0::bigint AS buffers_backend,
+                0::bigint AS buffers_backend_fsync,
+                COALESCE(b.buffers_alloc, 0)::bigint AS buffers_alloc
+            FROM pg_stat_bgwriter b
+            CROSS JOIN pg_stat_checkpointer c
+        "#
+        .to_string()
+    } else {
+        r#"
+            SELECT
+                COALESCE(checkpoints_timed, 0)::bigint AS checkpoints_timed,
+                COALESCE(checkpoints_req, 0)::bigint AS checkpoints_req,
+                COALESCE(checkpoint_write_time, 0)::double precision AS checkpoint_write_time,
+                COALESCE(checkpoint_sync_time, 0)::double precision AS checkpoint_sync_time,
+                COALESCE(buffers_checkpoint, 0)::bigint AS buffers_checkpoint,
+                COALESCE(buffers_clean, 0)::bigint AS buffers_clean,
+                COALESCE(maxwritten_clean, 0)::bigint AS maxwritten_clean,
+                COALESCE(buffers_backend, 0)::bigint AS buffers_backend,
+                COALESCE(buffers_backend_fsync, 0)::bigint AS buffers_backend_fsync,
+                COALESCE(buffers_alloc, 0)::bigint AS buffers_alloc
+            FROM pg_stat_bgwriter
+        "#
+        .to_string()
+    }
+}
+
+/// Builds query for pg_statio_user_tables (I/O block counters).
+///
+/// All columns exist since PG 7.2+, no version check needed.
+/// Returns relid + 8 I/O counter columns for merge with pg_stat_user_tables by relid.
+pub(super) fn build_statio_user_tables_query() -> &'static str {
+    r#"
+        SELECT
+            relid::bigint,
+            COALESCE(heap_blks_read, 0)::bigint as heap_blks_read,
+            COALESCE(heap_blks_hit, 0)::bigint as heap_blks_hit,
+            COALESCE(idx_blks_read, 0)::bigint as idx_blks_read,
+            COALESCE(idx_blks_hit, 0)::bigint as idx_blks_hit,
+            COALESCE(toast_blks_read, 0)::bigint as toast_blks_read,
+            COALESCE(toast_blks_hit, 0)::bigint as toast_blks_hit,
+            COALESCE(tidx_blks_read, 0)::bigint as tidx_blks_read,
+            COALESCE(tidx_blks_hit, 0)::bigint as tidx_blks_hit
+        FROM pg_statio_user_tables
+        ORDER BY COALESCE(heap_blks_read, 0) + COALESCE(idx_blks_read, 0) DESC
+        LIMIT 500
+    "#
+}
+
+pub(super) fn build_statio_user_indexes_query() -> &'static str {
+    r#"
+        SELECT
+            indexrelid::bigint,
+            COALESCE(idx_blks_read, 0)::bigint as idx_blks_read,
+            COALESCE(idx_blks_hit, 0)::bigint as idx_blks_hit
+        FROM pg_statio_user_indexes
+        ORDER BY COALESCE(idx_blks_read, 0) DESC
         LIMIT 500
     "#
 }
@@ -269,5 +440,42 @@ mod tests {
         assert!(q.contains("LEFT JOIN pg_roles"));
         assert!(q.contains("as datname"));
         assert!(q.contains("as usename"));
+    }
+
+    #[test]
+    fn stat_bgwriter_query_pg16_uses_single_view() {
+        let q = build_stat_bgwriter_query(Some(160000));
+        assert!(q.contains("FROM pg_stat_bgwriter"));
+        assert!(!q.contains("pg_stat_checkpointer"));
+        assert!(q.contains("buffers_backend"));
+    }
+
+    #[test]
+    fn stat_bgwriter_query_pg17_uses_split_views() {
+        let q = build_stat_bgwriter_query(Some(170000));
+        assert!(q.contains("pg_stat_checkpointer"));
+        assert!(q.contains("pg_stat_bgwriter"));
+        assert!(q.contains("num_timed"));
+        assert!(q.contains("0::bigint AS buffers_backend"));
+    }
+
+    #[test]
+    fn statio_user_tables_query_selects_io_counters() {
+        let q = build_statio_user_tables_query();
+        assert!(q.contains("pg_statio_user_tables"));
+        assert!(q.contains("heap_blks_read"));
+        assert!(q.contains("heap_blks_hit"));
+        assert!(q.contains("tidx_blks_hit"));
+        assert!(q.contains("LIMIT 500"));
+    }
+
+    #[test]
+    fn statio_user_indexes_query_selects_io_counters() {
+        let q = build_statio_user_indexes_query();
+        assert!(q.contains("pg_statio_user_indexes"));
+        assert!(q.contains("idx_blks_read"));
+        assert!(q.contains("idx_blks_hit"));
+        assert!(q.contains("indexrelid"));
+        assert!(q.contains("LIMIT 500"));
     }
 }

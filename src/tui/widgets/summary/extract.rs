@@ -1,13 +1,13 @@
 //! Metric extraction from snapshots.
 
 use crate::storage::model::{
-    DataBlock, PgStatDatabaseInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
-    SystemPsiInfo, SystemStatInfo, SystemVmstatInfo,
+    DataBlock, PgStatBgwriterInfo, PgStatDatabaseInfo, Snapshot, SystemCpuInfo, SystemDiskInfo,
+    SystemNetInfo, SystemPsiInfo, SystemStatInfo, SystemVmstatInfo,
 };
 
 use super::{
-    CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics, TOP_CPUS,
-    TOP_DISKS, TOP_NETS, VmstatRates,
+    BgwSummary, CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics,
+    TOP_CPUS, TOP_DISKS, TOP_NETS, VmstatRates,
 };
 
 /// Maximum realistic disk throughput (10 GB/s) - values above this indicate data issues
@@ -57,6 +57,7 @@ pub(super) fn extract_metrics(snapshot: &Snapshot, previous: Option<&Snapshot>) 
         psi: Vec::new(),
         vmstat_rates: None,
         pg_summary: None,
+        bgw_summary: None,
     };
 
     // We compute top disks after the loop because for containers the filtering
@@ -163,6 +164,18 @@ pub(super) fn extract_metrics(snapshot: &Snapshot, previous: Option<&Snapshot>) 
                     })
                 });
                 metrics.pg_summary = extract_pg_summary(dbs, prev_dbs, delta_time);
+            }
+            DataBlock::PgStatBgwriter(bgw) => {
+                let prev_bgw = previous.and_then(|p| {
+                    p.blocks.iter().find_map(|b| {
+                        if let DataBlock::PgStatBgwriter(v) = b {
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    })
+                });
+                metrics.bgw_summary = extract_bgw_summary(bgw, prev_bgw, delta_time);
             }
             _ => {}
         }
@@ -487,6 +500,38 @@ fn extract_vmstat_rates(
         pswpout_s,
         pgfault_s,
         ctxt_s,
+    })
+}
+
+/// Extracts PostgreSQL bgwriter summary from pg_stat_bgwriter.
+/// Returns None if previous snapshot is unavailable (rates need two points).
+fn extract_bgw_summary(
+    curr: &PgStatBgwriterInfo,
+    prev: Option<&PgStatBgwriterInfo>,
+    delta_time: f64,
+) -> Option<BgwSummary> {
+    let prev = prev?;
+    if delta_time <= 0.0 {
+        return None;
+    }
+
+    let d_timed = curr
+        .checkpoints_timed
+        .saturating_sub(prev.checkpoints_timed);
+    let d_req = curr.checkpoints_req.saturating_sub(prev.checkpoints_req);
+    let d_write_time = curr.checkpoint_write_time - prev.checkpoint_write_time;
+    let d_backend = curr.buffers_backend.saturating_sub(prev.buffers_backend);
+    let d_clean = curr.buffers_clean.saturating_sub(prev.buffers_clean);
+    let d_maxwritten = curr.maxwritten_clean.saturating_sub(prev.maxwritten_clean);
+    let d_alloc = curr.buffers_alloc.saturating_sub(prev.buffers_alloc);
+
+    Some(BgwSummary {
+        checkpoints_per_min: (d_timed + d_req) as f64 / delta_time * 60.0,
+        ckpt_write_time_ms: d_write_time.max(0.0),
+        buffers_backend_s: d_backend as f64 / delta_time,
+        buffers_clean_s: d_clean as f64 / delta_time,
+        maxwritten_clean: d_maxwritten,
+        buffers_alloc_s: d_alloc as f64 / delta_time,
     })
 }
 

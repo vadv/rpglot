@@ -14,6 +14,9 @@ use crate::tui::style::Styles;
 
 /// Renders the process table with the current view mode.
 pub fn render_processes(frame: &mut Frame, area: Rect, state: &mut AppState) {
+    // Resolve selection by tracked entity ID
+    state.process_table.resolve_selection();
+
     // Sync ratatui TableState for auto-scrolling
     state
         .prc_ratatui_state
@@ -96,15 +99,7 @@ pub fn render_processes(frame: &mut Frame, area: Rect, state: &mut AppState) {
                         style = style.fg(ratatui::style::Color::Cyan);
                     }
 
-                    // Truncate cell text to column width to prevent overflow artifacts
-                    let max_w = visible_widths.get(col_idx).copied().unwrap_or(0) as usize;
-                    let text = if cell.len() > max_w && max_w > 0 {
-                        truncate_to_width(cell, max_w)
-                    } else {
-                        cell.clone()
-                    };
-
-                    Span::styled(text, style)
+                    Span::styled(cell.clone(), style)
                 })
                 .collect();
 
@@ -185,16 +180,25 @@ fn cell_style(
     }
 }
 
-/// Truncates a string to at most `max_width` bytes, respecting char boundaries.
-fn truncate_to_width(s: &str, max_width: usize) -> String {
-    if s.len() <= max_width {
-        return s.to_string();
+/// Normalizes text for single-line display in table cells.
+/// Replaces newlines, carriage returns, and tabs with spaces,
+/// then collapses multiple consecutive spaces into one.
+fn normalize_for_display(s: &str) -> String {
+    let s = s.replace('\n', " ").replace('\r', "").replace('\t', " ");
+    let mut result = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for ch in s.chars() {
+        if ch == ' ' {
+            if !prev_space {
+                result.push(ch);
+            }
+            prev_space = true;
+        } else {
+            result.push(ch);
+            prev_space = false;
+        }
     }
-    let mut end = max_width;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    s[..end].to_string()
+    result
 }
 
 /// Extracts process rows from snapshot with VGROW/RGROW and CPU% calculation.
@@ -324,9 +328,11 @@ pub fn extract_processes(
                     };
 
                     // Look up PostgreSQL info for this PID
+                    // Normalize query text to remove newlines/tabs that would cause
+                    // ratatui rendering artifacts (text wrapping into adjacent cells).
                     let (query, backend_type) = pg_info
                         .get(&p.pid)
-                        .map(|(q, bt)| (q.clone(), bt.clone()))
+                        .map(|(q, bt)| (q.clone().map(|s| normalize_for_display(&s)), bt.clone()))
                         .unwrap_or((None, None));
 
                     ProcessRow {
@@ -554,6 +560,19 @@ pub fn calculate_adaptive_widths(
             for (i, col_type) in col_types.iter().enumerate() {
                 if !matches!(col_type, ColumnType::Fixed) {
                     widths[i] = ((widths[i] as f64 * ratio) as u16).max(min_widths[i]);
+                }
+            }
+        }
+
+        // Overflow guard: if min_widths pushed total above target,
+        // shrink Expandable column(s) to absorb the excess.
+        let final_total: u16 = widths.iter().sum();
+        if final_total > target {
+            let excess = final_total - target;
+            for (i, col_type) in col_types.iter().enumerate().rev() {
+                if matches!(col_type, ColumnType::Expandable) {
+                    widths[i] = widths[i].saturating_sub(excess).max(min_widths[i]);
+                    break;
                 }
             }
         }

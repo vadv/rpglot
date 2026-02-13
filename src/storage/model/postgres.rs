@@ -416,6 +416,51 @@ pub struct PgStatUserTablesInfo {
     /// Last autoanalyze time (epoch secs, 0 = never).
     /// Source: `pg_stat_user_tables.last_autoanalyze`
     pub last_autoanalyze: i64,
+
+    /// Table size in bytes.
+    /// Source: `pg_relation_size(relid)`
+    pub size_bytes: i64,
+
+    // ---- pg_statio_user_tables — I/O block counters (cumulative) ----
+    /// Heap blocks read from disk (cumulative).
+    /// Source: `pg_statio_user_tables.heap_blks_read`
+    #[serde(default)]
+    pub heap_blks_read: i64,
+
+    /// Heap blocks found in buffer cache (cumulative).
+    /// Source: `pg_statio_user_tables.heap_blks_hit`
+    #[serde(default)]
+    pub heap_blks_hit: i64,
+
+    /// Index blocks read from disk (cumulative).
+    /// Source: `pg_statio_user_tables.idx_blks_read`
+    #[serde(default)]
+    pub idx_blks_read: i64,
+
+    /// Index blocks found in buffer cache (cumulative).
+    /// Source: `pg_statio_user_tables.idx_blks_hit`
+    #[serde(default)]
+    pub idx_blks_hit: i64,
+
+    /// TOAST blocks read from disk (cumulative).
+    /// Source: `pg_statio_user_tables.toast_blks_read`
+    #[serde(default)]
+    pub toast_blks_read: i64,
+
+    /// TOAST blocks found in buffer cache (cumulative).
+    /// Source: `pg_statio_user_tables.toast_blks_hit`
+    #[serde(default)]
+    pub toast_blks_hit: i64,
+
+    /// TOAST index blocks read from disk (cumulative).
+    /// Source: `pg_statio_user_tables.tidx_blks_read`
+    #[serde(default)]
+    pub tidx_blks_read: i64,
+
+    /// TOAST index blocks found in buffer cache (cumulative).
+    /// Source: `pg_statio_user_tables.tidx_blks_hit`
+    #[serde(default)]
+    pub tidx_blks_hit: i64,
 }
 
 /// Per-index statistics from pg_stat_user_indexes.
@@ -462,4 +507,89 @@ pub struct PgStatUserIndexesInfo {
     /// Index size in bytes.
     /// Source: `pg_relation_size(indexrelid)`
     pub size_bytes: i64,
+
+    // pg_statio_user_indexes — I/O block counters (cumulative)
+    #[serde(default)]
+    pub idx_blks_read: i64,
+    #[serde(default)]
+    pub idx_blks_hit: i64,
+}
+
+/// Lock tree node from recursive CTE on pg_locks + pg_stat_activity.
+///
+/// Each node represents a session participating in a blocking chain.
+/// Rows are ordered by (root_pid, path) for DFS traversal.
+/// `depth=1` = root blocker, `depth>1` = blocked sessions.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgLockTreeNode {
+    /// Process ID of the backend.
+    pub pid: i32,
+    /// Depth in the blocking tree (1 = root blocker).
+    pub depth: i32,
+    /// PID of the root blocker in this tree.
+    pub root_pid: i32,
+
+    /// Hash of database name.
+    pub datname_hash: u64,
+    /// Hash of user name.
+    pub usename_hash: u64,
+    /// Hash of session state (active, idle in transaction, etc.).
+    pub state_hash: u64,
+    /// Hash of wait event type (Lock, LWLock, etc.).
+    pub wait_event_type_hash: u64,
+    /// Hash of wait event name.
+    pub wait_event_hash: u64,
+    /// Hash of query text.
+    pub query_hash: u64,
+    /// Hash of application_name.
+    pub application_name_hash: u64,
+    /// Hash of backend_type.
+    pub backend_type_hash: u64,
+
+    /// Transaction start (epoch seconds).
+    pub xact_start: i64,
+    /// Query start (epoch seconds).
+    pub query_start: i64,
+    /// Last state change (epoch seconds, proxy for wait start).
+    pub state_change: i64,
+
+    /// Hash of lock type (relation, transactionid, etc.).
+    pub lock_type_hash: u64,
+    /// Hash of lock mode (AccessExclusiveLock, etc.).
+    pub lock_mode_hash: u64,
+    /// Whether this lock is granted (true) or being waited for (false).
+    pub lock_granted: bool,
+    /// Hash of lock target (schema.table or relation OID).
+    pub lock_target_hash: u64,
+}
+
+/// Background writer and checkpointer statistics.
+///
+/// Source: `pg_stat_bgwriter` (PG < 17: combined view)
+///         `pg_stat_bgwriter` + `pg_stat_checkpointer` (PG 17+: split views)
+///
+/// This is a singleton view (one row). All fields are cumulative counters.
+/// Rates are computed in the TUI from deltas between consecutive snapshots.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgStatBgwriterInfo {
+    /// Scheduled checkpoints performed (cumulative).
+    pub checkpoints_timed: i64,
+    /// Requested checkpoints performed (cumulative).
+    pub checkpoints_req: i64,
+    /// Total time spent writing checkpoint files to disk (ms, cumulative).
+    pub checkpoint_write_time: f64,
+    /// Total time spent synchronizing checkpoint files to disk (ms, cumulative).
+    pub checkpoint_sync_time: f64,
+    /// Buffers written during checkpoints (cumulative).
+    pub buffers_checkpoint: i64,
+    /// Buffers written by the background writer (cumulative).
+    pub buffers_clean: i64,
+    /// Times background writer stopped due to bgwriter_lru_maxpages (cumulative).
+    pub maxwritten_clean: i64,
+    /// Buffers written directly by backends (cumulative). 0 on PG 17+.
+    pub buffers_backend: i64,
+    /// Times backends had to execute their own fsync (cumulative). 0 on PG 17+.
+    pub buffers_backend_fsync: i64,
+    /// Buffers allocated (cumulative).
+    pub buffers_alloc: i64,
 }

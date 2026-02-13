@@ -87,31 +87,39 @@ impl PgActivityViewMode {
 /// pg_stat_user_tables view modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PgTablesViewMode {
-    /// Activity view: SEQ/s, IDX/s, INS/s, UPD/s, DEL/s, LIVE, DEAD, TABLE
+    /// Reads view: SEQ_RD/s, IDX_FT/s, TOT_RD/s, SEQ/s, IDX/s, SIZE, TABLE
     #[default]
-    Activity,
+    Reads,
+    /// Writes view: INS/s, UPD/s, DEL/s, HOT/s, LIVE, DEAD, TABLE
+    Writes,
     /// Scans view: SEQ/s, SEQ_TUP/s, IDX/s, IDX_TUP/s, SEQ%, TABLE
     Scans,
     /// Maintenance view: DEAD, LIVE, DEAD%, VAC/s, AVAC/s, LAST_AVAC, LAST_AANL, TABLE
     Maintenance,
+    /// I/O view: HEAP_RD/s, HEAP_HIT/s, IDX_RD/s, IDX_HIT/s, HIT%, MB/s, SIZE, TABLE
+    Io,
 }
 
 impl PgTablesViewMode {
     /// Default sort column index for this view mode.
     pub fn default_sort_column(&self) -> usize {
         match self {
-            Self::Activity => 0,    // SEQ/s
+            Self::Reads => 2,       // TOT_RD/s
+            Self::Writes => 0,      // INS/s
             Self::Scans => 4,       // SEQ%
             Self::Maintenance => 2, // DEAD%
+            Self::Io => 5,          // MB/s
         }
     }
 
     /// Number of columns in this view mode.
     pub fn column_count(&self) -> usize {
         match self {
-            Self::Activity => 8,    // SEQ/s IDX/s INS/s UPD/s DEL/s LIVE DEAD TABLE
-            Self::Scans => 6,       // SEQ/s SEQ_TUP/s IDX/s IDX_TUP/s SEQ% TABLE
+            Self::Reads => 9,  // SEQ_RD/s IDX_FT/s TOT_RD/s SEQ/s IDX/s HIT% MB/s SIZE TABLE
+            Self::Writes => 7, // INS/s UPD/s DEL/s HOT/s LIVE DEAD TABLE
+            Self::Scans => 6,  // SEQ/s SEQ_TUP/s IDX/s IDX_TUP/s SEQ% TABLE
             Self::Maintenance => 8, // DEAD LIVE DEAD% VAC/s AVAC/s LAST_AVAC LAST_AANL TABLE
+            Self::Io => 8,     // HEAP_RD/s HEAP_HIT/s IDX_RD/s IDX_HIT/s HIT% MB/s SIZE TABLE
         }
     }
 }
@@ -119,27 +127,31 @@ impl PgTablesViewMode {
 /// pg_stat_user_indexes view modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PgIndexesViewMode {
-    /// Usage view: IDX/s, TUP_RD/s, TUP_FT/s, SIZE, TABLE, INDEX
+    /// Usage view: IDX/s, TUP_RD/s, TUP_FT/s, HIT%, MB/s, SIZE, TABLE, INDEX
     #[default]
     Usage,
     /// Unused/waste view: IDX_SCAN, SIZE, TABLE, INDEX (sorted ascending)
     Unused,
+    /// I/O view: IDX_RD/s, IDX_HIT/s, HIT%, MB/s, SIZE, TABLE, INDEX
+    Io,
 }
 
 impl PgIndexesViewMode {
     /// Default sort column index for this view mode.
     pub fn default_sort_column(&self) -> usize {
         match self {
-            Self::Usage => 0,  // IDX/s
+            Self::Usage => 1,  // TUP_RD/s
             Self::Unused => 0, // IDX_SCAN
+            Self::Io => 3,     // MB/s
         }
     }
 
     /// Number of columns in this view mode.
     pub fn column_count(&self) -> usize {
         match self {
-            Self::Usage => 6,  // IDX/s TUP_RD/s TUP_FT/s SIZE TABLE INDEX
+            Self::Usage => 8,  // IDX/s TUP_RD/s TUP_FT/s HIT% MB/s SIZE TABLE INDEX
             Self::Unused => 4, // IDX_SCAN SIZE TABLE INDEX
+            Self::Io => 7,     // IDX_RD/s IDX_HIT/s HIT% MB/s SIZE TABLE INDEX
         }
     }
 
@@ -148,6 +160,7 @@ impl PgIndexesViewMode {
         match self {
             Self::Usage => false, // highest usage first
             Self::Unused => true, // unused (0 scans) first
+            Self::Io => false,    // highest I/O first
         }
     }
 }
@@ -165,8 +178,15 @@ pub struct PgTablesRates {
     pub n_tup_ins_s: Option<f64>,
     pub n_tup_upd_s: Option<f64>,
     pub n_tup_del_s: Option<f64>,
+    pub n_tup_hot_upd_s: Option<f64>,
     pub vacuum_count_s: Option<f64>,
     pub autovacuum_count_s: Option<f64>,
+
+    // I/O rates (from pg_statio_user_tables)
+    pub heap_blks_read_s: Option<f64>,
+    pub heap_blks_hit_s: Option<f64>,
+    pub idx_blks_read_s: Option<f64>,
+    pub idx_blks_hit_s: Option<f64>,
 }
 
 /// Rate metrics for a single `pg_stat_user_indexes` entry.
@@ -176,6 +196,10 @@ pub struct PgIndexesRates {
     pub idx_scan_s: Option<f64>,
     pub idx_tup_read_s: Option<f64>,
     pub idx_tup_fetch_s: Option<f64>,
+
+    // I/O rates (from pg_statio_user_indexes)
+    pub idx_blks_read_s: Option<f64>,
+    pub idx_blks_hit_s: Option<f64>,
 }
 
 /// Rate metrics for a single `pg_stat_statements` entry.

@@ -9,7 +9,8 @@ use crate::storage::model::{DataBlock, PgStatUserIndexesInfo, Snapshot};
 use crate::tui::state::{AppState, PopupState};
 
 use super::detail_common::{
-    format_bytes, kv, kv_delta_i64, push_help, render_popup_frame, resolve_hash, section,
+    format_bytes, kv, kv_delta_blks, kv_delta_i64, push_help, render_popup_frame, resolve_hash,
+    section,
 };
 
 const HELP: &[(&str, &str)] = &[
@@ -33,6 +34,19 @@ const HELP: &[(&str, &str)] = &[
     (
         "size",
         "Index size on disk (pg_relation_size); unused large indexes waste disk and slow down writes",
+    ),
+    // I/O Statistics (pg_statio_user_indexes) — displayed as bytes (blocks × 8 KB)
+    (
+        "idx_blks_read",
+        "Bytes read from disk for this index (blocks × 8 KB); high values = poor cache efficiency",
+    ),
+    (
+        "idx_blks_hit",
+        "Bytes served from buffer cache for this index; high hit ratio means index data is well-cached",
+    ),
+    (
+        "io_hit%",
+        "Buffer cache hit ratio: idx_blks_hit / (idx_blks_read + idx_blks_hit) * 100; <90% = significant disk I/O, <70% is critical",
     ),
 ];
 
@@ -73,7 +87,7 @@ pub fn render_pgi_detail(
         return;
     };
 
-    let prev = state.pgi.prev_sample.get(&indexrelid);
+    let prev = state.pgi.delta_base.get(&indexrelid);
     let content = build_content(idx, prev, interner, show_help);
 
     let scroll = match &mut state.popup {
@@ -153,6 +167,34 @@ fn build_content(
     lines.push(section("Size"));
     lines.push(kv("size", &format_bytes(idx.size_bytes as u64)));
     push_help(&mut lines, show_help, HELP, "size");
+    lines.push(Line::raw(""));
+
+    // I/O Statistics — blocks displayed as bytes (× 8 KB)
+    lines.push(section("I/O Statistics (pg_statio_user_indexes)"));
+    lines.push(kv_delta_blks(
+        "idx_blks_read",
+        idx.idx_blks_read,
+        prev.map(|p| p.idx_blks_read),
+    ));
+    push_help(&mut lines, show_help, HELP, "idx_blks_read");
+    lines.push(kv_delta_blks(
+        "idx_blks_hit",
+        idx.idx_blks_hit,
+        prev.map(|p| p.idx_blks_hit),
+    ));
+    push_help(&mut lines, show_help, HELP, "idx_blks_hit");
+
+    let total_io = idx.idx_blks_read + idx.idx_blks_hit;
+    let io_hit_pct = if total_io > 0 {
+        format!(
+            "{:.1}%",
+            (idx.idx_blks_hit as f64 / total_io as f64) * 100.0
+        )
+    } else {
+        "-".to_string()
+    };
+    lines.push(kv("io_hit%", &io_hit_pct));
+    push_help(&mut lines, show_help, HELP, "io_hit%");
 
     lines
 }

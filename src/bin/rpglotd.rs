@@ -155,34 +155,26 @@ fn init_logging(verbose: u8, quiet: bool) {
         .init();
 }
 
-/// Counts items in snapshot for logging.
-fn count_snapshot_items(
-    snapshot: &rpglot::storage::Snapshot,
-) -> (usize, usize, usize, usize, usize) {
-    let mut processes = 0;
-    let mut disks = 0;
-    let mut interfaces = 0;
-    let mut pg_sessions = 0;
-    let mut pg_stat_statements = 0;
+/// Describes the contents of a snapshot for logging.
+fn describe_snapshot(snapshot: &rpglot::storage::Snapshot) -> String {
+    let mut parts: Vec<String> = Vec::new();
 
     for block in &snapshot.blocks {
         match block {
-            DataBlock::Processes(p) => processes = p.len(),
-            DataBlock::SystemDisk(d) => disks = d.len(),
-            DataBlock::SystemNet(n) => interfaces = n.len(),
-            DataBlock::PgStatActivity(a) => pg_sessions = a.len(),
-            DataBlock::PgStatStatements(s) => pg_stat_statements = s.len(),
+            DataBlock::Processes(p) => parts.push(format!("{} processes", p.len())),
+            DataBlock::SystemDisk(d) => parts.push(format!("{} disks", d.len())),
+            DataBlock::SystemNet(n) => parts.push(format!("{} interfaces", n.len())),
+            DataBlock::PgStatActivity(a) => parts.push(format!("{} pg_sessions", a.len())),
+            DataBlock::PgStatStatements(s) => parts.push(format!("{} pg_stat_statements", s.len())),
+            DataBlock::PgStatDatabase(d) => parts.push(format!("{} pg_databases", d.len())),
+            DataBlock::PgStatUserTables(t) => parts.push(format!("{} pg_tables", t.len())),
+            DataBlock::PgStatUserIndexes(i) => parts.push(format!("{} pg_indexes", i.len())),
+            DataBlock::PgStatBgwriter(_) => parts.push("pg_bgwriter".to_string()),
             _ => {}
         }
     }
 
-    (
-        processes,
-        disks,
-        interfaces,
-        pg_sessions,
-        pg_stat_statements,
-    )
+    parts.join(", ")
 }
 
 fn main() {
@@ -324,32 +316,15 @@ fn main() {
         match collector.collect_snapshot() {
             Ok(snapshot) => {
                 snapshot_count += 1;
-                let (processes, disks, interfaces, pg_sessions, pg_stat_statements) =
-                    count_snapshot_items(&snapshot);
+                let description = describe_snapshot(&snapshot);
                 let serialized_size = bincode::serialize(&snapshot).map(|s| s.len()).unwrap_or(0);
 
-                // Build snapshot info message
-                if args.postgres {
-                    info!(
-                        "Snapshot #{}: {} processes, {} disks, {} interfaces, {} pg_sessions, {} pg_stat_statements ({})",
-                        snapshot_count,
-                        processes,
-                        disks,
-                        interfaces,
-                        pg_sessions,
-                        pg_stat_statements,
-                        format_size(serialized_size as u64)
-                    );
-                } else {
-                    info!(
-                        "Snapshot #{}: {} processes, {} disks, {} interfaces ({})",
-                        snapshot_count,
-                        processes,
-                        disks,
-                        interfaces,
-                        format_size(serialized_size as u64)
-                    );
-                }
+                info!(
+                    "Snapshot #{}: {} ({})",
+                    snapshot_count,
+                    description,
+                    format_size(serialized_size as u64)
+                );
 
                 // Log PostgreSQL error if any
                 if args.postgres
@@ -454,12 +429,12 @@ fn print_pg_warning(error: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::count_snapshot_items;
+    use super::describe_snapshot;
     use rpglot::storage::Snapshot;
     use rpglot::storage::model::{DataBlock, PgStatActivityInfo, PgStatStatementsInfo};
 
     #[test]
-    fn count_snapshot_items_includes_pg_stat_statements() {
+    fn describe_snapshot_lists_all_blocks() {
         let snapshot = Snapshot {
             timestamp: 0,
             blocks: vec![
@@ -474,12 +449,9 @@ mod tests {
             ],
         };
 
-        let (processes, disks, interfaces, pg_sessions, pg_stat_statements) =
-            count_snapshot_items(&snapshot);
-        assert_eq!(processes, 0);
-        assert_eq!(disks, 0);
-        assert_eq!(interfaces, 0);
-        assert_eq!(pg_sessions, 1);
-        assert_eq!(pg_stat_statements, 2);
+        let desc = describe_snapshot(&snapshot);
+        assert!(desc.contains("0 processes"));
+        assert!(desc.contains("1 pg_sessions"));
+        assert!(desc.contains("2 pg_stat_statements"));
     }
 }

@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::cgroup::CgroupInfo;
 use super::postgres::{
-    PgStatActivityInfo, PgStatDatabaseInfo, PgStatStatementsInfo, PgStatUserIndexesInfo,
-    PgStatUserTablesInfo,
+    PgLockTreeNode, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 use super::process::ProcessInfo;
 use super::system::{
@@ -50,6 +50,14 @@ pub enum DataBlock {
     /// PostgreSQL per-index statistics (per-database view).
     /// Source: `pg_stat_user_indexes` view
     PgStatUserIndexes(Vec<PgStatUserIndexesInfo>),
+
+    /// PostgreSQL lock tree (blocking chains).
+    /// Source: recursive CTE on `pg_locks` + `pg_stat_activity`
+    PgLockTree(Vec<PgLockTreeNode>),
+
+    /// PostgreSQL background writer / checkpointer statistics (singleton).
+    /// Source: `pg_stat_bgwriter` (+ `pg_stat_checkpointer` on PG 17+)
+    PgStatBgwriter(PgStatBgwriterInfo),
 
     /// CPU usage statistics (total and per-core).
     /// Source: `/proc/stat`
@@ -160,6 +168,13 @@ pub enum DataBlockDiff {
         removals: Vec<u32>,
     },
 
+    /// PostgreSQL lock tree changes.
+    /// `removals` contains PIDs of sessions no longer in blocking chains.
+    PgLockTree {
+        updates: Vec<PgLockTreeNode>,
+        removals: Vec<i32>,
+    },
+
     /// CPU statistics changes (per-core).
     /// `removals` contains cpu_ids of removed CPUs (rare, hot-plug).
     SystemCpu {
@@ -218,6 +233,9 @@ pub enum DataBlockDiff {
 
     /// Full cgroup metrics (container only).
     Cgroup(CgroupInfo),
+
+    /// Full bgwriter stats (singleton, always stored fully).
+    PgStatBgwriter(PgStatBgwriterInfo),
 }
 
 /// A point-in-time capture of all collected metrics.

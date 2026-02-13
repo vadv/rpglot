@@ -266,6 +266,16 @@ impl App {
                     }
                 })
             }
+            PopupState::PglDetail { pid, .. } => {
+                let pid = *pid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::PgLockTree(nodes) = b {
+                        nodes.iter().any(|n| n.pid == pid)
+                    } else {
+                        false
+                    }
+                })
+            }
             _ => false,
         };
         if close {
@@ -482,6 +492,9 @@ impl App {
             }
             Tab::PgIndexes => {
                 // No further drill-down from PGI
+            }
+            Tab::PgLocks => {
+                // No drill-down from PGL
             }
         }
     }

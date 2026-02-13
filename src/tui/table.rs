@@ -97,6 +97,8 @@ pub struct TableState<T: TableRow> {
     previous: HashMap<u64, T>,
     /// Diff status for each item.
     pub diff_status: HashMap<u64, DiffStatus>,
+    /// Tracked entity ID — follows the selected row across sort/filter changes.
+    pub tracked_id: Option<u64>,
 }
 
 impl<T: TableRow> Default for TableState<T> {
@@ -116,6 +118,7 @@ impl<T: TableRow> TableState<T> {
             scroll_offset: 0,
             previous: HashMap::new(),
             diff_status: HashMap::new(),
+            tracked_id: None,
         }
     }
 
@@ -215,6 +218,7 @@ impl<T: TableRow> TableState<T> {
     pub fn select_up(&mut self) {
         if self.selected > 0 {
             self.selected -= 1;
+            self.tracked_id = None;
         }
     }
 
@@ -223,17 +227,55 @@ impl<T: TableRow> TableState<T> {
         let max = self.filtered_items().len().saturating_sub(1);
         if self.selected < max {
             self.selected += 1;
+            self.tracked_id = None;
         }
     }
 
     /// Moves selection up by a page.
     pub fn page_up(&mut self, page_size: usize) {
         self.selected = self.selected.saturating_sub(page_size);
+        self.tracked_id = None;
     }
 
     /// Moves selection down by a page.
     pub fn page_down(&mut self, page_size: usize) {
         let max = self.filtered_items().len().saturating_sub(1);
         self.selected = (self.selected + page_size).min(max);
+        self.tracked_id = None;
+    }
+
+    /// Resolves selection by tracked entity ID.
+    /// If the tracked entity is found in the current filtered items, moves
+    /// `selected` to its new index. If not found, clears `tracked_id` and
+    /// clamps `selected`. Always updates `tracked_id` from the current row.
+    pub fn resolve_selection(&mut self) {
+        // Collect IDs to avoid borrow conflict with self
+        let ids: Vec<u64> = self.filtered_items().iter().map(|item| item.id()).collect();
+        let len = ids.len();
+        if len == 0 {
+            self.selected = 0;
+            self.tracked_id = None;
+            return;
+        }
+
+        // Try to find tracked entity in current filtered list
+        if let Some(tid) = self.tracked_id {
+            if let Some(pos) = ids.iter().position(|&id| id == tid) {
+                self.selected = pos;
+            } else {
+                // Entity disappeared — clamp selection
+                self.tracked_id = None;
+                if self.selected >= len {
+                    self.selected = len - 1;
+                }
+            }
+        } else if self.selected >= len {
+            self.selected = len - 1;
+        }
+
+        // Update tracked_id from current selection
+        if let Some(&id) = ids.get(self.selected) {
+            self.tracked_id = Some(id);
+        }
     }
 }

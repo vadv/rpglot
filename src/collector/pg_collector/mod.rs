@@ -22,8 +22,10 @@
 //! A single connection is used for all views (both cluster-wide and per-database).
 
 mod activity;
+mod bgwriter;
 mod database;
 mod indexes;
+mod locks;
 mod queries;
 mod statements;
 mod tables;

@@ -47,10 +47,14 @@ pub struct CollectorTiming {
     pub pg_statements: Duration,
     /// Time to collect PostgreSQL database stats.
     pub pg_database: Duration,
+    /// Time to collect PostgreSQL bgwriter stats.
+    pub pg_bgwriter: Duration,
     /// Time to collect PostgreSQL user tables stats.
     pub pg_tables: Duration,
     /// Time to collect PostgreSQL user indexes stats.
     pub pg_indexes: Duration,
+    /// Time to collect PostgreSQL lock tree.
+    pub pg_locks: Duration,
     /// Time to collect cgroup metrics.
     pub cgroup: Duration,
     /// PostgreSQL statements caching interval (Duration::ZERO = no caching).
@@ -324,6 +328,12 @@ impl<F: FileSystem + Clone> Collector<F> {
             }
 
             let start = Instant::now();
+            if let Some(bgwriter) = pg_collector.collect_bgwriter() {
+                blocks.push(DataBlock::PgStatBgwriter(bgwriter));
+            }
+            timing.pg_bgwriter = start.elapsed();
+
+            let start = Instant::now();
             match pg_collector.collect_tables(self.process_collector.interner_mut()) {
                 Ok(tables) if !tables.is_empty() => {
                     blocks.push(DataBlock::PgStatUserTables(tables));
@@ -340,6 +350,13 @@ impl<F: FileSystem + Clone> Collector<F> {
                 _ => {}
             }
             timing.pg_indexes = start.elapsed();
+
+            let start = Instant::now();
+            let lock_tree = pg_collector.collect_lock_tree(self.process_collector.interner_mut());
+            timing.pg_locks = start.elapsed();
+            if !lock_tree.is_empty() {
+                blocks.push(DataBlock::PgLockTree(lock_tree));
+            }
 
             // Store last error for TUI display
             self.pg_last_error = pg_collector.last_error().map(|s| s.to_string());

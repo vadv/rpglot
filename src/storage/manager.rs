@@ -2,11 +2,11 @@ use crate::storage::chunk::Chunk;
 use crate::storage::interner::StringInterner;
 #[allow(unused_imports)]
 use crate::storage::model::{
-    DataBlock, DataBlockDiff, Delta, PgStatActivityInfo, PgStatDatabaseInfo, PgStatStatementsInfo,
-    PgStatUserIndexesInfo, PgStatUserTablesInfo, ProcessInfo, Snapshot, SystemCpuInfo,
-    SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo, SystemMemInfo,
-    SystemNetInfo, SystemNetSnmpInfo, SystemPsiInfo, SystemSoftirqInfo, SystemStatInfo,
-    SystemVmstatInfo,
+    DataBlock, DataBlockDiff, Delta, PgLockTreeNode, PgStatActivityInfo, PgStatDatabaseInfo,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, ProcessInfo, Snapshot,
+    SystemCpuInfo, SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo,
+    SystemMemInfo, SystemNetInfo, SystemNetSnmpInfo, SystemPsiInfo, SystemSoftirqInfo,
+    SystemStatInfo, SystemVmstatInfo,
 };
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use std::collections::{HashMap, HashSet};
@@ -211,6 +211,21 @@ impl StorageManager {
                         hashes.insert(i.schemaname_hash);
                         hashes.insert(i.relname_hash);
                         hashes.insert(i.indexrelname_hash);
+                    }
+                }
+                DataBlock::PgLockTree(nodes) => {
+                    for n in nodes {
+                        hashes.insert(n.datname_hash);
+                        hashes.insert(n.usename_hash);
+                        hashes.insert(n.state_hash);
+                        hashes.insert(n.wait_event_type_hash);
+                        hashes.insert(n.wait_event_hash);
+                        hashes.insert(n.query_hash);
+                        hashes.insert(n.application_name_hash);
+                        hashes.insert(n.backend_type_hash);
+                        hashes.insert(n.lock_type_hash);
+                        hashes.insert(n.lock_mode_hash);
+                        hashes.insert(n.lock_target_hash);
                     }
                 }
                 _ => {}
@@ -423,6 +438,27 @@ impl StorageManager {
                             removals: Vec::new(),
                         });
                     }
+                }
+                DataBlock::PgLockTree(curr_locks) => {
+                    let last_locks = last.blocks.iter().find_map(|b| {
+                        if let DataBlock::PgLockTree(l) = b {
+                            Some(l)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(last_locks) = last_locks {
+                        diff_blocks.push(self.compute_pg_lock_tree_diff(last_locks, curr_locks));
+                    } else {
+                        diff_blocks.push(DataBlockDiff::PgLockTree {
+                            updates: curr_locks.clone(),
+                            removals: Vec::new(),
+                        });
+                    }
+                }
+                DataBlock::PgStatBgwriter(curr_bgw) => {
+                    diff_blocks.push(DataBlockDiff::PgStatBgwriter(curr_bgw.clone()));
                 }
                 DataBlock::SystemCpu(curr_cpu) => {
                     let last_cpu = last.blocks.iter().find_map(|b| {
@@ -735,6 +771,37 @@ impl StorageManager {
         }
 
         DataBlockDiff::PgStatUserIndexes { updates, removals }
+    }
+
+    fn compute_pg_lock_tree_diff(
+        &self,
+        last: &[PgLockTreeNode],
+        current: &[PgLockTreeNode],
+    ) -> DataBlockDiff {
+        let mut updates = Vec::new();
+        let mut removals = Vec::new();
+
+        let last_map: HashMap<i32, &PgLockTreeNode> = last.iter().map(|n| (n.pid, n)).collect();
+        let current_map: HashMap<i32, &PgLockTreeNode> =
+            current.iter().map(|n| (n.pid, n)).collect();
+
+        for (pid, node) in &current_map {
+            if let Some(last_node) = last_map.get(pid) {
+                if *last_node != *node {
+                    updates.push((*node).clone());
+                }
+            } else {
+                updates.push((*node).clone());
+            }
+        }
+
+        for pid in last_map.keys() {
+            if !current_map.contains_key(pid) {
+                removals.push(*pid);
+            }
+        }
+
+        DataBlockDiff::PgLockTree { updates, removals }
     }
 
     fn compute_system_cpu_diff(
@@ -1318,6 +1385,23 @@ impl StorageManager {
                         }
                     }
                 }
+                DataBlockDiff::PgLockTree { updates, removals } => {
+                    if let Some(DataBlock::PgLockTree(nodes)) = new_blocks
+                        .iter_mut()
+                        .find(|b| matches!(b, DataBlock::PgLockTree(_)))
+                    {
+                        nodes.retain(|n| !removals.contains(&n.pid));
+                        for update in updates {
+                            if let Some(existing) = nodes.iter_mut().find(|n| n.pid == update.pid) {
+                                *existing = update.clone();
+                            } else {
+                                nodes.push(update.clone());
+                            }
+                        }
+                    } else if !updates.is_empty() {
+                        new_blocks.push(DataBlock::PgLockTree(updates.clone()));
+                    }
+                }
                 DataBlockDiff::SystemPsi(psi) => {
                     if let Some(block) = new_blocks
                         .iter_mut()
@@ -1332,6 +1416,14 @@ impl StorageManager {
                         .find(|b| matches!(b, DataBlock::SystemVmstat(_)))
                     {
                         *block = DataBlock::SystemVmstat(vmstat.clone());
+                    }
+                }
+                DataBlockDiff::PgStatBgwriter(bgw) => {
+                    if let Some(block) = new_blocks
+                        .iter_mut()
+                        .find(|b| matches!(b, DataBlock::PgStatBgwriter(_)))
+                    {
+                        *block = DataBlock::PgStatBgwriter(bgw.clone());
                     }
                 }
                 DataBlockDiff::SystemFile(file) => {

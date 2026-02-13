@@ -19,6 +19,7 @@ pub enum Tab {
     PgStatements,
     PgTables,
     PgIndexes,
+    PgLocks,
 }
 
 impl Tab {
@@ -29,6 +30,7 @@ impl Tab {
             Tab::PgStatements,
             Tab::PgTables,
             Tab::PgIndexes,
+            Tab::PgLocks,
         ]
     }
 }
@@ -55,6 +57,7 @@ impl Tab {
             Tab::PgStatements => "PGS",
             Tab::PgTables => "PGT",
             Tab::PgIndexes => "PGI",
+            Tab::PgLocks => "PGL",
         }
     }
 
@@ -65,18 +68,20 @@ impl Tab {
             Tab::PostgresActive => Tab::PgStatements,
             Tab::PgStatements => Tab::PgTables,
             Tab::PgTables => Tab::PgIndexes,
-            Tab::PgIndexes => Tab::Processes,
+            Tab::PgIndexes => Tab::PgLocks,
+            Tab::PgLocks => Tab::Processes,
         }
     }
 
     /// Returns the previous tab.
     pub fn prev(&self) -> Tab {
         match self {
-            Tab::Processes => Tab::PgIndexes,
+            Tab::Processes => Tab::PgLocks,
             Tab::PostgresActive => Tab::Processes,
             Tab::PgStatements => Tab::PostgresActive,
             Tab::PgTables => Tab::PgStatements,
             Tab::PgIndexes => Tab::PgTables,
+            Tab::PgLocks => Tab::PgIndexes,
         }
     }
 }
@@ -131,6 +136,12 @@ pub enum PopupState {
         scroll: usize,
         show_help: bool,
     },
+    /// pg_locks tree detail popup (PGL tab).
+    PglDetail {
+        pid: i32,
+        scroll: usize,
+        show_help: bool,
+    },
 }
 
 impl Default for PopupState {
@@ -154,6 +165,7 @@ impl PopupState {
                 | Self::PgsDetail { .. }
                 | Self::PgtDetail { .. }
                 | Self::PgiDetail { .. }
+                | Self::PglDetail { .. }
         )
     }
 }

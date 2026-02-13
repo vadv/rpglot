@@ -196,6 +196,47 @@ pub fn kv_delta_i64(key: &str, current: i64, prev: Option<i64>) -> Line<'static>
     Line::from(spans)
 }
 
+/// Key-value for PG block counters: displays blocks as human-readable bytes
+/// (blocks * 8192), delta also in bytes.
+pub fn kv_delta_blks(key: &str, blocks: i64, prev_blocks: Option<i64>) -> Line<'static> {
+    let bytes = blocks as f64 * 8192.0;
+    let mut spans = vec![
+        Span::styled(format!("{:>20}: ", key), Styles::cpu()),
+        Span::raw(format_blks_as_bytes(bytes)),
+    ];
+    if let Some(p) = prev_blocks {
+        let d = blocks - p;
+        let d_bytes = d as f64 * 8192.0;
+        spans.push(Span::styled(
+            format!(
+                "  {}{}",
+                if d >= 0 { "+" } else { "" },
+                format_blks_as_bytes(d_bytes.abs())
+            ),
+            delta_style(d),
+        ));
+    }
+    Line::from(spans)
+}
+
+/// Format bytes count (from blocks * 8192) to human-readable.
+fn format_blks_as_bytes(bytes: f64) -> String {
+    let abs = bytes.abs();
+    if abs >= 1_099_511_627_776.0 {
+        format!("{:.1} TB", bytes / 1_099_511_627_776.0)
+    } else if abs >= 1_073_741_824.0 {
+        format!("{:.1} GB", bytes / 1_073_741_824.0)
+    } else if abs >= 1_048_576.0 {
+        format!("{:.1} MB", bytes / 1_048_576.0)
+    } else if abs >= 1024.0 {
+        format!("{:.1} KB", bytes / 1024.0)
+    } else if abs >= 1.0 {
+        format!("{:.0} B", bytes)
+    } else {
+        "0".to_string()
+    }
+}
+
 /// Key-value with f64 delta shown as colored span.
 pub fn kv_delta_f64(key: &str, current: f64, prev: Option<f64>, precision: usize) -> Line<'static> {
     let mut spans = vec![
@@ -329,6 +370,23 @@ pub fn format_duration_or_none(secs: i64) -> String {
     } else {
         format_duration(secs)
     }
+}
+
+/// Format epoch timestamp as age from now, or "-" for zero/invalid.
+/// Input is UNIX epoch seconds (from EXTRACT(EPOCH FROM timestamp)).
+pub fn format_epoch_age(epoch_secs: i64) -> String {
+    if epoch_secs <= 0 {
+        return "-".to_string();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let age = now.saturating_sub(epoch_secs);
+    if age < 0 {
+        return "-".to_string();
+    }
+    format_duration(age)
 }
 
 /// Resolve hash to string using interner.

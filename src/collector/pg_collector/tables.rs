@@ -7,7 +7,7 @@ use std::time::Instant;
 use super::PgCollectError;
 use super::PostgresCollector;
 use super::format_postgres_error;
-use super::queries::build_stat_user_tables_query;
+use super::queries::{build_stat_user_tables_query, build_statio_user_tables_query};
 
 /// Cache entry for pg_stat_user_tables rows.
 /// Stores original strings for re-interning on each call.
@@ -73,11 +73,71 @@ impl PostgresCollector {
             results.push(info.0);
         }
 
+        // Merge pg_statio_user_tables I/O counters by relid
+        let statio_query = build_statio_user_tables_query();
+        let statio_rows = client.query(statio_query, &[]).unwrap_or_default();
+        let statio_map: std::collections::HashMap<u32, StatioRow> = statio_rows
+            .iter()
+            .filter_map(|row| parse_statio_row(row).map(|s| (s.relid, s)))
+            .collect();
+
+        for info in &mut results {
+            if let Some(s) = statio_map.get(&info.relid) {
+                s.apply(info);
+            }
+        }
+        for entry in &mut cache {
+            if let Some(s) = statio_map.get(&entry.info.relid) {
+                s.apply(&mut entry.info);
+            }
+        }
+
         self.tables_cache = cache;
         self.tables_cache_time = Some(Instant::now());
 
         Ok(results)
     }
+}
+
+/// Parsed statio columns for merge (not stored separately).
+struct StatioRow {
+    relid: u32,
+    heap_blks_read: i64,
+    heap_blks_hit: i64,
+    idx_blks_read: i64,
+    idx_blks_hit: i64,
+    toast_blks_read: i64,
+    toast_blks_hit: i64,
+    tidx_blks_read: i64,
+    tidx_blks_hit: i64,
+}
+
+impl StatioRow {
+    fn apply(&self, info: &mut PgStatUserTablesInfo) {
+        info.heap_blks_read = self.heap_blks_read;
+        info.heap_blks_hit = self.heap_blks_hit;
+        info.idx_blks_read = self.idx_blks_read;
+        info.idx_blks_hit = self.idx_blks_hit;
+        info.toast_blks_read = self.toast_blks_read;
+        info.toast_blks_hit = self.toast_blks_hit;
+        info.tidx_blks_read = self.tidx_blks_read;
+        info.tidx_blks_hit = self.tidx_blks_hit;
+    }
+}
+
+/// Safely parses a single row from pg_statio_user_tables query.
+fn parse_statio_row(row: &postgres::Row) -> Option<StatioRow> {
+    Some(StatioRow {
+        relid: row.try_get::<_, i64>(0).ok()? as u32,
+        heap_blks_read: row.try_get(1).unwrap_or(0),
+        heap_blks_hit: row.try_get(2).unwrap_or(0),
+        idx_blks_read: row.try_get(3).unwrap_or(0),
+        idx_blks_hit: row.try_get(4).unwrap_or(0),
+        toast_blks_read: row.try_get(5).unwrap_or(0),
+        toast_blks_hit: row.try_get(6).unwrap_or(0),
+        tidx_blks_read: row.try_get(7).unwrap_or(0),
+        tidx_blks_hit: row.try_get(8).unwrap_or(0),
+    })
 }
 
 /// Safely parses a single row from pg_stat_user_tables query.
@@ -112,6 +172,15 @@ fn parse_table_row(
         last_autovacuum: row.try_get(18).unwrap_or(0),
         last_analyze: row.try_get(19).unwrap_or(0),
         last_autoanalyze: row.try_get(20).unwrap_or(0),
+        size_bytes: row.try_get(21).unwrap_or(0),
+        heap_blks_read: 0,
+        heap_blks_hit: 0,
+        idx_blks_read: 0,
+        idx_blks_hit: 0,
+        toast_blks_read: 0,
+        toast_blks_hit: 0,
+        tidx_blks_read: 0,
+        tidx_blks_hit: 0,
     };
 
     Some((info, schemaname, relname))

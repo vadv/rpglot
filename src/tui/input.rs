@@ -44,7 +44,8 @@ fn dispatch_navigation(state: &mut AppState, action: NavAction) {
         | PopupState::PgDetail { scroll, .. }
         | PopupState::PgsDetail { scroll, .. }
         | PopupState::PgtDetail { scroll, .. }
-        | PopupState::PgiDetail { scroll, .. } => match action {
+        | PopupState::PgiDetail { scroll, .. }
+        | PopupState::PglDetail { scroll, .. } => match action {
             NavAction::Up => *scroll = scroll.saturating_sub(1),
             NavAction::Down => *scroll = scroll.saturating_add(1),
             NavAction::PageUp(n) => *scroll = scroll.saturating_sub(n),
@@ -98,6 +99,14 @@ fn dispatch_navigation(state: &mut AppState, action: NavAction) {
                 NavAction::Home => state.pgi.home(),
                 NavAction::End => state.pgi.end(),
             },
+            Tab::PgLocks => match action {
+                NavAction::Up => state.pgl.select_up(),
+                NavAction::Down => state.pgl.select_down(),
+                NavAction::PageUp(n) => state.pgl.page_up(n),
+                NavAction::PageDown(n) => state.pgl.page_down(n),
+                NavAction::Home => state.pgl.home(),
+                NavAction::End => state.pgl.end(),
+            },
         },
     }
 }
@@ -150,6 +159,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         | KeyCode::Char('3')
         | KeyCode::Char('4')
         | KeyCode::Char('5')
+        | KeyCode::Char('6')
             if state.any_popup_open() =>
         {
             state.status_message = Some("Close popup (Esc) before switching tabs".to_string());
@@ -181,6 +191,10 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         }
         KeyCode::Char('5') => {
             state.switch_tab(Tab::PgIndexes);
+            KeyAction::None
+        }
+        KeyCode::Char('6') => {
+            state.switch_tab(Tab::PgLocks);
             KeyAction::None
         }
 
@@ -218,6 +232,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 Tab::PgStatements => state.pgs.next_sort_column(),
                 Tab::PgTables => state.pgt.next_sort_column(),
                 Tab::PgIndexes => state.pgi.next_sort_column(),
+                Tab::PgLocks => {} // tree order, no sorting
             }
             KeyAction::None
         }
@@ -228,6 +243,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 Tab::PgStatements => state.pgs.toggle_sort_direction(),
                 Tab::PgTables => state.pgt.toggle_sort_direction(),
                 Tab::PgIndexes => state.pgi.toggle_sort_direction(),
+                Tab::PgLocks => {} // tree order, no sorting
             }
             KeyAction::None
         }
@@ -379,6 +395,16 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.pgs.sort_column =
                     super::state::PgStatementsViewMode::Io.default_sort_column();
                 state.pgs.sort_ascending = false;
+            } else if state.current_tab == Tab::PgTables {
+                state.pgt.view_mode = super::state::PgTablesViewMode::Io;
+                state.pgt.selected = 0;
+                state.pgt.sort_column = super::state::PgTablesViewMode::Io.default_sort_column();
+                state.pgt.sort_ascending = false;
+            } else if state.current_tab == Tab::PgIndexes {
+                state.pgi.view_mode = super::state::PgIndexesViewMode::Io;
+                state.pgi.selected = 0;
+                state.pgi.sort_column = super::state::PgIndexesViewMode::Io.default_sort_column();
+                state.pgi.sort_ascending = false;
             }
             KeyAction::None
         }
@@ -395,13 +421,12 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
             KeyAction::None
         }
 
-        // PGT view modes: a=Activity, x=Scans, n=Maintenance
+        // PGT view modes: a=Reads, w=Writes, x=Scans, n=Maintenance
         KeyCode::Char('a') | KeyCode::Char('A') => {
             if state.current_tab == Tab::PgTables {
-                state.pgt.view_mode = super::state::PgTablesViewMode::Activity;
+                state.pgt.view_mode = super::state::PgTablesViewMode::Reads;
                 state.pgt.selected = 0;
-                state.pgt.sort_column =
-                    super::state::PgTablesViewMode::Activity.default_sort_column();
+                state.pgt.sort_column = super::state::PgTablesViewMode::Reads.default_sort_column();
                 state.pgt.sort_ascending = false;
             }
             KeyAction::None
@@ -438,7 +463,13 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
             KeyAction::None
         }
         KeyCode::Char('w') | KeyCode::Char('W') => {
-            if state.current_tab == Tab::PgIndexes {
+            if state.current_tab == Tab::PgTables {
+                state.pgt.view_mode = super::state::PgTablesViewMode::Writes;
+                state.pgt.selected = 0;
+                state.pgt.sort_column =
+                    super::state::PgTablesViewMode::Writes.default_sort_column();
+                state.pgt.sort_ascending = false;
+            } else if state.current_tab == Tab::PgIndexes {
                 state.pgi.view_mode = super::state::PgIndexesViewMode::Unused;
                 state.pgi.selected = 0;
                 state.pgi.sort_column =
@@ -456,7 +487,8 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 | PopupState::PgDetail { show_help, .. }
                 | PopupState::PgsDetail { show_help, .. }
                 | PopupState::PgtDetail { show_help, .. }
-                | PopupState::PgiDetail { show_help, .. } => {
+                | PopupState::PgiDetail { show_help, .. }
+                | PopupState::PglDetail { show_help, .. } => {
                     *show_help = !*show_help;
                 }
                 PopupState::Help { .. } => {
@@ -486,14 +518,9 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.popup = match state.popup {
                     PopupState::ProcessDetail { .. } => PopupState::None,
                     _ => {
-                        let filtered = state.process_table.filtered_items();
-                        let selected_idx = state
-                            .process_table
-                            .selected
-                            .min(filtered.len().saturating_sub(1));
-                        if let Some(row) = filtered.get(selected_idx) {
+                        if let Some(tid) = state.process_table.tracked_id {
                             PopupState::ProcessDetail {
-                                pid: row.pid,
+                                pid: tid as u32,
                                 scroll: 0,
                                 show_help: false,
                             }
@@ -554,6 +581,21 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                         if let Some(indexrelid) = state.pgi.tracked_indexrelid {
                             PopupState::PgiDetail {
                                 indexrelid,
+                                scroll: 0,
+                                show_help: false,
+                            }
+                        } else {
+                            PopupState::None
+                        }
+                    }
+                };
+            } else if state.current_tab == Tab::PgLocks {
+                state.popup = match state.popup {
+                    PopupState::PglDetail { .. } => PopupState::None,
+                    _ => {
+                        if let Some(pid) = state.pgl.tracked_pid {
+                            PopupState::PglDetail {
+                                pid,
                                 scroll: 0,
                                 show_help: false,
                             }
@@ -783,6 +825,7 @@ fn handle_filter_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 Tab::PgStatements => state.pgs.filter = None,
                 Tab::PgTables => state.pgt.filter = None,
                 Tab::PgIndexes => state.pgi.filter = None,
+                Tab::PgLocks => state.pgl.filter = None,
             }
             KeyAction::None
         }
@@ -821,5 +864,6 @@ fn apply_current_filter(state: &mut AppState) {
         Tab::PgStatements => state.pgs.filter = filter,
         Tab::PgTables => state.pgt.filter = filter,
         Tab::PgIndexes => state.pgi.filter = filter,
+        Tab::PgLocks => state.pgl.filter = filter,
     }
 }

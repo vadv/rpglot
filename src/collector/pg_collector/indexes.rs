@@ -7,7 +7,7 @@ use std::time::Instant;
 use super::PgCollectError;
 use super::PostgresCollector;
 use super::format_postgres_error;
-use super::queries::build_stat_user_indexes_query;
+use super::queries::{build_stat_user_indexes_query, build_statio_user_indexes_query};
 
 /// Cache entry for pg_stat_user_indexes rows.
 /// Stores original strings for re-interning on each call.
@@ -76,6 +76,24 @@ impl PostgresCollector {
             results.push(info.0);
         }
 
+        // Merge I/O counters from pg_statio_user_indexes (graceful on failure)
+        let statio_query = build_statio_user_indexes_query();
+        let statio_rows = client.query(statio_query, &[]).unwrap_or_default();
+        let statio_map: std::collections::HashMap<u32, IndexStatioRow> = statio_rows
+            .iter()
+            .filter_map(|row| parse_index_statio_row(row).map(|s| (s.indexrelid, s)))
+            .collect();
+        for r in &mut results {
+            if let Some(s) = statio_map.get(&r.indexrelid) {
+                s.apply(r);
+            }
+        }
+        for c in &mut cache {
+            if let Some(s) = statio_map.get(&c.info.indexrelid) {
+                s.apply(&mut c.info);
+            }
+        }
+
         self.indexes_cache = cache;
         self.indexes_cache_time = Some(Instant::now());
 
@@ -105,7 +123,30 @@ fn parse_index_row(
         idx_tup_read: row.try_get(6).unwrap_or(0),
         idx_tup_fetch: row.try_get(7).unwrap_or(0),
         size_bytes: row.try_get(8).unwrap_or(0),
+        idx_blks_read: 0,
+        idx_blks_hit: 0,
     };
 
     Some((info, schemaname, relname, indexrelname))
+}
+
+struct IndexStatioRow {
+    indexrelid: u32,
+    idx_blks_read: i64,
+    idx_blks_hit: i64,
+}
+
+impl IndexStatioRow {
+    fn apply(&self, info: &mut PgStatUserIndexesInfo) {
+        info.idx_blks_read = self.idx_blks_read;
+        info.idx_blks_hit = self.idx_blks_hit;
+    }
+}
+
+fn parse_index_statio_row(row: &postgres::Row) -> Option<IndexStatioRow> {
+    Some(IndexStatioRow {
+        indexrelid: row.try_get::<_, i64>(0).ok()? as u32,
+        idx_blks_read: row.try_get(1).unwrap_or(0),
+        idx_blks_hit: row.try_get(2).unwrap_or(0),
+    })
 }

@@ -133,7 +133,12 @@ pub fn calculate_summary_height(snapshot: Option<&Snapshot>) -> u16 {
             .blocks
             .iter()
             .any(|b| matches!(b, DataBlock::PgStatDatabase(_)));
-        let pg_lines = if has_pg_database { 1 } else { 0 };
+        let has_pg_bgwriter = snap
+            .blocks
+            .iter()
+            .any(|b| matches!(b, DataBlock::PgStatBgwriter(_)));
+        let pg_lines =
+            (if has_pg_database { 1 } else { 0 }) + (if has_pg_bgwriter { 1 } else { 0 });
 
         let left_lines = left_base + disk_count + net_count + pg_lines;
 
@@ -300,6 +305,11 @@ fn build_left_column(metrics: &SummaryMetrics, width: usize) -> Vec<Line<'static
         lines.push(render_pg_line(pg, width));
     }
 
+    // Add PostgreSQL bgwriter summary line if data is available
+    if let Some(ref bgw) = metrics.bgw_summary {
+        lines.push(render_bgw_line(bgw, width));
+    }
+
     lines
 }
 
@@ -384,6 +394,9 @@ struct SummaryMetrics {
 
     // PostgreSQL instance-level summary (from pg_stat_database)
     pg_summary: Option<PgSummary>,
+
+    // PostgreSQL bgwriter summary (from pg_stat_bgwriter)
+    bgw_summary: Option<BgwSummary>,
 }
 
 /// CPU metrics for a single CPU or total.
@@ -478,6 +491,23 @@ struct PgSummary {
     rollbacks: i64,
 }
 
+/// PostgreSQL background writer summary (rates from pg_stat_bgwriter).
+#[derive(Clone, Default)]
+struct BgwSummary {
+    /// Checkpoints per minute (timed + requested).
+    checkpoints_per_min: f64,
+    /// Checkpoint write time in ms during this interval.
+    ckpt_write_time_ms: f64,
+    /// Buffers written by backends per second.
+    buffers_backend_s: f64,
+    /// Buffers cleaned by bgwriter per second.
+    buffers_clean_s: f64,
+    /// Times bgwriter hit maxwritten_clean limit in this interval.
+    maxwritten_clean: i64,
+    /// Buffers allocated per second.
+    buffers_alloc_s: f64,
+}
+
 // ============================================================================
 // Fixed-width metric formatting (Variant 2: right-aligned values)
 // Each metric has a fixed width: "label:" + right-aligned value
@@ -541,6 +571,14 @@ pub(super) mod metric_widths {
     pub const PG_TUP: usize = 14; // "tup:" + value
     pub const PG_TMP: usize = 14; // "tmp:" + value
     pub const PG_DLOCK: usize = 11; // "dlock:" + value
+
+    // BGW line: ckpt: 0.1/m  wr: 125ms  be:  45/s  cln: 1.2K/s  mxw:     0  alloc: 5.6K/s
+    pub const BGW_CKPT: usize = 12; // "ckpt:" + value
+    pub const BGW_WR: usize = 11; // "wr:" + value
+    pub const BGW_BE: usize = 11; // "be:" + value
+    pub const BGW_CLN: usize = 13; // "cln:" + value
+    pub const BGW_MXW: usize = 10; // "mxw:" + value
+    pub const BGW_ALLOC: usize = 15; // "alloc:" + value
 }
 
 use metric_widths::*;

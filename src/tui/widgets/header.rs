@@ -106,6 +106,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         Tab::PgStatements => state.pgs.filter.as_deref(),
         Tab::PgTables => state.pgt.filter.as_deref(),
         Tab::PgIndexes => state.pgi.filter.as_deref(),
+        Tab::PgLocks => state.pgl.filter.as_deref(),
     };
     let (right_content, right_style) = if let Some(msg) = &state.status_message {
         (msg.clone(), Styles::modified_item())

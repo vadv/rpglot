@@ -9,9 +9,9 @@ use crate::storage::StringInterner;
 use super::state::{AppState, InputMode, PopupState, Tab};
 use super::widgets::{
     calculate_summary_height, render_debug_popup, render_header, render_help, render_pg_detail,
-    render_pg_indexes, render_pg_statements, render_pg_tables, render_pgi_detail,
-    render_pgs_detail, render_pgt_detail, render_postgres, render_process_detail, render_processes,
-    render_quit_confirm, render_summary, render_time_jump,
+    render_pg_indexes, render_pg_locks, render_pg_statements, render_pg_tables, render_pgi_detail,
+    render_pgl_detail, render_pgs_detail, render_pgt_detail, render_postgres,
+    render_process_detail, render_processes, render_quit_confirm, render_summary, render_time_jump,
 };
 
 /// Main render function.
@@ -61,6 +61,7 @@ pub fn render(
         PgsDetail,
         PgtDetail,
         PgiDetail,
+        PglDetail,
         Debug,
         QuitConfirm,
     }
@@ -82,6 +83,7 @@ pub fn render(
         PopupState::PgiDetail { .. } if state.current_tab == Tab::PgIndexes => {
             ActivePopup::PgiDetail
         }
+        PopupState::PglDetail { .. } if state.current_tab == Tab::PgLocks => ActivePopup::PglDetail,
         PopupState::Debug if state.is_live => ActivePopup::Debug,
         PopupState::QuitConfirm => ActivePopup::QuitConfirm,
         _ => ActivePopup::None,
@@ -106,6 +108,7 @@ pub fn render(
         ActivePopup::PgsDetail => render_pgs_detail(frame, area, state, interner),
         ActivePopup::PgtDetail => render_pgt_detail(frame, area, state, interner),
         ActivePopup::PgiDetail => render_pgi_detail(frame, area, state, interner),
+        ActivePopup::PglDetail => render_pgl_detail(frame, area, state, interner),
         ActivePopup::Debug => render_debug_popup(frame, area, state, timing),
         ActivePopup::QuitConfirm => render_quit_confirm(frame, area),
         ActivePopup::None => {}
@@ -135,5 +138,6 @@ fn render_content(
         Tab::PgStatements => render_pg_statements(frame, area, state, interner),
         Tab::PgTables => render_pg_tables(frame, area, state, interner),
         Tab::PgIndexes => render_pg_indexes(frame, area, state, interner),
+        Tab::PgLocks => render_pg_locks(frame, area, state, interner),
     }
 }

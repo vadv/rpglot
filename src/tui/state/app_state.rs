@@ -6,8 +6,9 @@ use std::collections::HashMap;
 use crate::storage::Snapshot;
 
 use super::{
-    CachedWidths, InputMode, PgActivityTabState, PgIndexesTabState, PgStatementsTabState,
-    PgTablesTabState, PopupState, ProcessRow, ProcessViewMode, Tab, TabState, TableState,
+    CachedWidths, InputMode, PgActivityTabState, PgIndexesTabState, PgLocksTabState,
+    PgStatementsTabState, PgTablesTabState, PopupState, ProcessRow, ProcessViewMode, Tab, TabState,
+    TableState,
 };
 
 /// Main application state.
@@ -85,6 +86,10 @@ pub struct AppState {
     /// pg_stat_user_indexes (PGI) tab state.
     pub pgi: PgIndexesTabState,
 
+    // ===== pg_locks tree (PGL tab) =====
+    /// pg_locks tree (PGL) tab state.
+    pub pgl: PgLocksTabState,
+
     // ===== Status message =====
     /// Temporary status message shown in the header (e.g., why an action was blocked).
     pub status_message: Option<String>,
@@ -139,6 +144,7 @@ impl AppState {
             pgs: PgStatementsTabState::default(),
             pgt: PgTablesTabState::default(),
             pgi: PgIndexesTabState::default(),
+            pgl: PgLocksTabState::default(),
 
             status_message: None,
 
@@ -180,6 +186,12 @@ impl AppState {
                 sort_column: self.pgi.sort_column,
                 sort_ascending: self.pgi.sort_ascending,
                 selected: self.pgi.selected,
+            },
+            Tab::PgLocks => TabState {
+                filter: self.pgl.filter.clone(),
+                sort_column: 0,
+                sort_ascending: false,
+                selected: self.pgl.selected,
             },
         };
         self.tab_states.insert(self.current_tab, state);
@@ -224,6 +236,11 @@ impl AppState {
                     self.pgi.sort_ascending = state.sort_ascending;
                     self.pgi.selected = state.selected;
                 }
+                Tab::PgLocks => {
+                    self.pgl.filter = state.filter.clone();
+                    self.filter_input = state.filter.clone().unwrap_or_default();
+                    self.pgl.selected = state.selected;
+                }
             }
         }
     }
@@ -249,6 +266,9 @@ impl AppState {
                 Tab::PgIndexes => {
                     self.pgi.tracked_indexrelid = None;
                     self.pgi.filter_relid = None; // clear drill-down filter on manual tab switch
+                }
+                Tab::PgLocks => {
+                    self.pgl.tracked_pid = None;
                 }
                 Tab::Processes => {}
             }

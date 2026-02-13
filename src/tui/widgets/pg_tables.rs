@@ -14,9 +14,10 @@ use crate::storage::model::{DataBlock, PgStatUserTablesInfo, Snapshot};
 use crate::tui::state::{AppState, PgTablesViewMode, SortKey};
 use crate::tui::style::Styles;
 
-const HEADERS_ACTIVITY: &[&str] = &[
-    "SEQ/s", "IDX/s", "INS/s", "UPD/s", "DEL/s", "LIVE", "DEAD", "TABLE",
+const HEADERS_READS: &[&str] = &[
+    "SEQ_RD/s", "IDX_FT/s", "TOT_RD/s", "SEQ/s", "IDX/s", "HIT%", "DISK/s", "SIZE", "TABLE",
 ];
+const HEADERS_WRITES: &[&str] = &["INS/s", "UPD/s", "DEL/s", "HOT/s", "LIVE", "DEAD", "TABLE"];
 const HEADERS_SCANS: &[&str] = &["SEQ/s", "SEQ_TUP/s", "IDX/s", "IDX_TUP/s", "SEQ%", "TABLE"];
 const HEADERS_MAINTENANCE: &[&str] = &[
     "DEAD",
@@ -29,9 +30,22 @@ const HEADERS_MAINTENANCE: &[&str] = &[
     "TABLE",
 ];
 
-const WIDTHS_ACTIVITY: &[u16] = &[10, 10, 10, 10, 10, 10, 10];
+const HEADERS_IO: &[&str] = &[
+    "HEAP_RD/s",
+    "HEAP_HIT/s",
+    "IDX_RD/s",
+    "IDX_HIT/s",
+    "HIT%",
+    "DISK/s",
+    "SIZE",
+    "TABLE",
+];
+
+const WIDTHS_READS: &[u16] = &[10, 10, 10, 10, 10, 6, 8, 10];
+const WIDTHS_WRITES: &[u16] = &[10, 10, 10, 10, 10, 10];
 const WIDTHS_SCANS: &[u16] = &[10, 12, 10, 12, 6];
 const WIDTHS_MAINTENANCE: &[u16] = &[10, 10, 6, 8, 8, 10, 10];
+const WIDTHS_IO: &[u16] = &[10, 10, 10, 10, 6, 8, 10];
 
 #[derive(Debug, Clone)]
 struct PgTablesRowData {
@@ -50,16 +64,31 @@ struct PgTablesRowData {
     seq_pct: Option<f64>,
     dead_pct: f64,
 
+    // Size
+    size_bytes: i64,
+
     // Rates
     seq_scan_s: Option<f64>,
     seq_tup_read_s: Option<f64>,
     idx_scan_s: Option<f64>,
     idx_tup_fetch_s: Option<f64>,
+    total_read_s: Option<f64>,
     n_tup_ins_s: Option<f64>,
     n_tup_upd_s: Option<f64>,
     n_tup_del_s: Option<f64>,
+    n_tup_hot_upd_s: Option<f64>,
     vacuum_count_s: Option<f64>,
     autovacuum_count_s: Option<f64>,
+
+    // I/O rates (from pg_statio_user_tables)
+    heap_blks_read_s: Option<f64>,
+    heap_blks_hit_s: Option<f64>,
+    idx_blks_read_s: Option<f64>,
+    idx_blks_hit_s: Option<f64>,
+
+    // Computed I/O
+    hit_pct: Option<f64>,
+    disk_read_blks_s: Option<f64>,
 }
 
 impl PgTablesRowData {
@@ -97,29 +126,49 @@ impl PgTablesRowData {
             last_autoanalyze: t.last_autoanalyze,
             seq_pct,
             dead_pct,
+            size_bytes: t.size_bytes,
             seq_scan_s: None,
             seq_tup_read_s: None,
             idx_scan_s: None,
             idx_tup_fetch_s: None,
+            total_read_s: None,
             n_tup_ins_s: None,
             n_tup_upd_s: None,
             n_tup_del_s: None,
+            n_tup_hot_upd_s: None,
             vacuum_count_s: None,
             autovacuum_count_s: None,
+            heap_blks_read_s: None,
+            heap_blks_hit_s: None,
+            idx_blks_read_s: None,
+            idx_blks_hit_s: None,
+            hit_pct: None,
+            disk_read_blks_s: None,
         }
     }
 
     fn sort_key(&self, mode: PgTablesViewMode, col: usize) -> SortKey {
         match mode {
-            PgTablesViewMode::Activity => match col {
-                0 => SortKey::Float(self.seq_scan_s.unwrap_or(0.0)),
-                1 => SortKey::Float(self.idx_scan_s.unwrap_or(0.0)),
-                2 => SortKey::Float(self.n_tup_ins_s.unwrap_or(0.0)),
-                3 => SortKey::Float(self.n_tup_upd_s.unwrap_or(0.0)),
-                4 => SortKey::Float(self.n_tup_del_s.unwrap_or(0.0)),
-                5 => SortKey::Integer(self.n_live_tup),
-                6 => SortKey::Integer(self.n_dead_tup),
-                7 => SortKey::String(self.display_name.clone()),
+            PgTablesViewMode::Reads => match col {
+                0 => SortKey::Float(self.seq_tup_read_s.unwrap_or(0.0)),
+                1 => SortKey::Float(self.idx_tup_fetch_s.unwrap_or(0.0)),
+                2 => SortKey::Float(self.total_read_s.unwrap_or(0.0)),
+                3 => SortKey::Float(self.seq_scan_s.unwrap_or(0.0)),
+                4 => SortKey::Float(self.idx_scan_s.unwrap_or(0.0)),
+                5 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
+                6 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
+                7 => SortKey::Integer(self.size_bytes),
+                8 => SortKey::String(self.display_name.clone()),
+                _ => SortKey::Integer(0),
+            },
+            PgTablesViewMode::Writes => match col {
+                0 => SortKey::Float(self.n_tup_ins_s.unwrap_or(0.0)),
+                1 => SortKey::Float(self.n_tup_upd_s.unwrap_or(0.0)),
+                2 => SortKey::Float(self.n_tup_del_s.unwrap_or(0.0)),
+                3 => SortKey::Float(self.n_tup_hot_upd_s.unwrap_or(0.0)),
+                4 => SortKey::Integer(self.n_live_tup),
+                5 => SortKey::Integer(self.n_dead_tup),
+                6 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgTablesViewMode::Scans => match col {
@@ -142,12 +191,23 @@ impl PgTablesRowData {
                 7 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
+            PgTablesViewMode::Io => match col {
+                0 => SortKey::Float(self.heap_blks_read_s.unwrap_or(0.0)),
+                1 => SortKey::Float(self.heap_blks_hit_s.unwrap_or(0.0)),
+                2 => SortKey::Float(self.idx_blks_read_s.unwrap_or(0.0)),
+                3 => SortKey::Float(self.idx_blks_hit_s.unwrap_or(0.0)),
+                4 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
+                5 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
+                6 => SortKey::Integer(self.size_bytes),
+                7 => SortKey::String(self.display_name.clone()),
+                _ => SortKey::Integer(0),
+            },
         }
     }
 
     fn row_style(&self, mode: PgTablesViewMode) -> Style {
         match mode {
-            PgTablesViewMode::Activity | PgTablesViewMode::Scans => {
+            PgTablesViewMode::Reads | PgTablesViewMode::Writes | PgTablesViewMode::Scans => {
                 if self.dead_pct > 20.0 {
                     Styles::critical()
                 } else if self.dead_pct > 5.0 || self.seq_pct.unwrap_or(0.0) > 80.0 {
@@ -165,7 +225,49 @@ impl PgTablesRowData {
                     Styles::default()
                 }
             }
+            PgTablesViewMode::Io => {
+                if let Some(hit) = self.hit_pct {
+                    if hit < 70.0 {
+                        Styles::critical()
+                    } else if hit < 90.0 {
+                        Styles::modified_item()
+                    } else {
+                        Styles::default()
+                    }
+                } else {
+                    Styles::default()
+                }
+            }
         }
+    }
+}
+
+/// Format block rate (blocks/s) as human-readable bytes/s.
+/// Each block is 8192 bytes (8 KB).
+fn format_blks_rate(blks_per_sec: Option<f64>, width: usize) -> String {
+    match blks_per_sec {
+        None => format!("{:>width$}", "--", width = width),
+        Some(v) => {
+            let bytes = v * 8192.0;
+            if bytes >= 1_073_741_824.0 {
+                format!("{:>width$.1}G", bytes / 1_073_741_824.0, width = width - 1)
+            } else if bytes >= 1_048_576.0 {
+                format!("{:>width$.1}M", bytes / 1_048_576.0, width = width - 1)
+            } else if bytes >= 1024.0 {
+                format!("{:>width$.1}K", bytes / 1024.0, width = width - 1)
+            } else if bytes >= 1.0 {
+                format!("{:>width$.0}B", bytes, width = width - 1)
+            } else {
+                format!("{:>width$}", "0", width = width)
+            }
+        }
+    }
+}
+
+fn format_opt_pct(v: Option<f64>, width: usize) -> String {
+    match v {
+        Some(v) => format!("{:>width$.1}", v, width = width),
+        None => format!("{:>width$}", "--", width = width),
     }
 }
 
@@ -185,6 +287,24 @@ fn format_i64(v: i64, width: usize) -> String {
         format!("{:>width$.1}K", v as f64 / 1e3, width = width - 1)
     } else {
         format!("{:>width$}", v, width = width)
+    }
+}
+
+fn format_size(bytes: i64) -> String {
+    if bytes <= 0 {
+        return format!("{:>9}", "-");
+    }
+    let b = bytes as f64;
+    if b >= 1_099_511_627_776.0 {
+        format!("{:>8.1}T", b / 1_099_511_627_776.0)
+    } else if b >= 1_073_741_824.0 {
+        format!("{:>8.1}G", b / 1_073_741_824.0)
+    } else if b >= 1_048_576.0 {
+        format!("{:>8.1}M", b / 1_048_576.0)
+    } else if b >= 1024.0 {
+        format!("{:>8.1}K", b / 1024.0)
+    } else {
+        format!("{:>8}B", bytes)
     }
 }
 
@@ -257,8 +377,33 @@ pub fn render_pg_tables(
                 row.n_tup_ins_s = r.n_tup_ins_s;
                 row.n_tup_upd_s = r.n_tup_upd_s;
                 row.n_tup_del_s = r.n_tup_del_s;
+                row.n_tup_hot_upd_s = r.n_tup_hot_upd_s;
                 row.vacuum_count_s = r.vacuum_count_s;
                 row.autovacuum_count_s = r.autovacuum_count_s;
+                row.total_read_s = match (r.seq_tup_read_s, r.idx_tup_fetch_s) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b),
+                    (None, None) => None,
+                };
+                row.heap_blks_read_s = r.heap_blks_read_s;
+                row.heap_blks_hit_s = r.heap_blks_hit_s;
+                row.idx_blks_read_s = r.idx_blks_read_s;
+                row.idx_blks_hit_s = r.idx_blks_hit_s;
+
+                // Computed I/O fields
+                if let (Some(hr), Some(hh), Some(ir), Some(ih)) = (
+                    r.heap_blks_read_s,
+                    r.heap_blks_hit_s,
+                    r.idx_blks_read_s,
+                    r.idx_blks_hit_s,
+                ) {
+                    let total_io = hr + hh + ir + ih;
+                    if total_io > 0.0 {
+                        row.hit_pct = Some((hh + ih) / total_io * 100.0);
+                    }
+                    row.disk_read_blks_s = Some(hr + ir);
+                }
             }
             row
         })
@@ -290,9 +435,11 @@ pub fn render_pg_tables(
     state.pgt.resolve_selection(&row_relids);
 
     let (headers, widths, title_mode) = match mode {
-        PgTablesViewMode::Activity => (HEADERS_ACTIVITY, WIDTHS_ACTIVITY, "a:activity"),
+        PgTablesViewMode::Reads => (HEADERS_READS, WIDTHS_READS, "a:reads"),
+        PgTablesViewMode::Writes => (HEADERS_WRITES, WIDTHS_WRITES, "w:writes"),
         PgTablesViewMode::Scans => (HEADERS_SCANS, WIDTHS_SCANS, "x:scans"),
         PgTablesViewMode::Maintenance => (HEADERS_MAINTENANCE, WIDTHS_MAINTENANCE, "n:maint"),
+        PgTablesViewMode::Io => (HEADERS_IO, WIDTHS_IO, "i:io"),
     };
 
     // Header with sort indicator
@@ -322,12 +469,22 @@ pub fn render_pg_tables(
             };
 
             let cells: Vec<Span> = match mode {
-                PgTablesViewMode::Activity => vec![
+                PgTablesViewMode::Reads => vec![
+                    Span::raw(format_opt_f64(r.seq_tup_read_s, 9, 1)),
+                    Span::raw(format_opt_f64(r.idx_tup_fetch_s, 9, 1)),
+                    Span::raw(format_opt_f64(r.total_read_s, 9, 1)),
                     Span::raw(format_opt_f64(r.seq_scan_s, 9, 1)),
                     Span::raw(format_opt_f64(r.idx_scan_s, 9, 1)),
+                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
+                    Span::raw(format_size(r.size_bytes)),
+                    Span::raw(r.display_name.clone()),
+                ],
+                PgTablesViewMode::Writes => vec![
                     Span::raw(format_opt_f64(r.n_tup_ins_s, 9, 1)),
                     Span::raw(format_opt_f64(r.n_tup_upd_s, 9, 1)),
                     Span::raw(format_opt_f64(r.n_tup_del_s, 9, 1)),
+                    Span::raw(format_opt_f64(r.n_tup_hot_upd_s, 9, 1)),
                     Span::raw(format_i64(r.n_live_tup, 9)),
                     Span::raw(format_i64(r.n_dead_tup, 9)),
                     Span::raw(r.display_name.clone()),
@@ -351,6 +508,16 @@ pub fn render_pg_tables(
                     Span::raw(format_opt_f64(r.autovacuum_count_s, 7, 2)),
                     Span::raw(format!("{:>9}", format_age(r.last_autovacuum))),
                     Span::raw(format!("{:>9}", format_age(r.last_autoanalyze))),
+                    Span::raw(r.display_name.clone()),
+                ],
+                PgTablesViewMode::Io => vec![
+                    Span::raw(format_blks_rate(r.heap_blks_read_s, 9)),
+                    Span::raw(format_blks_rate(r.heap_blks_hit_s, 9)),
+                    Span::raw(format_blks_rate(r.idx_blks_read_s, 9)),
+                    Span::raw(format_blks_rate(r.idx_blks_hit_s, 9)),
+                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
+                    Span::raw(format_size(r.size_bytes)),
                     Span::raw(r.display_name.clone()),
                 ],
             };

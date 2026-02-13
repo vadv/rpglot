@@ -13,11 +13,23 @@ use crate::tui::state::{AppState, PgIndexesViewMode, SortKey};
 use crate::tui::style::Styles;
 use crate::tui::widgets::detail_common::format_bytes;
 
-const HEADERS_USAGE: &[&str] = &["IDX/s", "TUP_RD/s", "TUP_FT/s", "SIZE", "TABLE", "INDEX"];
+const HEADERS_USAGE: &[&str] = &[
+    "IDX/s", "TUP_RD/s", "TUP_FT/s", "HIT%", "DISK/s", "SIZE", "TABLE", "INDEX",
+];
 const HEADERS_UNUSED: &[&str] = &["IDX_SCAN", "SIZE", "TABLE", "INDEX"];
+const HEADERS_IO: &[&str] = &[
+    "IDX_RD/s",
+    "IDX_HIT/s",
+    "HIT%",
+    "DISK/s",
+    "SIZE",
+    "TABLE",
+    "INDEX",
+];
 
-const WIDTHS_USAGE: &[u16] = &[10, 10, 10, 10, 20];
+const WIDTHS_USAGE: &[u16] = &[10, 10, 10, 6, 8, 10, 20];
 const WIDTHS_UNUSED: &[u16] = &[12, 10, 20];
+const WIDTHS_IO: &[u16] = &[10, 10, 6, 8, 10, 20];
 
 #[derive(Debug, Clone)]
 struct PgIndexesRowData {
@@ -35,6 +47,14 @@ struct PgIndexesRowData {
     idx_scan_s: Option<f64>,
     idx_tup_read_s: Option<f64>,
     idx_tup_fetch_s: Option<f64>,
+
+    // I/O rates
+    idx_blks_read_s: Option<f64>,
+    idx_blks_hit_s: Option<f64>,
+
+    // Computed I/O
+    hit_pct: Option<f64>,
+    disk_read_blks_s: Option<f64>,
 }
 
 impl PgIndexesRowData {
@@ -59,6 +79,10 @@ impl PgIndexesRowData {
             idx_scan_s: None,
             idx_tup_read_s: None,
             idx_tup_fetch_s: None,
+            idx_blks_read_s: None,
+            idx_blks_hit_s: None,
+            hit_pct: None,
+            disk_read_blks_s: None,
         }
     }
 
@@ -68,9 +92,11 @@ impl PgIndexesRowData {
                 0 => SortKey::Float(self.idx_scan_s.unwrap_or(0.0)),
                 1 => SortKey::Float(self.idx_tup_read_s.unwrap_or(0.0)),
                 2 => SortKey::Float(self.idx_tup_fetch_s.unwrap_or(0.0)),
-                3 => SortKey::Integer(self.size_bytes),
-                4 => SortKey::String(self.display_table.clone()),
-                5 => SortKey::String(self.index_name.clone()),
+                3 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
+                4 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
+                5 => SortKey::Integer(self.size_bytes),
+                6 => SortKey::String(self.display_table.clone()),
+                7 => SortKey::String(self.index_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgIndexesViewMode::Unused => match col {
@@ -80,15 +106,73 @@ impl PgIndexesRowData {
                 3 => SortKey::String(self.index_name.clone()),
                 _ => SortKey::Integer(0),
             },
+            PgIndexesViewMode::Io => match col {
+                0 => SortKey::Float(self.idx_blks_read_s.unwrap_or(0.0)),
+                1 => SortKey::Float(self.idx_blks_hit_s.unwrap_or(0.0)),
+                2 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
+                3 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
+                4 => SortKey::Integer(self.size_bytes),
+                5 => SortKey::String(self.display_table.clone()),
+                6 => SortKey::String(self.index_name.clone()),
+                _ => SortKey::Integer(0),
+            },
         }
     }
 
-    fn row_style(&self) -> Style {
-        if self.idx_scan == 0 {
-            Styles::modified_item() // yellow for unused indexes
-        } else {
-            Styles::default()
+    fn row_style(&self, mode: PgIndexesViewMode) -> Style {
+        match mode {
+            PgIndexesViewMode::Usage | PgIndexesViewMode::Unused => {
+                if self.idx_scan == 0 {
+                    Styles::modified_item() // yellow for unused indexes
+                } else {
+                    Styles::default()
+                }
+            }
+            PgIndexesViewMode::Io => {
+                if let Some(hit) = self.hit_pct {
+                    if hit < 70.0 {
+                        Styles::critical()
+                    } else if hit < 90.0 {
+                        Styles::modified_item()
+                    } else {
+                        Styles::default()
+                    }
+                } else if self.idx_scan == 0 {
+                    Styles::modified_item()
+                } else {
+                    Styles::default()
+                }
+            }
         }
+    }
+}
+
+/// Format block rate (blocks/s) as human-readable bytes/s.
+/// Each block is 8192 bytes (8 KB).
+fn format_blks_rate(blks_per_sec: Option<f64>, width: usize) -> String {
+    match blks_per_sec {
+        None => format!("{:>width$}", "--", width = width),
+        Some(v) => {
+            let bytes = v * 8192.0;
+            if bytes >= 1_073_741_824.0 {
+                format!("{:>width$.1}G", bytes / 1_073_741_824.0, width = width - 1)
+            } else if bytes >= 1_048_576.0 {
+                format!("{:>width$.1}M", bytes / 1_048_576.0, width = width - 1)
+            } else if bytes >= 1024.0 {
+                format!("{:>width$.1}K", bytes / 1024.0, width = width - 1)
+            } else if bytes >= 1.0 {
+                format!("{:>width$.0}B", bytes, width = width - 1)
+            } else {
+                format!("{:>width$}", "0", width = width)
+            }
+        }
+    }
+}
+
+fn format_opt_pct(v: Option<f64>, width: usize) -> String {
+    match v {
+        Some(v) => format!("{:>width$.1}", v, width = width),
+        None => format!("{:>width$}", "--", width = width),
     }
 }
 
@@ -149,6 +233,17 @@ pub fn render_pg_indexes(
                 row.idx_scan_s = r.idx_scan_s;
                 row.idx_tup_read_s = r.idx_tup_read_s;
                 row.idx_tup_fetch_s = r.idx_tup_fetch_s;
+                row.idx_blks_read_s = r.idx_blks_read_s;
+                row.idx_blks_hit_s = r.idx_blks_hit_s;
+
+                // Computed I/O fields
+                if let (Some(ir), Some(ih)) = (r.idx_blks_read_s, r.idx_blks_hit_s) {
+                    let total = ir + ih;
+                    if total > 0.0 {
+                        row.hit_pct = Some(ih / total * 100.0);
+                    }
+                    row.disk_read_blks_s = Some(ir);
+                }
             }
             row
         })
@@ -183,6 +278,7 @@ pub fn render_pg_indexes(
     let (headers, widths, title_mode) = match mode {
         PgIndexesViewMode::Usage => (HEADERS_USAGE, WIDTHS_USAGE, "u:usage"),
         PgIndexesViewMode::Unused => (HEADERS_UNUSED, WIDTHS_UNUSED, "w:unused"),
+        PgIndexesViewMode::Io => (HEADERS_IO, WIDTHS_IO, "i:io"),
     };
 
     // Header with sort indicator
@@ -208,7 +304,7 @@ pub fn render_pg_indexes(
             let base_style = if is_selected {
                 Styles::selected()
             } else {
-                r.row_style()
+                r.row_style(mode)
             };
 
             let cells: Vec<Span> = match mode {
@@ -216,12 +312,23 @@ pub fn render_pg_indexes(
                     Span::raw(format_opt_f64(r.idx_scan_s, 9, 1)),
                     Span::raw(format_opt_f64(r.idx_tup_read_s, 9, 1)),
                     Span::raw(format_opt_f64(r.idx_tup_fetch_s, 9, 1)),
+                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
                     Span::raw(format!("{:>9}", format_bytes(r.size_bytes as u64))),
                     Span::raw(truncate(&r.display_table, 20)),
                     Span::raw(r.index_name.clone()),
                 ],
                 PgIndexesViewMode::Unused => vec![
                     Span::raw(format!("{:>11}", r.idx_scan)),
+                    Span::raw(format!("{:>9}", format_bytes(r.size_bytes as u64))),
+                    Span::raw(truncate(&r.display_table, 20)),
+                    Span::raw(r.index_name.clone()),
+                ],
+                PgIndexesViewMode::Io => vec![
+                    Span::raw(format_blks_rate(r.idx_blks_read_s, 9)),
+                    Span::raw(format_blks_rate(r.idx_blks_hit_s, 9)),
+                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
                     Span::raw(format!("{:>9}", format_bytes(r.size_bytes as u64))),
                     Span::raw(truncate(&r.display_table, 20)),
                     Span::raw(r.index_name.clone()),
