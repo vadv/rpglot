@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatActivityInfo, ProcessInfo, Snapshot};
-use crate::tui::state::AppState;
+use crate::tui::state::{AppState, PopupState};
 
 /// Renders the PostgreSQL session detail popup.
 pub fn render_pg_detail(
@@ -18,9 +18,9 @@ pub fn render_pg_detail(
     state: &mut AppState,
     interner: Option<&StringInterner>,
 ) {
-    let pid = match state.pg_detail_pid {
-        Some(p) => p,
-        None => return,
+    let pid = match &state.popup {
+        PopupState::PgDetail { pid, .. } => *pid,
+        _ => return,
     };
 
     let snapshot = match &state.current_snapshot {
@@ -31,8 +31,7 @@ pub fn render_pg_detail(
     // Find the PostgreSQL session
     let pg_info = find_pg_activity(snapshot, pid);
     if pg_info.is_none() {
-        state.show_pg_detail = false;
-        state.pg_detail_pid = None;
+        state.popup = PopupState::None;
         return;
     }
     let pg_info = pg_info.unwrap();
@@ -87,7 +86,14 @@ pub fn render_pg_detail(
     };
     let visible_lines = chunks[0].height.saturating_sub(2) as usize; // -2 for borders
     let max_scroll = visual_lines.saturating_sub(visible_lines);
-    state.pg_detail_scroll = state.pg_detail_scroll.min(max_scroll);
+    let current_scroll = if let PopupState::PgDetail { scroll, .. } = &mut state.popup {
+        if *scroll > max_scroll {
+            *scroll = max_scroll;
+        }
+        *scroll
+    } else {
+        0
+    };
 
     // Render content with scroll
     let title = format!(" PostgreSQL Session: PID {} ", pid);
@@ -99,7 +105,7 @@ pub fn render_pg_detail(
                 .style(Style::default().bg(Color::Black)),
         )
         .wrap(Wrap { trim: false })
-        .scroll((state.pg_detail_scroll as u16, 0));
+        .scroll((current_scroll as u16, 0));
 
     frame.render_widget(content_paragraph, chunks[0]);
 

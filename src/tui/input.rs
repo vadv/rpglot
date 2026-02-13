@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::state::{AppState, InputMode, ProcessViewMode, Tab};
+use super::state::{AppState, InputMode, PopupState, ProcessViewMode, Tab};
 
 /// Result of handling a key event.
 #[derive(Debug, PartialEq, Eq)]
@@ -19,9 +19,74 @@ pub enum KeyAction {
     JumpToTime,
 }
 
+/// Navigation action for unified scroll/selection dispatch.
+enum NavAction {
+    Up,
+    Down,
+    PageUp(usize),
+    PageDown(usize),
+    Home,
+    End,
+}
+
+/// Dispatches a navigation action to the appropriate popup scroll or tab selection.
+fn dispatch_navigation(state: &mut AppState, action: NavAction) {
+    match &mut state.popup {
+        PopupState::Help { scroll } => match action {
+            NavAction::Up => *scroll = scroll.saturating_sub(1),
+            NavAction::Down => *scroll = scroll.saturating_add(1),
+            NavAction::PageUp(n) => *scroll = scroll.saturating_sub(n),
+            NavAction::PageDown(n) => *scroll = scroll.saturating_add(n),
+            NavAction::Home => *scroll = 0,
+            NavAction::End => {} // no-op for help
+        },
+        PopupState::ProcessDetail { scroll, .. }
+        | PopupState::PgDetail { scroll, .. }
+        | PopupState::PgsDetail { scroll, .. } => match action {
+            NavAction::Up => *scroll = scroll.saturating_sub(1),
+            NavAction::Down => *scroll = scroll.saturating_add(1),
+            NavAction::PageUp(n) => *scroll = scroll.saturating_sub(n),
+            NavAction::PageDown(n) => *scroll = scroll.saturating_add(n),
+            NavAction::Home => *scroll = 0,
+            NavAction::End => {} // no-op for detail popups
+        },
+        _ => match state.current_tab {
+            Tab::Processes => match action {
+                NavAction::Up => state.process_table.select_up(),
+                NavAction::Down => state.process_table.select_down(),
+                NavAction::PageUp(n) => state.process_table.page_up(n),
+                NavAction::PageDown(n) => state.process_table.page_down(n),
+                NavAction::Home => state.process_table.selected = 0,
+                NavAction::End => {
+                    let len = state.process_table.filtered_items().len();
+                    if len > 0 {
+                        state.process_table.selected = len - 1;
+                    }
+                }
+            },
+            Tab::PostgresActive => match action {
+                NavAction::Up => state.pga.select_up(),
+                NavAction::Down => state.pga.select_down(),
+                NavAction::PageUp(n) => state.pga.page_up(n),
+                NavAction::PageDown(n) => state.pga.page_down(n),
+                NavAction::Home => state.pga.home(),
+                NavAction::End => state.pga.end(),
+            },
+            Tab::PgStatements => match action {
+                NavAction::Up => state.pgs.select_up(),
+                NavAction::Down => state.pgs.select_down(),
+                NavAction::PageUp(n) => state.pgs.page_up(n),
+                NavAction::PageDown(n) => state.pgs.page_down(n),
+                NavAction::Home => state.pgs.home(),
+                NavAction::End => state.pgs.end(),
+            },
+        },
+    }
+}
+
 /// Handles key input and updates state.
 pub fn handle_key(state: &mut AppState, key: KeyEvent) -> KeyAction {
-    if state.show_quit_confirm {
+    if matches!(state.popup, super::state::PopupState::QuitConfirm) {
         return handle_quit_confirm(state, key);
     }
     match state.input_mode {
@@ -34,15 +99,15 @@ pub fn handle_key(state: &mut AppState, key: KeyEvent) -> KeyAction {
 fn handle_quit_confirm(state: &mut AppState, key: KeyEvent) -> KeyAction {
     match key.code {
         KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('Q') => {
-            state.show_quit_confirm = false;
+            state.popup = super::state::PopupState::None;
             KeyAction::Quit
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            state.show_quit_confirm = false;
+            state.popup = super::state::PopupState::None;
             KeyAction::Quit
         }
         KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
-            state.show_quit_confirm = false;
+            state.popup = super::state::PopupState::None;
             KeyAction::None
         }
         _ => KeyAction::None,
@@ -54,7 +119,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
     match key.code {
         // Quit
         KeyCode::Char('q') | KeyCode::Char('Q') => {
-            state.show_quit_confirm = true;
+            state.popup = super::state::PopupState::QuitConfirm;
             KeyAction::None
         }
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyAction::Quit,
@@ -93,115 +158,27 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
 
         // Row navigation (or popup scroll if popup is open)
         KeyCode::Up | KeyCode::Char('k') => {
-            if state.show_help {
-                state.help_scroll = state.help_scroll.saturating_sub(1);
-            } else if state.show_process_detail {
-                state.process_detail_scroll = state.process_detail_scroll.saturating_sub(1);
-            } else if state.show_pg_detail {
-                state.pg_detail_scroll = state.pg_detail_scroll.saturating_sub(1);
-            } else if state.show_pgs_detail {
-                state.pgs_detail_scroll = state.pgs_detail_scroll.saturating_sub(1);
-            } else if state.current_tab == Tab::Processes {
-                state.process_table.select_up();
-            } else if state.current_tab == Tab::PostgresActive {
-                state.pg_selected = state.pg_selected.saturating_sub(1);
-                state.pg_tracked_pid = None; // Clear tracking on manual navigation
-            } else if state.current_tab == Tab::PgStatements {
-                state.pgs_selected = state.pgs_selected.saturating_sub(1);
-                state.pgs_tracked_queryid = None; // Clear tracking on manual navigation
-            }
+            dispatch_navigation(state, NavAction::Up);
             KeyAction::None
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            if state.show_help {
-                state.help_scroll = state.help_scroll.saturating_add(1);
-            } else if state.show_process_detail {
-                // Increment but will be clamped during render
-                state.process_detail_scroll = state.process_detail_scroll.saturating_add(1);
-            } else if state.show_pg_detail {
-                state.pg_detail_scroll = state.pg_detail_scroll.saturating_add(1);
-            } else if state.show_pgs_detail {
-                state.pgs_detail_scroll = state.pgs_detail_scroll.saturating_add(1);
-            } else if state.current_tab == Tab::Processes {
-                state.process_table.select_down();
-            } else if state.current_tab == Tab::PostgresActive {
-                // Will be clamped during render
-                state.pg_selected = state.pg_selected.saturating_add(1);
-                state.pg_tracked_pid = None; // Clear tracking on manual navigation
-            } else if state.current_tab == Tab::PgStatements {
-                // Will be clamped during render
-                state.pgs_selected = state.pgs_selected.saturating_add(1);
-                state.pgs_tracked_queryid = None; // Clear tracking on manual navigation
-            }
+            dispatch_navigation(state, NavAction::Down);
             KeyAction::None
         }
         KeyCode::PageUp => {
-            if state.show_help {
-                state.help_scroll = state.help_scroll.saturating_sub(10);
-            } else if state.show_process_detail {
-                state.process_detail_scroll = state.process_detail_scroll.saturating_sub(10);
-            } else if state.show_pg_detail {
-                state.pg_detail_scroll = state.pg_detail_scroll.saturating_sub(10);
-            } else if state.show_pgs_detail {
-                state.pgs_detail_scroll = state.pgs_detail_scroll.saturating_sub(10);
-            } else if state.current_tab == Tab::Processes {
-                state.process_table.page_up(20);
-            } else if state.current_tab == Tab::PostgresActive {
-                state.pg_selected = state.pg_selected.saturating_sub(20);
-                state.pg_tracked_pid = None; // Clear tracking on manual navigation
-            } else if state.current_tab == Tab::PgStatements {
-                state.pgs_selected = state.pgs_selected.saturating_sub(20);
-                state.pgs_tracked_queryid = None; // Clear tracking on manual navigation
-            }
+            dispatch_navigation(state, NavAction::PageUp(20));
             KeyAction::None
         }
         KeyCode::PageDown => {
-            if state.show_help {
-                state.help_scroll = state.help_scroll.saturating_add(10);
-            } else if state.show_process_detail {
-                state.process_detail_scroll += 10;
-            } else if state.show_pg_detail {
-                state.pg_detail_scroll += 10;
-            } else if state.show_pgs_detail {
-                state.pgs_detail_scroll += 10;
-            } else if state.current_tab == Tab::Processes {
-                state.process_table.page_down(20);
-            } else if state.current_tab == Tab::PostgresActive {
-                state.pg_selected = state.pg_selected.saturating_add(20);
-                state.pg_tracked_pid = None; // Clear tracking on manual navigation
-            } else if state.current_tab == Tab::PgStatements {
-                state.pgs_selected = state.pgs_selected.saturating_add(20);
-                state.pgs_tracked_queryid = None; // Clear tracking on manual navigation
-            }
+            dispatch_navigation(state, NavAction::PageDown(20));
             KeyAction::None
         }
         KeyCode::Home => {
-            if state.current_tab == Tab::Processes {
-                state.process_table.selected = 0;
-            } else if state.current_tab == Tab::PostgresActive {
-                state.pg_selected = 0;
-                state.pg_tracked_pid = None; // Clear tracking on manual navigation
-            } else if state.current_tab == Tab::PgStatements {
-                state.pgs_selected = 0;
-                state.pgs_tracked_queryid = None; // Clear tracking on manual navigation
-            }
+            dispatch_navigation(state, NavAction::Home);
             KeyAction::None
         }
         KeyCode::End => {
-            if state.current_tab == Tab::Processes {
-                let len = state.process_table.filtered_items().len();
-                if len > 0 {
-                    state.process_table.selected = len - 1;
-                }
-            } else if state.current_tab == Tab::PostgresActive {
-                // Will be clamped during render; use large value to go to end
-                state.pg_selected = usize::MAX;
-                state.pg_tracked_pid = None; // Clear tracking on manual navigation
-            } else if state.current_tab == Tab::PgStatements {
-                // Will be clamped during render; use large value to go to end
-                state.pgs_selected = usize::MAX;
-                state.pgs_tracked_queryid = None; // Clear tracking on manual navigation
-            }
+            dispatch_navigation(state, NavAction::End);
             KeyAction::None
         }
 
@@ -209,16 +186,16 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             match state.current_tab {
                 Tab::Processes => state.next_process_sort_column(),
-                Tab::PostgresActive => state.next_pg_sort_column(),
-                Tab::PgStatements => state.next_pgs_sort_column(),
+                Tab::PostgresActive => state.pga.next_sort_column(),
+                Tab::PgStatements => state.pgs.next_sort_column(),
             }
             KeyAction::None
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             match state.current_tab {
                 Tab::Processes => state.toggle_process_sort_direction(),
-                Tab::PostgresActive => state.toggle_pg_sort_direction(),
-                Tab::PgStatements => state.toggle_pgs_sort_direction(),
+                Tab::PostgresActive => state.pga.toggle_sort_direction(),
+                Tab::PgStatements => state.pgs.toggle_sort_direction(),
             }
             KeyAction::None
         }
@@ -259,10 +236,11 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         // PGS view mode: t/c/i/e (context-sensitive, overrides history 't' on PGS tab)
         KeyCode::Char('t') => {
             if state.current_tab == Tab::PgStatements {
-                state.pgs_view_mode = super::state::PgStatementsViewMode::Time;
-                state.pgs_selected = 0;
-                state.pgs_sort_column = 1; // TIME/s
-                state.pgs_sort_ascending = false;
+                state.pgs.view_mode = super::state::PgStatementsViewMode::Time;
+                state.pgs.selected = 0;
+                state.pgs.sort_column =
+                    super::state::PgStatementsViewMode::Time.default_sort_column();
+                state.pgs.sort_ascending = false;
                 KeyAction::None
             } else if !state.is_live {
                 KeyAction::Advance
@@ -285,9 +263,10 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.process_table.sort_column = 0;
                 state.apply_process_sort();
             } else if state.current_tab == Tab::PostgresActive {
-                state.pga_view_mode = super::state::PgActivityViewMode::Generic;
-                state.pg_sort_column = 7; // QDUR
-                state.pg_sort_ascending = false;
+                state.pga.view_mode = super::state::PgActivityViewMode::Generic;
+                state.pga.sort_column =
+                    super::state::PgActivityViewMode::Generic.default_sort_column();
+                state.pga.sort_ascending = false;
             }
             KeyAction::None
         }
@@ -298,10 +277,11 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.process_table.sort_column = 0;
                 state.apply_process_sort();
             } else if state.current_tab == Tab::PgStatements {
-                state.pgs_view_mode = super::state::PgStatementsViewMode::Calls;
-                state.pgs_selected = 0;
-                state.pgs_sort_column = 0; // CALLS/s
-                state.pgs_sort_ascending = false;
+                state.pgs.view_mode = super::state::PgStatementsViewMode::Calls;
+                state.pgs.selected = 0;
+                state.pgs.sort_column =
+                    super::state::PgStatementsViewMode::Calls.default_sort_column();
+                state.pgs.sort_ascending = false;
             }
             KeyAction::None
         }
@@ -342,17 +322,16 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         KeyCode::Char('v') | KeyCode::Char('V') => {
             if state.current_tab == Tab::PostgresActive {
                 // Toggle between Generic and Stats view
-                state.pga_view_mode = match state.pga_view_mode {
+                state.pga.view_mode = match state.pga.view_mode {
                     super::state::PgActivityViewMode::Generic => {
-                        state.pg_sort_column = 4; // QDUR in Stats view
                         super::state::PgActivityViewMode::Stats
                     }
                     super::state::PgActivityViewMode::Stats => {
-                        state.pg_sort_column = 7; // QDUR in Generic view
                         super::state::PgActivityViewMode::Generic
                     }
                 };
-                state.pg_sort_ascending = false;
+                state.pga.sort_column = state.pga.view_mode.default_sort_column();
+                state.pga.sort_ascending = false;
             }
             KeyAction::None
         }
@@ -360,13 +339,14 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         // PGA hide idle / PGS IO view
         KeyCode::Char('i') | KeyCode::Char('I') => {
             if state.current_tab == Tab::PostgresActive {
-                state.pg_hide_idle = !state.pg_hide_idle;
-                state.pg_selected = 0; // Reset selection when toggling
+                state.pga.hide_idle = !state.pga.hide_idle;
+                state.pga.selected = 0; // Reset selection when toggling
             } else if state.current_tab == Tab::PgStatements {
-                state.pgs_view_mode = super::state::PgStatementsViewMode::Io;
-                state.pgs_selected = 0;
-                state.pgs_sort_column = 1; // BLK_RD/s
-                state.pgs_sort_ascending = false;
+                state.pgs.view_mode = super::state::PgStatementsViewMode::Io;
+                state.pgs.selected = 0;
+                state.pgs.sort_column =
+                    super::state::PgStatementsViewMode::Io.default_sort_column();
+                state.pgs.sort_ascending = false;
             }
             KeyAction::None
         }
@@ -374,27 +354,31 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         // PGS Temp view
         KeyCode::Char('e') | KeyCode::Char('E') => {
             if state.current_tab == Tab::PgStatements {
-                state.pgs_view_mode = super::state::PgStatementsViewMode::Temp;
-                state.pgs_selected = 0;
-                state.pgs_sort_column = 3; // TMP_MB/s
-                state.pgs_sort_ascending = false;
+                state.pgs.view_mode = super::state::PgStatementsViewMode::Temp;
+                state.pgs.selected = 0;
+                state.pgs.sort_column =
+                    super::state::PgStatementsViewMode::Temp.default_sort_column();
+                state.pgs.sort_ascending = false;
             }
             KeyAction::None
         }
 
         // Help popup
         KeyCode::Char('?') | KeyCode::Char('H') => {
-            state.show_help = !state.show_help;
-            if state.show_help {
-                state.help_scroll = 0; // Reset scroll on open
-            }
+            state.popup = match state.popup {
+                PopupState::Help { .. } => PopupState::None,
+                _ => PopupState::Help { scroll: 0 },
+            };
             KeyAction::None
         }
 
         // Debug popup (collector timing, rates state) - live mode only
         KeyCode::Char('!') => {
             if state.is_live {
-                state.show_debug_popup = !state.show_debug_popup;
+                state.popup = match state.popup {
+                    PopupState::Debug => PopupState::None,
+                    _ => PopupState::Debug,
+                };
             }
             KeyAction::None
         }
@@ -402,48 +386,53 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         // Detail popup (Enter on PRC or PGA tab)
         KeyCode::Enter => {
             if state.current_tab == Tab::Processes && !state.process_table.items.is_empty() {
-                state.show_process_detail = !state.show_process_detail;
-                if state.show_process_detail {
-                    // Remember PID of the selected process
-                    let filtered = state.process_table.filtered_items();
-                    let selected_idx = state
-                        .process_table
-                        .selected
-                        .min(filtered.len().saturating_sub(1));
-                    if let Some(row) = filtered.get(selected_idx) {
-                        state.process_detail_pid = Some(row.pid);
+                state.popup = match state.popup {
+                    PopupState::ProcessDetail { .. } => PopupState::None,
+                    _ => {
+                        let filtered = state.process_table.filtered_items();
+                        let selected_idx = state
+                            .process_table
+                            .selected
+                            .min(filtered.len().saturating_sub(1));
+                        if let Some(row) = filtered.get(selected_idx) {
+                            PopupState::ProcessDetail {
+                                pid: row.pid,
+                                scroll: 0,
+                            }
+                        } else {
+                            PopupState::None
+                        }
                     }
-                    state.process_detail_scroll = 0; // Reset scroll on open
-                } else {
-                    state.process_detail_pid = None;
-                }
+                };
             } else if state.current_tab == Tab::PostgresActive {
-                // Toggle PG detail popup
-                state.show_pg_detail = !state.show_pg_detail;
-                if state.show_pg_detail {
-                    // Copy tracked PID to detail PID (locks the popup to this session)
-                    state.pg_detail_pid = state.pg_tracked_pid;
-                    state.pg_detail_scroll = 0;
-                } else {
-                    state.pg_detail_pid = None;
-                }
+                state.popup = match state.popup {
+                    PopupState::PgDetail { .. } => PopupState::None,
+                    _ => {
+                        if let Some(pid) = state.pga.tracked_pid {
+                            PopupState::PgDetail { pid, scroll: 0 }
+                        } else {
+                            PopupState::None
+                        }
+                    }
+                };
             } else if state.current_tab == Tab::PgStatements {
-                // Toggle PGS detail popup
-                state.show_pgs_detail = !state.show_pgs_detail;
-                if state.show_pgs_detail {
-                    // Copy tracked queryid to detail queryid (locks the popup to this statement)
-                    state.pgs_detail_queryid = state.pgs_tracked_queryid;
-                    state.pgs_detail_scroll = 0;
-                } else {
-                    state.pgs_detail_queryid = None;
-                }
+                state.popup = match state.popup {
+                    PopupState::PgsDetail { .. } => PopupState::None,
+                    _ => {
+                        if let Some(queryid) = state.pgs.tracked_queryid {
+                            PopupState::PgsDetail { queryid, scroll: 0 }
+                        } else {
+                            PopupState::None
+                        }
+                    }
+                };
             }
             KeyAction::None
         }
 
         // Drill-down navigation (PRC -> PGA -> PGS)
         KeyCode::Char('>') | KeyCode::Char('J') => {
-            if state.any_popup_open() {
+            if state.popup.is_open() {
                 state.status_message = Some("Close popup (Esc) before drill-down".to_string());
             } else if state.current_tab == Tab::Processes
                 || state.current_tab == Tab::PostgresActive
@@ -456,19 +445,8 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         // Close popups with Escape
         KeyCode::Esc => {
             state.status_message = None;
-            if state.show_process_detail {
-                state.show_process_detail = false;
-                state.process_detail_pid = None;
-            } else if state.show_pg_detail {
-                state.show_pg_detail = false;
-                state.pg_detail_pid = None;
-            } else if state.show_pgs_detail {
-                state.show_pgs_detail = false;
-                state.pgs_detail_queryid = None;
-            } else if state.show_help {
-                state.show_help = false;
-            } else if state.show_debug_popup {
-                state.show_debug_popup = false;
+            if state.popup.is_open() {
+                state.popup = PopupState::None;
             }
             KeyAction::None
         }
@@ -537,21 +515,21 @@ mod tests {
         state.current_tab = Tab::PgStatements;
 
         let _ = handle_key(&mut state, key(KeyCode::Char('c')));
-        assert_eq!(state.pgs_view_mode, PgStatementsViewMode::Calls);
-        assert_eq!(state.pgs_sort_column, 0);
-        assert!(!state.pgs_sort_ascending);
+        assert_eq!(state.pgs.view_mode, PgStatementsViewMode::Calls);
+        assert_eq!(state.pgs.sort_column, 0);
+        assert!(!state.pgs.sort_ascending);
 
         let _ = handle_key(&mut state, key(KeyCode::Char('i')));
-        assert_eq!(state.pgs_view_mode, PgStatementsViewMode::Io);
-        assert_eq!(state.pgs_sort_column, 1);
+        assert_eq!(state.pgs.view_mode, PgStatementsViewMode::Io);
+        assert_eq!(state.pgs.sort_column, 1);
 
         let _ = handle_key(&mut state, key(KeyCode::Char('e')));
-        assert_eq!(state.pgs_view_mode, PgStatementsViewMode::Temp);
-        assert_eq!(state.pgs_sort_column, 3);
+        assert_eq!(state.pgs.view_mode, PgStatementsViewMode::Temp);
+        assert_eq!(state.pgs.sort_column, 3);
 
         let _ = handle_key(&mut state, key(KeyCode::Char('t')));
-        assert_eq!(state.pgs_view_mode, PgStatementsViewMode::Time);
-        assert_eq!(state.pgs_sort_column, 1);
+        assert_eq!(state.pgs.view_mode, PgStatementsViewMode::Time);
+        assert_eq!(state.pgs.sort_column, 1);
     }
 
     #[test]
@@ -562,16 +540,16 @@ mod tests {
         // Enter filter mode
         let _ = handle_key(&mut state, key(KeyCode::Char('/')));
         assert_eq!(state.input_mode, InputMode::Filter);
-        assert_eq!(state.pgs_filter, None);
+        assert_eq!(state.pgs.filter, None);
 
         // Type a filter string
         let _ = handle_key(&mut state, key(KeyCode::Char('a')));
-        assert_eq!(state.pgs_filter.as_deref(), Some("a"));
+        assert_eq!(state.pgs.filter.as_deref(), Some("a"));
 
         // Cancel
         let _ = handle_key(&mut state, key(KeyCode::Esc));
         assert_eq!(state.input_mode, InputMode::Normal);
-        assert_eq!(state.pgs_filter, None);
+        assert_eq!(state.pgs.filter, None);
     }
 
     #[test]
@@ -580,11 +558,11 @@ mod tests {
 
         let action = handle_key(&mut state, key(KeyCode::Char('q')));
         assert_eq!(action, KeyAction::None);
-        assert!(state.show_quit_confirm);
+        assert!(matches!(state.popup, PopupState::QuitConfirm));
 
         let action = handle_key(&mut state, key(KeyCode::Char('q')));
         assert_eq!(action, KeyAction::Quit);
-        assert!(!state.show_quit_confirm);
+        assert!(matches!(state.popup, PopupState::None));
     }
 
     #[test]
@@ -592,11 +570,11 @@ mod tests {
         let mut state = AppState::new(true);
 
         let _ = handle_key(&mut state, key(KeyCode::Char('q')));
-        assert!(state.show_quit_confirm);
+        assert!(matches!(state.popup, PopupState::QuitConfirm));
 
         let action = handle_key(&mut state, key(KeyCode::Esc));
         assert_eq!(action, KeyAction::None);
-        assert!(!state.show_quit_confirm);
+        assert!(matches!(state.popup, PopupState::None));
     }
 
     #[test]
@@ -604,17 +582,17 @@ mod tests {
         let mut state = AppState::new(true);
 
         let _ = handle_key(&mut state, key(KeyCode::Char('q')));
-        assert!(state.show_quit_confirm);
+        assert!(matches!(state.popup, PopupState::QuitConfirm));
 
         let action = handle_key(&mut state, key(KeyCode::Enter));
         assert_eq!(action, KeyAction::Quit);
-        assert!(!state.show_quit_confirm);
+        assert!(matches!(state.popup, PopupState::None));
     }
 
     #[test]
     fn tab_switch_blocked_when_popup_open() {
         let mut state = AppState::new(true);
-        state.show_process_detail = true;
+        state.popup = PopupState::ProcessDetail { pid: 1, scroll: 0 };
 
         // Tab should be blocked
         let _ = handle_key(&mut state, key(KeyCode::Tab));
@@ -629,7 +607,7 @@ mod tests {
 
         // After closing popup, tab switch works
         let _ = handle_key(&mut state, key(KeyCode::Esc));
-        assert!(!state.show_process_detail);
+        assert!(matches!(state.popup, PopupState::None));
         assert!(state.status_message.is_none());
 
         let _ = handle_key(&mut state, key(KeyCode::Char('2')));
@@ -639,7 +617,7 @@ mod tests {
     #[test]
     fn drill_down_blocked_when_popup_open() {
         let mut state = AppState::new(true);
-        state.show_process_detail = true;
+        state.popup = PopupState::ProcessDetail { pid: 1, scroll: 0 };
 
         let _ = handle_key(&mut state, key(KeyCode::Char('>')));
         assert!(!state.drill_down_requested);
@@ -656,8 +634,8 @@ fn handle_filter_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
             state.filter_input.clear();
             match state.current_tab {
                 Tab::Processes => state.process_table.set_filter(None),
-                Tab::PostgresActive => state.pg_filter = None,
-                Tab::PgStatements => state.pgs_filter = None,
+                Tab::PostgresActive => state.pga.filter = None,
+                Tab::PgStatements => state.pgs.filter = None,
             }
             KeyAction::None
         }
@@ -692,7 +670,7 @@ fn apply_current_filter(state: &mut AppState) {
     };
     match state.current_tab {
         Tab::Processes => state.process_table.set_filter(filter),
-        Tab::PostgresActive => state.pg_filter = filter,
-        Tab::PgStatements => state.pgs_filter = filter,
+        Tab::PostgresActive => state.pga.filter = filter,
+        Tab::PgStatements => state.pgs.filter = filter,
     }
 }

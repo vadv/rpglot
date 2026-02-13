@@ -6,10 +6,12 @@
 mod app;
 mod event;
 mod input;
+mod models;
 mod render;
 mod state;
 mod style;
+mod table;
 mod widgets;
 
 pub use app::App;
-pub use state::{AppState, Tab};
+pub use state::{AppState, PopupState, Tab};

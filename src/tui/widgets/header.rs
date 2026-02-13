@@ -102,8 +102,8 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
     // Position, Filter input, or status message
     let current_filter = match state.current_tab {
         Tab::Processes => state.process_table.filter.as_deref(),
-        Tab::PostgresActive => state.pg_filter.as_deref(),
-        Tab::PgStatements => state.pgs_filter.as_deref(),
+        Tab::PostgresActive => state.pga.filter.as_deref(),
+        Tab::PgStatements => state.pgs.filter.as_deref(),
     };
     let (right_content, right_style) = if let Some(msg) = &state.status_message {
         (msg.clone(), Styles::modified_item())

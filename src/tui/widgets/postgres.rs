@@ -62,7 +62,8 @@ pub fn render_postgres(
             .borders(Borders::ALL)
             .style(Styles::default());
         let message = state
-            .pg_last_error
+            .pga
+            .last_error
             .as_deref()
             .unwrap_or("No active PostgreSQL sessions");
         let paragraph = Paragraph::new(message).block(block);
@@ -93,7 +94,7 @@ pub fn render_postgres(
         .collect();
 
     // Apply filter if set (matches PID, query_id, DB, USER, QUERY)
-    if let Some(filter) = &state.pg_filter {
+    if let Some(filter) = &state.pga.filter {
         let filter_lower = filter.to_lowercase();
         rows_data.retain(|row| {
             // Check PID (exact prefix match for numbers)
@@ -108,12 +109,12 @@ pub fn render_postgres(
     }
 
     // Hide idle sessions if flag is set
-    if state.pg_hide_idle {
+    if state.pga.hide_idle {
         rows_data.retain(|row| !is_idle_state(&row.state));
     }
 
     // Get view mode early as it affects sorting
-    let view_mode = state.pga_view_mode;
+    let view_mode = state.pga.view_mode;
 
     // For Stats view, enrich rows with pg_stat_statements data before sorting
     if view_mode == PgActivityViewMode::Stats {
@@ -123,15 +124,15 @@ pub fn render_postgres(
             if row.query_id != 0
                 && let Some(pgs_info) = pgs_map.get(&row.query_id)
             {
-                let rates = state.pgs_rates.get(&row.query_id);
+                let rates = state.pgs.rates.get(&row.query_id);
                 row.enrich_with_pgs_stats(pgs_info, rates);
             }
         }
     }
 
     // Sort by selected column, with idle sessions always at bottom
-    let sort_col = state.pg_sort_column;
-    let sort_asc = state.pg_sort_ascending;
+    let sort_col = state.pga.sort_column;
+    let sort_asc = state.pga.sort_ascending;
     rows_data.sort_by(|a, b| {
         let a_idle = is_idle_state(&a.state);
         let b_idle = is_idle_state(&b.state);
@@ -151,33 +152,9 @@ pub fn render_postgres(
         if sort_asc { cmp } else { cmp.reverse() }
     });
 
-    // Handle navigate_to_pid: set tracked PID for persistent selection
-    if let Some(target_pid) = state.pga_navigate_to_pid.take() {
-        state.pg_tracked_pid = Some(target_pid);
-    }
-
-    // If tracked PID is set, find and select the row with that PID
-    if let Some(tracked_pid) = state.pg_tracked_pid {
-        if let Some(idx) = rows_data.iter().position(|row| row.pid == tracked_pid) {
-            state.pg_selected = idx;
-        } else {
-            // PID no longer exists in data — reset tracking
-            state.pg_tracked_pid = None;
-        }
-    }
-
-    // Clamp selected index and update tracked PID
-    if !rows_data.is_empty() {
-        state.pg_selected = state.pg_selected.min(rows_data.len() - 1);
-        // Update tracked PID based on current selection (for popup and next render)
-        state.pg_tracked_pid = Some(rows_data[state.pg_selected].pid);
-    } else {
-        state.pg_selected = 0;
-        state.pg_tracked_pid = None;
-    }
-
-    // Sync ratatui TableState for auto-scrolling
-    state.pga_ratatui_state.select(Some(state.pg_selected));
+    // Resolve selection: navigate_to, tracking, clamping, ratatui sync
+    let row_pids: Vec<i32> = rows_data.iter().map(|r| r.pid).collect();
+    state.pga.resolve_selection(&row_pids);
 
     // Select headers and widths based on view mode
     let (headers_arr, widths_arr, view_indicator) = match view_mode {
@@ -186,8 +163,8 @@ pub fn render_postgres(
     };
 
     // Build header row with sort indicator
-    let sort_col = state.pg_sort_column;
-    let sort_asc = state.pg_sort_ascending;
+    let sort_col = state.pga.sort_column;
+    let sort_asc = state.pga.sort_ascending;
     let headers: Vec<Span> = headers_arr
         .iter()
         .enumerate()
@@ -207,7 +184,7 @@ pub fn render_postgres(
         .iter()
         .enumerate()
         .map(|(idx, row)| {
-            let is_selected = idx == state.pg_selected;
+            let is_selected = idx == state.pga.selected;
             let is_idle = is_idle_state(&row.state);
 
             let cells: Vec<Span> = match view_mode {
@@ -257,12 +234,12 @@ pub fn render_postgres(
         .collect();
 
     let title = {
-        let idle_marker = if state.pg_hide_idle {
+        let idle_marker = if state.pga.hide_idle {
             " [hide idle]"
         } else {
             ""
         };
-        if let Some(filter) = &state.pg_filter {
+        if let Some(filter) = &state.pga.filter {
             format!(
                 " PostgreSQL Activity (PGA) [{}] (filter: {}){} [{} sessions] ",
                 view_indicator,
@@ -299,7 +276,7 @@ pub fn render_postgres(
 
     // Clear the area before rendering to avoid artifacts
     frame.render_widget(Clear, area);
-    frame.render_stateful_widget(table, area, &mut state.pga_ratatui_state);
+    frame.render_stateful_widget(table, area, &mut state.pga.ratatui_state);
 }
 
 /// Intermediate struct for row data.

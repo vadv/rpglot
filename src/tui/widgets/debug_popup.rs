@@ -76,33 +76,37 @@ pub fn render_debug_popup(
     lines.push(format_info_line(
         "prev_sample_ts",
         state
-            .pgs_prev_sample_ts
+            .pgs
+            .prev_sample_ts
             .map(|ts| format!("{}", ts))
             .unwrap_or_else(|| "--".to_string()),
     ));
     lines.push(format_info_line(
         "last_update_ts",
         state
-            .pgs_last_real_update_ts
+            .pgs
+            .last_real_update_ts
             .map(|ts| format!("{}", ts))
             .unwrap_or_else(|| "--".to_string()),
     ));
     lines.push(format_info_line(
         "dt_secs",
         state
-            .pgs_dt_secs
+            .pgs
+            .dt_secs
             .map(|dt| format!("{:.1}s", dt))
             .unwrap_or_else(|| "--".to_string()),
     ));
     lines.push(format_info_line(
         "rates_count",
-        format!("{}", state.pgs_rates.len()),
+        format!("{}", state.pgs.rates.len()),
     ));
     // Show current collected_at from PGS data (key for debugging dt issues)
     lines.push(format_info_line(
         "curr_collected_at",
         state
-            .pgs_current_collected_at
+            .pgs
+            .current_collected_at
             .map(|ts| format!("{}", ts))
             .unwrap_or_else(|| "--".to_string()),
     ));
@@ -117,7 +121,7 @@ pub fn render_debug_popup(
     ));
 
     // Section: PostgreSQL Error
-    if let Some(ref err) = state.pg_last_error {
+    if let Some(ref err) = state.pga.last_error {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![Span::styled(
             "=== PostgreSQL Error ===",

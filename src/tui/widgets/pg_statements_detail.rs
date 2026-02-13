@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatStatementsInfo, Snapshot};
-use crate::tui::state::AppState;
+use crate::tui::state::{AppState, PopupState};
 use crate::tui::style::Styles;
 
 pub fn render_pgs_detail(
@@ -22,8 +22,9 @@ pub fn render_pgs_detail(
         None => return,
     };
 
-    let Some(queryid) = state.pgs_detail_queryid else {
-        return;
+    let queryid = match &state.popup {
+        PopupState::PgsDetail { queryid, .. } => *queryid,
+        _ => return,
     };
 
     let Some(stmt) = find_statement(snapshot, queryid) else {
@@ -40,7 +41,7 @@ pub fn render_pgs_detail(
         return;
     };
 
-    let rates = state.pgs_rates.get(&queryid);
+    let rates = state.pgs.rates.get(&queryid);
     let content = build_content(stmt, rates, interner);
 
     let popup_area = centered_rect(90, 85, area);
@@ -73,14 +74,19 @@ pub fn render_pgs_detail(
     };
     let visible_height = chunks[0].height.saturating_sub(2) as usize; // -2 for borders
     let max_scroll = visual_lines.saturating_sub(visible_height);
-    if state.pgs_detail_scroll > max_scroll {
-        state.pgs_detail_scroll = max_scroll;
-    }
+    let current_scroll = if let PopupState::PgsDetail { scroll, .. } = &mut state.popup {
+        if *scroll > max_scroll {
+            *scroll = max_scroll;
+        }
+        *scroll
+    } else {
+        0
+    };
 
     let paragraph = Paragraph::new(content)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((state.pgs_detail_scroll as u16, 0));
+        .scroll((current_scroll as u16, 0));
     frame.render_widget(paragraph, chunks[0]);
 
     let footer = Line::from(vec![

@@ -7,14 +7,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::storage::model::{ProcessInfo, Snapshot};
-use crate::tui::state::AppState;
+use crate::tui::state::{AppState, PopupState};
 
 /// Renders the process detail popup centered on screen.
 pub fn render_process_detail(frame: &mut Frame, area: Rect, state: &mut AppState) {
-    // Get process by stored PID (to keep tracking it after sort changes)
-    let pid = match state.process_detail_pid {
-        Some(pid) => pid,
-        None => return,
+    // Get process PID from popup state
+    let pid = match &state.popup {
+        PopupState::ProcessDetail { pid, .. } => *pid,
+        _ => return,
     };
 
     // Find process row by PID
@@ -97,10 +97,14 @@ pub fn render_process_detail(frame: &mut Frame, area: Rect, state: &mut AppState
         total_lines
     };
     let max_scroll = visual_lines.saturating_sub(chunks[0].height as usize);
-    if state.process_detail_scroll > max_scroll {
-        state.process_detail_scroll = max_scroll;
-    }
-    let scroll = state.process_detail_scroll;
+    let scroll = if let PopupState::ProcessDetail { scroll, .. } = &mut state.popup {
+        if *scroll > max_scroll {
+            *scroll = max_scroll;
+        }
+        *scroll
+    } else {
+        0
+    };
 
     let paragraph = Paragraph::new(content)
         .wrap(Wrap { trim: false })

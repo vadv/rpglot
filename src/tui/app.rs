@@ -182,7 +182,7 @@ impl App {
         self.state.prev_total_cpu_time = Some(current_total_cpu_time);
 
         // Update pg_stat_statements rates cache (used by PGS tab).
-        self.state.update_pgs_rates_from_snapshot(&snapshot);
+        self.state.pgs.update_rates_from_snapshot(&snapshot);
 
         // Update history position for non-live mode
         if !self.state.is_live
@@ -203,7 +203,7 @@ impl App {
         self.state.previous_snapshot = self.state.current_snapshot.take();
 
         // Update PostgreSQL error status (always, even if snapshot fails)
-        self.state.pg_last_error = self.provider.pg_last_error().map(|s| s.to_string());
+        self.state.pga.last_error = self.provider.pg_last_error().map(|s| s.to_string());
 
         let snapshot = self.provider.advance().cloned();
         if let Some(snapshot) = snapshot {
@@ -229,7 +229,7 @@ impl App {
         }
 
         // Keep PostgreSQL error status consistent with other navigation actions
-        self.state.pg_last_error = self.provider.pg_last_error().map(|s| s.to_string());
+        self.state.pga.last_error = self.provider.pg_last_error().map(|s| s.to_string());
 
         let input = self.state.time_jump_input.trim();
         if input.is_empty() {
@@ -326,14 +326,14 @@ impl App {
                 if pg_backend_exists {
                     // Switch to PGA and navigate to this PID (render will find and select the row)
                     self.state.current_tab = Tab::PostgresActive;
-                    self.state.pga_navigate_to_pid = Some(pid as i32);
+                    self.state.pga.navigate_to_pid = Some(pid as i32);
                 }
                 // If not a PostgreSQL backend, do nothing (could show message in future)
             }
             Tab::PostgresActive => {
                 // PGA -> PGS: Get query_id from selected session using pg_tracked_pid
                 // (which is set by render based on pg_selected)
-                let query_id = self.state.pg_tracked_pid.and_then(|pid| {
+                let query_id = self.state.pga.tracked_pid.and_then(|pid| {
                     snapshot
                         .blocks
                         .iter()
@@ -364,7 +364,7 @@ impl App {
                     if pgs_exists {
                         // Switch to PGS and navigate to this query_id (render will find and select the row)
                         self.state.current_tab = Tab::PgStatements;
-                        self.state.pgs_navigate_to_queryid = Some(qid);
+                        self.state.pgs.navigate_to_queryid = Some(qid);
                     }
                 }
                 // If query_id is 0 or not found, do nothing

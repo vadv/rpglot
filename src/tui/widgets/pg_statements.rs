@@ -207,19 +207,20 @@ pub fn render_pg_statements(
             .borders(Borders::ALL)
             .style(Styles::default());
         let message = state
-            .pg_last_error
+            .pga
+            .last_error
             .as_deref()
             .unwrap_or("pg_stat_statements is not available");
         frame.render_widget(Paragraph::new(message).block(block), area);
         return;
     }
 
-    let mode = state.pgs_view_mode;
+    let mode = state.pgs.view_mode;
     let mut rows_data: Vec<PgStatementsRowData> = statements
         .iter()
         .map(|s| {
             let mut row = PgStatementsRowData::from_statement(s, interner);
-            if let Some(r) = state.pgs_rates.get(&s.queryid) {
+            if let Some(r) = state.pgs.rates.get(&s.queryid) {
                 row.calls_s = r.calls_s;
                 row.rows_s = r.rows_s;
                 row.exec_time_ms_s = r.exec_time_ms_s;
@@ -255,7 +256,7 @@ pub fn render_pg_statements(
         .collect();
 
     // Apply filter: queryid, database, username, query
-    if let Some(filter) = &state.pgs_filter {
+    if let Some(filter) = &state.pgs.filter {
         let f = filter.to_lowercase();
         rows_data.retain(|r| {
             // Check queryid (exact prefix match for numbers)
@@ -268,8 +269,8 @@ pub fn render_pg_statements(
     }
 
     // Sort
-    let sort_col = state.pgs_sort_column;
-    let sort_asc = state.pgs_sort_ascending;
+    let sort_col = state.pgs.sort_column;
+    let sort_asc = state.pgs.sort_ascending;
     rows_data.sort_by(|a, b| {
         let cmp = a
             .sort_key(mode, sort_col)
@@ -278,33 +279,9 @@ pub fn render_pg_statements(
         if sort_asc { cmp } else { cmp.reverse() }
     });
 
-    // Handle navigate_to_queryid: set tracked queryid for persistent selection
-    if let Some(target_qid) = state.pgs_navigate_to_queryid.take() {
-        state.pgs_tracked_queryid = Some(target_qid);
-    }
-
-    // If tracked queryid is set, find and select the row with that queryid
-    if let Some(tracked_qid) = state.pgs_tracked_queryid {
-        if let Some(idx) = rows_data.iter().position(|row| row.queryid == tracked_qid) {
-            state.pgs_selected = idx;
-        } else {
-            // queryid no longer exists in data — reset tracking
-            state.pgs_tracked_queryid = None;
-        }
-    }
-
-    // Clamp selection and update tracked queryid
-    if !rows_data.is_empty() {
-        state.pgs_selected = state.pgs_selected.min(rows_data.len() - 1);
-        // Update tracked queryid based on current selection (for popup and next render)
-        state.pgs_tracked_queryid = Some(rows_data[state.pgs_selected].queryid);
-    } else {
-        state.pgs_selected = 0;
-        state.pgs_tracked_queryid = None;
-    }
-
-    // Sync ratatui TableState for auto-scrolling
-    state.pgs_ratatui_state.select(Some(state.pgs_selected));
+    // Resolve selection: navigate_to, tracking, clamping, ratatui sync
+    let row_queryids: Vec<i64> = rows_data.iter().map(|r| r.queryid).collect();
+    state.pgs.resolve_selection(&row_queryids);
 
     let (headers, widths, title_mode) = match mode {
         PgStatementsViewMode::Time => (PGS_HEADERS_TIME, PGS_WIDTHS_TIME, "t:time"),
@@ -332,7 +309,7 @@ pub fn render_pg_statements(
         .iter()
         .enumerate()
         .map(|(idx, r)| {
-            let is_selected = idx == state.pgs_selected;
+            let is_selected = idx == state.pgs.selected;
             let base_style = if is_selected {
                 Styles::selected()
             } else {
@@ -390,7 +367,7 @@ pub fn render_pg_statements(
     // Build sample info string: [dt=Xs, age=Ys]
     // In live mode, age shows time since last collection relative to NOW (increases between ticks).
     // In history mode, age shows staleness relative to snapshot timestamp.
-    let sample_info = match (state.pgs_dt_secs, state.pgs_last_real_update_ts) {
+    let sample_info = match (state.pgs.dt_secs, state.pgs.last_real_update_ts) {
         (Some(dt), Some(last_ts)) => {
             let age = if state.is_live {
                 // Live mode: age relative to current time
@@ -409,7 +386,7 @@ pub fn render_pg_statements(
         _ => String::new(),
     };
 
-    let title = if let Some(filter) = &state.pgs_filter {
+    let title = if let Some(filter) = &state.pgs.filter {
         format!(
             " PostgreSQL Statements (PGS) [{title_mode}] {sample_info} (filter: {filter}) [{} rows] ",
             rows_data.len()
@@ -441,7 +418,7 @@ pub fn render_pg_statements(
 
     // Clear the area before rendering to avoid artifacts
     frame.render_widget(Clear, area);
-    frame.render_stateful_widget(table, area, &mut state.pgs_ratatui_state);
+    frame.render_stateful_widget(table, area, &mut state.pgs.ratatui_state);
 }
 
 fn extract_pg_statements(snapshot: &Snapshot) -> Vec<&PgStatStatementsInfo> {

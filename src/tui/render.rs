@@ -6,7 +6,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use crate::collector::CollectorTiming;
 use crate::storage::StringInterner;
 
-use super::state::{AppState, InputMode, Tab};
+use super::state::{AppState, InputMode, PopupState, Tab};
 use super::widgets::{
     calculate_summary_height, render_debug_popup, render_header, render_help, render_pg_detail,
     render_pg_statements, render_pgs_detail, render_postgres, render_process_detail,
@@ -48,51 +48,64 @@ pub fn render(
     // Content based on tab
     render_content(frame, chunks[2], state, interner);
 
-    // Help popup (rendered last to overlay everything)
-    if state.show_help {
-        render_help(
-            frame,
-            area,
-            state.current_tab,
-            state.process_view_mode,
-            state.pgs_view_mode,
-            &mut state.help_scroll,
-        );
+    // Popups (rendered last to overlay everything).
+    // Determine which popup to render first, then call render functions
+    // (avoids borrow conflicts between &mut state.popup and &mut state).
+    #[derive(Clone, Copy)]
+    enum ActivePopup {
+        None,
+        Help,
+        ProcessDetail,
+        PgDetail,
+        PgsDetail,
+        Debug,
+        QuitConfirm,
+    }
+    let active = match &state.popup {
+        PopupState::None => ActivePopup::None,
+        PopupState::Help { .. } => ActivePopup::Help,
+        PopupState::ProcessDetail { .. } if state.current_tab == Tab::Processes => {
+            ActivePopup::ProcessDetail
+        }
+        PopupState::PgDetail { .. } if state.current_tab == Tab::PostgresActive => {
+            ActivePopup::PgDetail
+        }
+        PopupState::PgsDetail { .. } if state.current_tab == Tab::PgStatements => {
+            ActivePopup::PgsDetail
+        }
+        PopupState::Debug if state.is_live => ActivePopup::Debug,
+        PopupState::QuitConfirm => ActivePopup::QuitConfirm,
+        _ => ActivePopup::None,
+    };
+    match active {
+        ActivePopup::Help => {
+            if let PopupState::Help { ref mut scroll } = state.popup {
+                render_help(
+                    frame,
+                    area,
+                    state.current_tab,
+                    state.process_view_mode,
+                    state.pgs.view_mode,
+                    scroll,
+                );
+            }
+        }
+        ActivePopup::ProcessDetail => render_process_detail(frame, area, state),
+        ActivePopup::PgDetail => render_pg_detail(frame, area, state, interner),
+        ActivePopup::PgsDetail => render_pgs_detail(frame, area, state, interner),
+        ActivePopup::Debug => render_debug_popup(frame, area, state, timing),
+        ActivePopup::QuitConfirm => render_quit_confirm(frame, area),
+        ActivePopup::None => {}
     }
 
-    // Process detail popup (on PRC tab, Enter key)
-    if state.show_process_detail && state.current_tab == Tab::Processes {
-        render_process_detail(frame, area, state);
-    }
-
-    // PostgreSQL session detail popup (on PGA tab, Enter key)
-    if state.show_pg_detail && state.current_tab == Tab::PostgresActive {
-        render_pg_detail(frame, area, state, interner);
-    }
-
-    // pg_stat_statements detail popup (on PGS tab, Enter key)
-    if state.show_pgs_detail && state.current_tab == Tab::PgStatements {
-        render_pgs_detail(frame, area, state, interner);
-    }
-
-    // Time jump popup (history mode, `b`)
-    if state.input_mode == InputMode::TimeJump && !state.show_quit_confirm {
+    // Time jump popup (history mode, `b`) - not part of PopupState since it's an InputMode
+    if state.input_mode == InputMode::TimeJump && !matches!(state.popup, PopupState::QuitConfirm) {
         render_time_jump(
             frame,
             area,
             &state.time_jump_input,
             state.time_jump_error.as_deref(),
         );
-    }
-
-    // Debug popup (live mode only)
-    if state.show_debug_popup && state.is_live {
-        render_debug_popup(frame, area, state, timing);
-    }
-
-    // Quit confirmation popup (rendered last to overlay everything)
-    if state.show_quit_confirm {
-        render_quit_confirm(frame, area);
     }
 }
 
