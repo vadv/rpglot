@@ -31,7 +31,7 @@ const DEFAULT_HISTORY_PATH: &str = "/var/log/rpglot";
 
 /// Interactive TUI viewer for system metrics.
 #[derive(Parser)]
-#[command(name = "rpglot", about = "System metrics viewer")]
+#[command(name = "rpglot", about = "System metrics viewer", version)]
 struct Args {
     /// Update interval in seconds (default: 1).
     /// Only used in live mode.

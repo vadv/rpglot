@@ -43,11 +43,37 @@ pub fn render_pg_detail(
         None
     };
 
+    // Find previous process info for delta calculation
+    let prev_process_info = if pid > 0 {
+        state
+            .previous_snapshot
+            .as_ref()
+            .and_then(|s| find_process_info(s, pid as u32))
+    } else {
+        None
+    };
+
+    // Calculate time interval between snapshots
+    let interval_secs = match (&state.current_snapshot, &state.previous_snapshot) {
+        (Some(curr), Some(prev)) => {
+            let delta = curr.timestamp - prev.timestamp;
+            if delta > 0 { delta as f64 } else { 1.0 }
+        }
+        _ => 1.0,
+    };
+
     // Current timestamp for duration calculation
     let now = snapshot.timestamp;
 
     // Build content
-    let content = build_content(pg_info, process_info, now, interner);
+    let content = build_content(
+        pg_info,
+        process_info,
+        prev_process_info,
+        interval_secs,
+        now,
+        interner,
+    );
 
     // Calculate popup dimensions (80% width, 80% height, centered)
     let popup_width = (area.width as f32 * 0.8) as u16;
@@ -146,6 +172,8 @@ fn find_process_info(snapshot: &Snapshot, pid: u32) -> Option<&ProcessInfo> {
 fn build_content<'a>(
     pg: &PgStatActivityInfo,
     process: Option<&ProcessInfo>,
+    prev_process: Option<&ProcessInfo>,
+    interval_secs: f64,
     now: i64,
     interner: Option<&StringInterner>,
 ) -> Vec<Line<'a>> {
@@ -239,6 +267,23 @@ fn build_content<'a>(
         lines.push(key_value("Current CPU", &p.cpu.curcpu.to_string()));
         lines.push(key_value("Nice", &p.cpu.nice.to_string()));
         lines.push(key_value("Priority", &p.cpu.prio.to_string()));
+
+        // Context switches (rate if prev available, cumulative otherwise)
+        if let Some(prev) = prev_process {
+            let nvcsw_rate = p.cpu.nvcsw.saturating_sub(prev.cpu.nvcsw) as f64 / interval_secs;
+            let nivcsw_rate = p.cpu.nivcsw.saturating_sub(prev.cpu.nivcsw) as f64 / interval_secs;
+            lines.push(key_value("Vol. ctx sw/s", &format_rate(nvcsw_rate)));
+            lines.push(key_value("Invol. ctx sw/s", &format_rate(nivcsw_rate)));
+        } else {
+            lines.push(key_value(
+                "Vol. ctx switches",
+                &format!("{} (cumulative)", p.cpu.nvcsw),
+            ));
+            lines.push(key_value(
+                "Invol. ctx switches",
+                &format!("{} (cumulative)", p.cpu.nivcsw),
+            ));
+        }
         lines.push(Line::from(""));
 
         // Memory
@@ -251,10 +296,24 @@ fn build_content<'a>(
         lines.push(Line::from(""));
 
         // Disk I/O
-        lines.push(key_value("Read Bytes", &format_bytes(p.dsk.rsz)));
-        lines.push(key_value("Write Bytes", &format_bytes(p.dsk.wsz)));
-        lines.push(key_value("Read Ops", &p.dsk.rio.to_string()));
-        lines.push(key_value("Write Ops", &p.dsk.wio.to_string()));
+        if let Some(prev) = prev_process {
+            let rio_rate = p.dsk.rio.saturating_sub(prev.dsk.rio) as f64 / interval_secs;
+            let rsz_rate = p.dsk.rsz.saturating_sub(prev.dsk.rsz) as f64 / interval_secs;
+            let wio_rate = p.dsk.wio.saturating_sub(prev.dsk.wio) as f64 / interval_secs;
+            let wsz_rate = p.dsk.wsz.saturating_sub(prev.dsk.wsz) as f64 / interval_secs;
+            lines.push(key_value("Read bytes/s", &format_bytes_rate(rsz_rate)));
+            lines.push(key_value("Write bytes/s", &format_bytes_rate(wsz_rate)));
+            lines.push(key_value("Read ops/s", &format_rate(rio_rate)));
+            lines.push(key_value("Write ops/s", &format_rate(wio_rate)));
+            lines.push(Line::from(""));
+        }
+        lines.push(key_value("Total Read Bytes", &format_bytes(p.dsk.rsz)));
+        lines.push(key_value("Total Write Bytes", &format_bytes(p.dsk.wsz)));
+        lines.push(key_value("Total Read Ops", &p.dsk.rio.to_string()));
+        lines.push(key_value("Total Write Ops", &p.dsk.wio.to_string()));
+        if p.dsk.cwsz > 0 {
+            lines.push(key_value("Cancelled Writes", &format_bytes(p.dsk.cwsz)));
+        }
         lines.push(Line::from(""));
     } else {
         lines.push(section_header("OS Process"));
@@ -432,5 +491,35 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KiB", bytes as f64 / 1024.0)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+/// Format rate (ops/s) to human-readable.
+fn format_rate(rate: f64) -> String {
+    if rate < 0.01 {
+        "0".to_string()
+    } else if rate >= 1_000_000.0 {
+        format!("{:.1}M/s", rate / 1_000_000.0)
+    } else if rate >= 1_000.0 {
+        format!("{:.1}K/s", rate / 1_000.0)
+    } else if rate >= 10.0 {
+        format!("{:.0}/s", rate)
+    } else {
+        format!("{:.1}/s", rate)
+    }
+}
+
+/// Format bytes per second rate to human-readable.
+fn format_bytes_rate(rate: f64) -> String {
+    if rate < 1.0 {
+        "0".to_string()
+    } else if rate >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.1} GiB/s", rate / (1024.0 * 1024.0 * 1024.0))
+    } else if rate >= 1024.0 * 1024.0 {
+        format!("{:.1} MiB/s", rate / (1024.0 * 1024.0))
+    } else if rate >= 1024.0 {
+        format!("{:.1} KiB/s", rate / 1024.0)
+    } else {
+        format!("{:.0} B/s", rate)
     }
 }

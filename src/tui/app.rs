@@ -73,6 +73,13 @@ impl App {
 
         // Main loop
         loop {
+            // Force full redraw when popup closes to avoid visual artifacts
+            let popup_open = self.state.popup.is_open();
+            if self.state.popup_was_open && !popup_open {
+                terminal.clear()?;
+            }
+            self.state.popup_was_open = popup_open;
+
             // Draw UI
             let interner = self.provider.interner();
             let timing = self.provider.collector_timing();

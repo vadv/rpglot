@@ -84,6 +84,10 @@ pub struct AppState {
     // ===== Ratatui TableState for scrolling =====
     /// Ratatui table state for PRC tab (enables auto-scrolling).
     pub prc_ratatui_state: RatatuiTableState,
+
+    /// Whether a popup was open on the previous frame.
+    /// Used to force full redraw when popup closes.
+    pub popup_was_open: bool,
 }
 
 impl Default for AppState {
@@ -129,6 +133,8 @@ impl AppState {
             status_message: None,
 
             prc_ratatui_state: RatatuiTableState::default(),
+
+            popup_was_open: false,
         }
     }
 

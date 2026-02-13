@@ -124,6 +124,9 @@ pub struct PgStatementsTabState {
     pub rates: HashMap<i64, PgStatementsRates>,
     pub prev_sample_ts: Option<i64>,
     pub prev_sample: HashMap<i64, PgStatStatementsInfo>,
+    /// Previous-previous sample used for delta display in detail popup.
+    /// Contains the sample that was `prev_sample` before the last rate computation.
+    pub delta_base: HashMap<i64, PgStatStatementsInfo>,
     pub last_real_update_ts: Option<i64>,
     pub dt_secs: Option<f64>,
     pub current_collected_at: Option<i64>,
@@ -143,6 +146,7 @@ impl Default for PgStatementsTabState {
             rates: HashMap::new(),
             prev_sample_ts: None,
             prev_sample: HashMap::new(),
+            delta_base: HashMap::new(),
             last_real_update_ts: None,
             dt_secs: None,
             current_collected_at: None,
@@ -228,6 +232,7 @@ impl PgStatementsTabState {
         self.rates.clear();
         self.prev_sample_ts = None;
         self.prev_sample.clear();
+        self.delta_base.clear();
         self.last_real_update_ts = None;
         self.dt_secs = None;
     }
@@ -263,12 +268,14 @@ impl PgStatementsTabState {
         {
             self.rates.clear();
             self.prev_sample_ts = Some(now_ts);
+            self.delta_base = std::mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
             return;
         }
 
         let Some(prev_ts) = self.prev_sample_ts else {
             self.prev_sample_ts = Some(now_ts);
+            self.delta_base = std::mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
             self.rates.clear();
             return;
@@ -340,6 +347,7 @@ impl PgStatementsTabState {
 
         self.rates = rates;
         self.prev_sample_ts = Some(now_ts);
+        self.delta_base = std::mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
         self.dt_secs = Some(dt);
     }
