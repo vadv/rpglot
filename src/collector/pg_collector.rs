@@ -156,6 +156,14 @@ impl PostgresCollector {
         self
     }
 
+    /// Attempts to connect to PostgreSQL.
+    ///
+    /// Returns `Ok(())` if connection succeeds, or an error describing the failure.
+    /// Useful for startup checks before launching the TUI.
+    pub fn try_connect(&mut self) -> Result<(), PgCollectError> {
+        self.ensure_connected()
+    }
+
     /// Returns the last error message, if any.
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()

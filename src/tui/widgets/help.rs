@@ -339,10 +339,7 @@ fn get_process_help(mode: ProcessViewMode) -> (&'static str, Vec<Line<'static>>)
                 Line::from("MEM     - Resident memory size (physical memory used)"),
                 Line::from("CMDLINE - Full command line with arguments"),
                 Line::from(""),
-                Line::from(Span::styled(
-                    "Tip:",
-                    Style::default().fg(Color::Yellow),
-                )),
+                Line::from(Span::styled("Tip:", Style::default().fg(Color::Yellow))),
                 Line::from(""),
                 Line::from("Command view is useful for identifying processes by full path"),
                 Line::from("  e.g. distinguishing multiple java/python/node instances"),

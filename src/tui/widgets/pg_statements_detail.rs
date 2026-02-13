@@ -57,10 +57,17 @@ pub fn render_pgs_detail(
     // Estimate visual lines after wrapping (inner width = popup width - 2 for borders)
     let inner_width = chunks[0].width.saturating_sub(2) as usize;
     let visual_lines: usize = if inner_width > 0 {
-        content.iter().map(|line| {
-            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
-            if line_width == 0 { 1 } else { line_width.div_ceil(inner_width) }
-        }).sum()
+        content
+            .iter()
+            .map(|line| {
+                let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+                if line_width == 0 {
+                    1
+                } else {
+                    line_width.div_ceil(inner_width)
+                }
+            })
+            .sum()
     } else {
         content.len()
     };

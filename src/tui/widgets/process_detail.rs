@@ -82,10 +82,17 @@ pub fn render_process_detail(frame: &mut Frame, area: Rect, state: &mut AppState
     // Estimate visual lines after wrapping (account for long lines)
     let inner_width = chunks[0].width as usize;
     let visual_lines: usize = if inner_width > 0 {
-        content.iter().map(|line| {
-            let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
-            if line_width == 0 { 1 } else { line_width.div_ceil(inner_width) }
-        }).sum()
+        content
+            .iter()
+            .map(|line| {
+                let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+                if line_width == 0 {
+                    1
+                } else {
+                    line_width.div_ceil(inner_width)
+                }
+            })
+            .sum()
     } else {
         total_lines
     };

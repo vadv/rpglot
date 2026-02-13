@@ -249,15 +249,24 @@ fn main() {
         let pg_port = std::env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
 
         match PostgresCollector::from_env() {
-            Ok(pg_collector) => {
-                info!(
-                    "PostgreSQL collector: enabled, connecting to {}:{}",
-                    pg_host, pg_port
-                );
+            Ok(mut pg_collector) => {
+                match pg_collector.try_connect() {
+                    Ok(()) => {
+                        info!(
+                            "PostgreSQL collector: enabled, connected to {}:{}",
+                            pg_host, pg_port
+                        );
+                    }
+                    Err(e) => {
+                        warn!("PostgreSQL collector: connection failed ({})", e);
+                        print_pg_warning(&e.to_string());
+                    }
+                }
                 collector = collector.with_postgres(pg_collector);
             }
             Err(e) => {
                 warn!("PostgreSQL collector: disabled ({})", e);
+                print_pg_warning(&e.to_string());
             }
         }
     } else {
@@ -422,6 +431,25 @@ fn main() {
     }
 
     info!("Shutdown complete");
+}
+
+/// Prints a colored PostgreSQL warning with configuration hints.
+fn print_pg_warning(error: &str) {
+    // ANSI colors: red for error, yellow for hints, reset after
+    const RED: &str = "\x1b[1;31m";
+    const YELLOW: &str = "\x1b[33m";
+    const RESET: &str = "\x1b[0m";
+
+    eprintln!("{RED}PostgreSQL: {error}{RESET}");
+    eprintln!();
+    eprintln!("{YELLOW}  Configure connection with environment variables:");
+    eprintln!("    export PGHOST=localhost");
+    eprintln!("    export PGPORT=5432");
+    eprintln!("    export PGUSER=postgres");
+    eprintln!("    export PGPASSWORD=secret");
+    eprintln!("    export PGDATABASE=postgres");
+    eprintln!();
+    eprintln!("  PostgreSQL metrics will be disabled.{RESET}");
 }
 
 #[cfg(test)]

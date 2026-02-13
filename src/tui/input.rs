@@ -60,7 +60,11 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => KeyAction::Quit,
 
         // Tab navigation (blocked when a detail popup is open)
-        KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3')
+        KeyCode::Tab
+        | KeyCode::BackTab
+        | KeyCode::Char('1')
+        | KeyCode::Char('2')
+        | KeyCode::Char('3')
             if state.any_popup_open() =>
         {
             state.status_message = Some("Close popup (Esc) before switching tabs".to_string());
@@ -441,7 +445,9 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         KeyCode::Char('>') | KeyCode::Char('J') => {
             if state.any_popup_open() {
                 state.status_message = Some("Close popup (Esc) before drill-down".to_string());
-            } else if state.current_tab == Tab::Processes || state.current_tab == Tab::PostgresActive {
+            } else if state.current_tab == Tab::Processes
+                || state.current_tab == Tab::PostgresActive
+            {
                 state.drill_down_requested = true;
             }
             KeyAction::None

@@ -12,6 +12,7 @@
 //!   rpglot -r -b -1h    # history mode starting from 1 hour ago
 //!   rpglot -r -b 07:00  # history mode starting from today 07:00 UTC
 
+use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
@@ -157,6 +158,11 @@ fn main() {
         Box::new(LiveProvider::new(collector, None))
     };
 
+    // Check PostgreSQL connection in live mode
+    if args.history.is_none() {
+        check_postgres_connection();
+    }
+
     // Create and run TUI
     let tick_rate = Duration::from_secs(args.interval.unwrap_or(1));
     let app = App::new(provider);
@@ -165,4 +171,44 @@ fn main() {
         eprintln!("Error running TUI: {}", e);
         std::process::exit(1);
     }
+}
+
+/// Checks PostgreSQL connection at startup.
+///
+/// If connection fails or environment is not configured, prints recommendations
+/// and pauses for 3 seconds so the user can see the message before TUI takes over.
+/// On successful connection, no message is shown.
+fn check_postgres_connection() {
+    match PostgresCollector::from_env() {
+        Ok(mut collector) => match collector.try_connect() {
+            Ok(()) => {}
+            Err(e) => {
+                print_pg_warning(&e.to_string());
+                thread::sleep(Duration::from_secs(3));
+            }
+        },
+        Err(e) => {
+            print_pg_warning(&e.to_string());
+            thread::sleep(Duration::from_secs(3));
+        }
+    }
+}
+
+/// Prints a colored PostgreSQL warning with configuration hints.
+fn print_pg_warning(error: &str) {
+    // ANSI colors: red for error, yellow for hints, reset after
+    const RED: &str = "\x1b[1;31m";
+    const YELLOW: &str = "\x1b[33m";
+    const RESET: &str = "\x1b[0m";
+
+    eprintln!("{RED}PostgreSQL: {error}{RESET}");
+    eprintln!();
+    eprintln!("{YELLOW}  Configure connection with environment variables:");
+    eprintln!("    export PGHOST=localhost");
+    eprintln!("    export PGPORT=5432");
+    eprintln!("    export PGUSER=postgres");
+    eprintln!("    export PGPASSWORD=secret");
+    eprintln!("    export PGDATABASE=postgres");
+    eprintln!();
+    eprintln!("  PostgreSQL metrics will be disabled.{RESET}");
 }
