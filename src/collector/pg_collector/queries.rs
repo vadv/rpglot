@@ -177,23 +177,23 @@ pub(super) fn build_stat_database_query(server_version_num: Option<i32>) -> Stri
 pub(super) fn build_stat_user_tables_query() -> &'static str {
     r#"
         SELECT
-            relid,
+            relid::bigint,
             COALESCE(schemaname, '') as schemaname,
             COALESCE(relname, '') as relname,
-            COALESCE(seq_scan, 0) as seq_scan,
-            COALESCE(seq_tup_read, 0) as seq_tup_read,
-            COALESCE(idx_scan, 0) as idx_scan,
-            COALESCE(idx_tup_fetch, 0) as idx_tup_fetch,
-            COALESCE(n_tup_ins, 0) as n_tup_ins,
-            COALESCE(n_tup_upd, 0) as n_tup_upd,
-            COALESCE(n_tup_del, 0) as n_tup_del,
-            COALESCE(n_tup_hot_upd, 0) as n_tup_hot_upd,
-            COALESCE(n_live_tup, 0) as n_live_tup,
-            COALESCE(n_dead_tup, 0) as n_dead_tup,
-            COALESCE(vacuum_count, 0) as vacuum_count,
-            COALESCE(autovacuum_count, 0) as autovacuum_count,
-            COALESCE(analyze_count, 0) as analyze_count,
-            COALESCE(autoanalyze_count, 0) as autoanalyze_count,
+            COALESCE(seq_scan, 0)::bigint as seq_scan,
+            COALESCE(seq_tup_read, 0)::bigint as seq_tup_read,
+            COALESCE(idx_scan, 0)::bigint as idx_scan,
+            COALESCE(idx_tup_fetch, 0)::bigint as idx_tup_fetch,
+            COALESCE(n_tup_ins, 0)::bigint as n_tup_ins,
+            COALESCE(n_tup_upd, 0)::bigint as n_tup_upd,
+            COALESCE(n_tup_del, 0)::bigint as n_tup_del,
+            COALESCE(n_tup_hot_upd, 0)::bigint as n_tup_hot_upd,
+            COALESCE(n_live_tup, 0)::bigint as n_live_tup,
+            COALESCE(n_dead_tup, 0)::bigint as n_dead_tup,
+            COALESCE(vacuum_count, 0)::bigint as vacuum_count,
+            COALESCE(autovacuum_count, 0)::bigint as autovacuum_count,
+            COALESCE(analyze_count, 0)::bigint as analyze_count,
+            COALESCE(autoanalyze_count, 0)::bigint as autoanalyze_count,
             COALESCE(EXTRACT(EPOCH FROM last_vacuum)::bigint, 0) as last_vacuum,
             COALESCE(EXTRACT(EPOCH FROM last_autovacuum)::bigint, 0) as last_autovacuum,
             COALESCE(EXTRACT(EPOCH FROM last_analyze)::bigint, 0) as last_analyze,
@@ -211,15 +211,15 @@ pub(super) fn build_stat_user_tables_query() -> &'static str {
 pub(super) fn build_stat_user_indexes_query() -> &'static str {
     r#"
         SELECT
-            i.indexrelid,
-            i.relid,
+            i.indexrelid::bigint,
+            i.relid::bigint,
             COALESCE(i.schemaname, '') as schemaname,
             COALESCE(i.relname, '') as relname,
             COALESCE(i.indexrelname, '') as indexrelname,
-            COALESCE(i.idx_scan, 0) as idx_scan,
-            COALESCE(i.idx_tup_read, 0) as idx_tup_read,
-            COALESCE(i.idx_tup_fetch, 0) as idx_tup_fetch,
-            COALESCE(pg_relation_size(i.indexrelid), 0) as size_bytes
+            COALESCE(i.idx_scan, 0)::bigint as idx_scan,
+            COALESCE(i.idx_tup_read, 0)::bigint as idx_tup_read,
+            COALESCE(i.idx_tup_fetch, 0)::bigint as idx_tup_fetch,
+            COALESCE(pg_relation_size(i.indexrelid), 0)::bigint as size_bytes
         FROM pg_stat_user_indexes i
         ORDER BY COALESCE(i.idx_scan, 0) DESC
         LIMIT 500

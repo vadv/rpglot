@@ -61,40 +61,16 @@ impl PostgresCollector {
         let mut cache = Vec::with_capacity(rows.len());
 
         for row in &rows {
-            let relid: u32 = row.get::<_, i64>(0) as u32;
-            let schemaname: String = row.get(1);
-            let relname: String = row.get(2);
-
-            let info = PgStatUserTablesInfo {
-                relid,
-                schemaname_hash: interner.intern(&schemaname),
-                relname_hash: interner.intern(&relname),
-                seq_scan: row.get(3),
-                seq_tup_read: row.get(4),
-                idx_scan: row.get(5),
-                idx_tup_fetch: row.get(6),
-                n_tup_ins: row.get(7),
-                n_tup_upd: row.get(8),
-                n_tup_del: row.get(9),
-                n_tup_hot_upd: row.get(10),
-                n_live_tup: row.get(11),
-                n_dead_tup: row.get(12),
-                vacuum_count: row.get(13),
-                autovacuum_count: row.get(14),
-                analyze_count: row.get(15),
-                autoanalyze_count: row.get(16),
-                last_vacuum: row.get(17),
-                last_autovacuum: row.get(18),
-                last_analyze: row.get(19),
-                last_autoanalyze: row.get(20),
+            let Some(info) = parse_table_row(row, interner) else {
+                continue; // skip rows that fail to deserialize
             };
 
             cache.push(PgStatUserTablesCacheEntry {
-                info: info.clone(),
-                schemaname,
-                relname,
+                info: info.0.clone(),
+                schemaname: info.1,
+                relname: info.2,
             });
-            results.push(info);
+            results.push(info.0);
         }
 
         self.tables_cache = cache;
@@ -102,4 +78,41 @@ impl PostgresCollector {
 
         Ok(results)
     }
+}
+
+/// Safely parses a single row from pg_stat_user_tables query.
+/// Returns None if any column fails to deserialize (instead of panicking).
+fn parse_table_row(
+    row: &postgres::Row,
+    interner: &mut StringInterner,
+) -> Option<(PgStatUserTablesInfo, String, String)> {
+    let relid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
+    let schemaname: String = row.try_get(1).unwrap_or_default();
+    let relname: String = row.try_get(2).unwrap_or_default();
+
+    let info = PgStatUserTablesInfo {
+        relid,
+        schemaname_hash: interner.intern(&schemaname),
+        relname_hash: interner.intern(&relname),
+        seq_scan: row.try_get(3).unwrap_or(0),
+        seq_tup_read: row.try_get(4).unwrap_or(0),
+        idx_scan: row.try_get(5).unwrap_or(0),
+        idx_tup_fetch: row.try_get(6).unwrap_or(0),
+        n_tup_ins: row.try_get(7).unwrap_or(0),
+        n_tup_upd: row.try_get(8).unwrap_or(0),
+        n_tup_del: row.try_get(9).unwrap_or(0),
+        n_tup_hot_upd: row.try_get(10).unwrap_or(0),
+        n_live_tup: row.try_get(11).unwrap_or(0),
+        n_dead_tup: row.try_get(12).unwrap_or(0),
+        vacuum_count: row.try_get(13).unwrap_or(0),
+        autovacuum_count: row.try_get(14).unwrap_or(0),
+        analyze_count: row.try_get(15).unwrap_or(0),
+        autoanalyze_count: row.try_get(16).unwrap_or(0),
+        last_vacuum: row.try_get(17).unwrap_or(0),
+        last_autovacuum: row.try_get(18).unwrap_or(0),
+        last_analyze: row.try_get(19).unwrap_or(0),
+        last_autoanalyze: row.try_get(20).unwrap_or(0),
+    };
+
+    Some((info, schemaname, relname))
 }

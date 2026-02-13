@@ -63,31 +63,17 @@ impl PostgresCollector {
         let mut cache = Vec::with_capacity(rows.len());
 
         for row in &rows {
-            let indexrelid: u32 = row.get::<_, i64>(0) as u32;
-            let relid: u32 = row.get::<_, i64>(1) as u32;
-            let schemaname: String = row.get(2);
-            let relname: String = row.get(3);
-            let indexrelname: String = row.get(4);
-
-            let info = PgStatUserIndexesInfo {
-                indexrelid,
-                relid,
-                schemaname_hash: interner.intern(&schemaname),
-                relname_hash: interner.intern(&relname),
-                indexrelname_hash: interner.intern(&indexrelname),
-                idx_scan: row.get(5),
-                idx_tup_read: row.get(6),
-                idx_tup_fetch: row.get(7),
-                size_bytes: row.get(8),
+            let Some(info) = parse_index_row(row, interner) else {
+                continue; // skip rows that fail to deserialize
             };
 
             cache.push(PgStatUserIndexesCacheEntry {
-                info: info.clone(),
-                schemaname,
-                relname,
-                indexrelname,
+                info: info.0.clone(),
+                schemaname: info.1,
+                relname: info.2,
+                indexrelname: info.3,
             });
-            results.push(info);
+            results.push(info.0);
         }
 
         self.indexes_cache = cache;
@@ -95,4 +81,31 @@ impl PostgresCollector {
 
         Ok(results)
     }
+}
+
+/// Safely parses a single row from pg_stat_user_indexes query.
+/// Returns None if any column fails to deserialize (instead of panicking).
+fn parse_index_row(
+    row: &postgres::Row,
+    interner: &mut StringInterner,
+) -> Option<(PgStatUserIndexesInfo, String, String, String)> {
+    let indexrelid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
+    let relid: u32 = row.try_get::<_, i64>(1).ok()? as u32;
+    let schemaname: String = row.try_get(2).unwrap_or_default();
+    let relname: String = row.try_get(3).unwrap_or_default();
+    let indexrelname: String = row.try_get(4).unwrap_or_default();
+
+    let info = PgStatUserIndexesInfo {
+        indexrelid,
+        relid,
+        schemaname_hash: interner.intern(&schemaname),
+        relname_hash: interner.intern(&relname),
+        indexrelname_hash: interner.intern(&indexrelname),
+        idx_scan: row.try_get(5).unwrap_or(0),
+        idx_tup_read: row.try_get(6).unwrap_or(0),
+        idx_tup_fetch: row.try_get(7).unwrap_or(0),
+        size_bytes: row.try_get(8).unwrap_or(0),
+    };
+
+    Some((info, schemaname, relname, indexrelname))
 }

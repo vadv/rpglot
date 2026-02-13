@@ -96,7 +96,15 @@ pub fn render_processes(frame: &mut Frame, area: Rect, state: &mut AppState) {
                         style = style.fg(ratatui::style::Color::Cyan);
                     }
 
-                    Span::styled(cell.clone(), style)
+                    // Truncate cell text to column width to prevent overflow artifacts
+                    let max_w = visible_widths.get(col_idx).copied().unwrap_or(0) as usize;
+                    let text = if cell.len() > max_w && max_w > 0 {
+                        truncate_to_width(cell, max_w)
+                    } else {
+                        cell.clone()
+                    };
+
+                    Span::styled(text, style)
                 })
                 .collect();
 
@@ -175,6 +183,18 @@ fn cell_style(
             .add_modifier(Modifier::BOLD),
         _ => base,
     }
+}
+
+/// Truncates a string to at most `max_width` bytes, respecting char boundaries.
+fn truncate_to_width(s: &str, max_width: usize) -> String {
+    if s.len() <= max_width {
+        return s.to_string();
+    }
+    let mut end = max_width;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 /// Extracts process rows from snapshot with VGROW/RGROW and CPU% calculation.
@@ -476,6 +496,17 @@ pub fn calculate_adaptive_widths(
             if i < content_widths.len() {
                 content_widths[i] = content_widths[i].max(cell.len() as u16);
             }
+        }
+    }
+
+    // Cap Expandable columns to prevent them from distorting proportional shrink.
+    // CMD/COMMAND-LINE can be 300+ chars due to appended SQL queries, but during
+    // width calculation we only need a reasonable cap — the column will get whatever
+    // space remains after Fixed/Flexible columns are satisfied.
+    const EXPANDABLE_CAP: u16 = 40;
+    for (i, col_type) in col_types.iter().enumerate() {
+        if matches!(col_type, ColumnType::Expandable) {
+            content_widths[i] = content_widths[i].min(EXPANDABLE_CAP);
         }
     }
 
