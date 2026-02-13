@@ -17,9 +17,11 @@ pub(super) struct PgActivityRowData {
     pub wait: String,
     pub query: String,
     pub backend_type: String,
-    pub query_duration_secs: i64,
-    pub xact_duration_secs: i64,
-    pub backend_duration_secs: i64,
+    /// None = timestamp was NULL (no active query), Some(n) = duration in seconds.
+    pub query_duration_secs: Option<i64>,
+    /// None = timestamp was NULL (no active transaction), Some(n) = duration in seconds.
+    pub xact_duration_secs: Option<i64>,
+    pub backend_duration_secs: Option<i64>,
     /// Query ID from pg_stat_activity (PostgreSQL 14+). 0 if not available.
     pub query_id: i64,
     /// Stats from pg_stat_statements (linked by query_id).
@@ -87,21 +89,22 @@ impl PgActivityRowData {
             .map(|s| s.to_string())
             .unwrap_or_else(|| "-".to_string());
 
-        // Duration calculations
+        // Duration calculations: None means timestamp was NULL (no query/txn),
+        // Some(0) means duration < 1 second (should show "0s", not "-").
         let query_duration_secs = if pg.query_start > 0 {
-            now.saturating_sub(pg.query_start)
+            Some(now.saturating_sub(pg.query_start))
         } else {
-            0
+            None
         };
         let xact_duration_secs = if pg.xact_start > 0 {
-            now.saturating_sub(pg.xact_start)
+            Some(now.saturating_sub(pg.xact_start))
         } else {
-            0
+            None
         };
         let backend_duration_secs = if pg.backend_start > 0 {
-            now.saturating_sub(pg.backend_start)
+            Some(now.saturating_sub(pg.backend_start))
         } else {
-            0
+            None
         };
 
         Self {
@@ -155,9 +158,9 @@ impl PgActivityRowData {
                     4 => SortKey::String(self.user.to_lowercase()),
                     5 => SortKey::String(self.state.to_lowercase()),
                     6 => SortKey::String(self.wait.to_lowercase()),
-                    7 => SortKey::Integer(self.query_duration_secs),
-                    8 => SortKey::Integer(self.xact_duration_secs),
-                    9 => SortKey::Integer(self.backend_duration_secs),
+                    7 => SortKey::Integer(self.query_duration_secs.unwrap_or(-1)),
+                    8 => SortKey::Integer(self.xact_duration_secs.unwrap_or(-1)),
+                    9 => SortKey::Integer(self.backend_duration_secs.unwrap_or(-1)),
                     10 => SortKey::String(self.backend_type.to_lowercase()),
                     11 => SortKey::String(self.query.to_lowercase()),
                     _ => SortKey::Integer(0),
@@ -170,7 +173,7 @@ impl PgActivityRowData {
                     1 => SortKey::String(self.db.to_lowercase()),
                     2 => SortKey::String(self.user.to_lowercase()),
                     3 => SortKey::String(self.state.to_lowercase()),
-                    4 => SortKey::Integer(self.query_duration_secs),
+                    4 => SortKey::Integer(self.query_duration_secs.unwrap_or(-1)),
                     5 => SortKey::Float(self.pgs_mean_exec_time.unwrap_or(0.0)),
                     6 => SortKey::Float(self.pgs_max_exec_time.unwrap_or(0.0)),
                     7 => SortKey::Float(self.pgs_calls_s.unwrap_or(0.0)),

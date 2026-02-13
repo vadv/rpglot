@@ -45,6 +45,12 @@ pub struct CollectorTiming {
     pub pg_activity: Duration,
     /// Time to collect PostgreSQL statements.
     pub pg_statements: Duration,
+    /// Time to collect PostgreSQL database stats.
+    pub pg_database: Duration,
+    /// Time to collect PostgreSQL user tables stats.
+    pub pg_tables: Duration,
+    /// Time to collect PostgreSQL user indexes stats.
+    pub pg_indexes: Duration,
     /// Time to collect cgroup metrics.
     pub cgroup: Duration,
     /// PostgreSQL statements caching interval (Duration::ZERO = no caching).
@@ -309,6 +315,31 @@ impl<F: FileSystem + Clone> Collector<F> {
             if !statements.is_empty() {
                 blocks.push(DataBlock::PgStatStatements(statements));
             }
+
+            let start = Instant::now();
+            let databases = pg_collector.collect_database(self.process_collector.interner_mut());
+            timing.pg_database = start.elapsed();
+            if !databases.is_empty() {
+                blocks.push(DataBlock::PgStatDatabase(databases));
+            }
+
+            let start = Instant::now();
+            match pg_collector.collect_tables(self.process_collector.interner_mut()) {
+                Ok(tables) if !tables.is_empty() => {
+                    blocks.push(DataBlock::PgStatUserTables(tables));
+                }
+                _ => {}
+            }
+            timing.pg_tables = start.elapsed();
+
+            let start = Instant::now();
+            match pg_collector.collect_indexes(self.process_collector.interner_mut()) {
+                Ok(indexes) if !indexes.is_empty() => {
+                    blocks.push(DataBlock::PgStatUserIndexes(indexes));
+                }
+                _ => {}
+            }
+            timing.pg_indexes = start.elapsed();
 
             // Store last error for TUI display
             self.pg_last_error = pg_collector.last_error().map(|s| s.to_string());

@@ -177,9 +177,18 @@ Collects cgroup v2 metrics for containers. Only active when `is_container()` ret
 
 **Output:** `CgroupInfo` with optional `CgroupCpuInfo`, `CgroupMemoryInfo`, `CgroupPidsInfo`
 
-### PostgresCollector (`pg_collector.rs`)
+### PostgresCollector (`pg_collector/`)
 
 Collects PostgreSQL metrics via native connection. This collector is **optional** and enabled via `with_postgres()` method.
+
+The collector is split into submodules:
+- `mod.rs` — struct, connection management, target database auto-detection
+- `queries.rs` — SQL query builders
+- `activity.rs` — `collect()` for pg_stat_activity
+- `statements.rs` — `collect_statements()` with caching
+- `database.rs` — `collect_database()` for pg_stat_database
+- `tables.rs` — `collect_tables()` for pg_stat_user_tables
+- `indexes.rs` — `collect_indexes()` for pg_stat_user_indexes
 
 #### Configuration
 
@@ -191,8 +200,22 @@ PostgreSQL connection is configured via standard environment variables:
 | `PGPORT` | `5432` | PostgreSQL server port |
 | `PGUSER` | `$USER` | Database username |
 | `PGPASSWORD` | `""` (empty) | Database password |
-| `PGDATABASE` | same as `PGUSER` | Database name |
+| `PGDATABASE` | same as `PGUSER` | Database name. If not set, auto-detection is enabled. |
 | `PGSSLMODE` | `prefer` | SSL mode: `disable`, `prefer`, `require` |
+
+#### Target Database Auto-Detection
+
+`pg_stat_user_tables` and `pg_stat_user_indexes` are **per-database views** — they only show data for the currently connected database. To collect meaningful data, the collector automatically detects the largest non-template database.
+
+**Rules:**
+- **Single connection** — all views (cluster-wide and per-database) are queried through one connection
+- If `PGDATABASE` is explicitly set → connect to that database, auto-detection is **disabled**
+- If `PGDATABASE` is not set → auto-detection is **enabled**:
+  - On first connect, detect the largest database by `pg_database_size()`
+  - Every **10 minutes**, re-check and reconnect if the largest database changed
+  - Detection query: `SELECT datname FROM pg_database WHERE NOT datistemplate AND datname NOT IN ('postgres') ORDER BY pg_database_size(datname) DESC LIMIT 1`
+  - If the query fails (no permissions), stay on the current database
+- On reconnect (database change), all per-connection caches are cleared (statements, tables, indexes)
 
 #### Data Source: pg_stat_activity
 
@@ -236,6 +259,79 @@ The `collected_at` field allows TUI to compute accurate per-second rates (`/s`) 
 - In daemon mode (with caching), rates remain stable based on the ~30s interval
 
 **Output:** `Vec<PgStatStatementsInfo>`
+
+#### Data Source: pg_stat_database
+
+Cluster-wide view with one row per database. All numeric fields are cumulative counters.
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `datid` | `pg_stat_database.datid` | Database OID (diff key) |
+| `datname_hash` | `pg_stat_database.datname` | Database name (interned) |
+| `xact_commit` | `pg_stat_database.xact_commit` | Committed transactions |
+| `xact_rollback` | `pg_stat_database.xact_rollback` | Rolled back transactions |
+| `blks_read` | `pg_stat_database.blks_read` | Disk blocks read |
+| `blks_hit` | `pg_stat_database.blks_hit` | Buffer cache hits |
+| `tup_returned` | `pg_stat_database.tup_returned` | Rows returned |
+| `tup_fetched` | `pg_stat_database.tup_fetched` | Rows fetched |
+| `tup_inserted` | `pg_stat_database.tup_inserted` | Rows inserted |
+| `tup_updated` | `pg_stat_database.tup_updated` | Rows updated |
+| `tup_deleted` | `pg_stat_database.tup_deleted` | Rows deleted |
+| `deadlocks` | `pg_stat_database.deadlocks` | Deadlocks detected |
+| `temp_files` | `pg_stat_database.temp_files` | Temp files created |
+| `temp_bytes` | `pg_stat_database.temp_bytes` | Temp bytes written |
+| `session_time` | `pg_stat_database.session_time` | Total session time ms (PG 14+) |
+| `active_time` | `pg_stat_database.active_time` | Active time ms (PG 14+) |
+
+**Output:** `Vec<PgStatDatabaseInfo>`
+
+#### Data Source: pg_stat_user_tables
+
+Per-database view showing one row per user table. Only tables in the currently connected database are visible. Uses 30-second caching (same as pg_stat_statements). Collects TOP 500 tables by total scans (seq_scan + idx_scan).
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `relid` | `pg_stat_user_tables.relid` | Table OID (diff key) |
+| `schemaname_hash` | `pg_stat_user_tables.schemaname` | Schema name (interned) |
+| `relname_hash` | `pg_stat_user_tables.relname` | Table name (interned) |
+| `seq_scan` | `pg_stat_user_tables.seq_scan` | Sequential scans (cumulative) |
+| `seq_tup_read` | `pg_stat_user_tables.seq_tup_read` | Rows from seq scans (cumulative) |
+| `idx_scan` | `pg_stat_user_tables.idx_scan` | Index scans (cumulative) |
+| `idx_tup_fetch` | `pg_stat_user_tables.idx_tup_fetch` | Rows from idx scans (cumulative) |
+| `n_tup_ins` | `pg_stat_user_tables.n_tup_ins` | Rows inserted (cumulative) |
+| `n_tup_upd` | `pg_stat_user_tables.n_tup_upd` | Rows updated (cumulative) |
+| `n_tup_del` | `pg_stat_user_tables.n_tup_del` | Rows deleted (cumulative) |
+| `n_tup_hot_upd` | `pg_stat_user_tables.n_tup_hot_upd` | HOT updates (cumulative) |
+| `n_live_tup` | `pg_stat_user_tables.n_live_tup` | Estimated live rows (gauge) |
+| `n_dead_tup` | `pg_stat_user_tables.n_dead_tup` | Estimated dead rows (gauge) |
+| `vacuum_count` | `pg_stat_user_tables.vacuum_count` | Manual vacuums (cumulative) |
+| `autovacuum_count` | `pg_stat_user_tables.autovacuum_count` | Auto vacuums (cumulative) |
+| `last_vacuum` | `pg_stat_user_tables.last_vacuum` | Last manual vacuum (epoch secs, 0=never) |
+| `last_autovacuum` | `pg_stat_user_tables.last_autovacuum` | Last autovacuum (epoch secs, 0=never) |
+
+All columns exist since PG 9.1+, no version-awareness needed.
+
+**Output:** `Vec<PgStatUserTablesInfo>`
+
+#### Data Source: pg_stat_user_indexes
+
+Per-database view showing one row per user index. Only indexes in the currently connected database are visible. Uses 30-second caching. Collects TOP 500 indexes by idx_scan count.
+
+| Field | Source | Description |
+|-------|--------|-------------|
+| `indexrelid` | `pg_stat_user_indexes.indexrelid` | Index OID (diff key) |
+| `relid` | `pg_stat_user_indexes.relid` | Parent table OID |
+| `schemaname_hash` | `pg_stat_user_indexes.schemaname` | Schema name (interned) |
+| `relname_hash` | `pg_stat_user_indexes.relname` | Table name (interned) |
+| `indexrelname_hash` | `pg_stat_user_indexes.indexrelname` | Index name (interned) |
+| `idx_scan` | `pg_stat_user_indexes.idx_scan` | Index scans (cumulative) |
+| `idx_tup_read` | `pg_stat_user_indexes.idx_tup_read` | Index entries returned (cumulative) |
+| `idx_tup_fetch` | `pg_stat_user_indexes.idx_tup_fetch` | Live rows fetched (cumulative) |
+| `size_bytes` | `pg_relation_size(indexrelid)` | Index size in bytes |
+
+All columns exist since PG 9.1+, no version-awareness needed.
+
+**Output:** `Vec<PgStatUserIndexesInfo>`
 
 #### Error Handling
 
@@ -328,6 +424,9 @@ The collector produces a `Snapshot` containing `DataBlock` variants:
 | `SystemStat(SystemStatInfo)` | SystemCollector | Context switches, forks |
 | `PgStatActivity(Vec<PgStatActivityInfo>)` | PostgresCollector | PostgreSQL active sessions |
 | `PgStatStatements(Vec<PgStatStatementsInfo>)` | PostgresCollector | PostgreSQL query statistics (pg_stat_statements) |
+| `PgStatDatabase(Vec<PgStatDatabaseInfo>)` | PostgresCollector | PostgreSQL database-level statistics |
+| `PgStatUserTables(Vec<PgStatUserTablesInfo>)` | PostgresCollector | PostgreSQL per-table statistics (per-database) |
+| `PgStatUserIndexes(Vec<PgStatUserIndexesInfo>)` | PostgresCollector | PostgreSQL per-index statistics (per-database) |
 | `Cgroup(CgroupInfo)` | CgroupCollector | Container resource limits and usage |
 
 ## Usage Examples

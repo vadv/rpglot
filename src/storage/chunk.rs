@@ -100,6 +100,24 @@ impl Chunk {
                         hashes.insert(s.query_hash);
                     }
                 }
+                DataBlock::PgStatDatabase(dbs) => {
+                    for d in dbs {
+                        hashes.insert(d.datname_hash);
+                    }
+                }
+                DataBlock::PgStatUserTables(tables) => {
+                    for t in tables {
+                        hashes.insert(t.schemaname_hash);
+                        hashes.insert(t.relname_hash);
+                    }
+                }
+                DataBlock::PgStatUserIndexes(indexes) => {
+                    for i in indexes {
+                        hashes.insert(i.schemaname_hash);
+                        hashes.insert(i.relname_hash);
+                        hashes.insert(i.indexrelname_hash);
+                    }
+                }
                 // These blocks don't contain string hashes
                 DataBlock::SystemCpu(_)
                 | DataBlock::SystemLoad(_)
@@ -159,6 +177,24 @@ impl Chunk {
                 DataBlockDiff::PgStatStatements { updates, .. } => {
                     for s in updates {
                         hashes.insert(s.query_hash);
+                    }
+                }
+                DataBlockDiff::PgStatDatabase { updates, .. } => {
+                    for d in updates {
+                        hashes.insert(d.datname_hash);
+                    }
+                }
+                DataBlockDiff::PgStatUserTables { updates, .. } => {
+                    for t in updates {
+                        hashes.insert(t.schemaname_hash);
+                        hashes.insert(t.relname_hash);
+                    }
+                }
+                DataBlockDiff::PgStatUserIndexes { updates, .. } => {
+                    for i in updates {
+                        hashes.insert(i.schemaname_hash);
+                        hashes.insert(i.relname_hash);
+                        hashes.insert(i.indexrelname_hash);
                     }
                 }
                 // These diffs don't contain string hashes

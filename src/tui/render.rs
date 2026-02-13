@@ -9,8 +9,9 @@ use crate::storage::StringInterner;
 use super::state::{AppState, InputMode, PopupState, Tab};
 use super::widgets::{
     calculate_summary_height, render_debug_popup, render_header, render_help, render_pg_detail,
-    render_pg_statements, render_pgs_detail, render_postgres, render_process_detail,
-    render_processes, render_quit_confirm, render_summary, render_time_jump,
+    render_pg_indexes, render_pg_statements, render_pg_tables, render_pgi_detail,
+    render_pgs_detail, render_pgt_detail, render_postgres, render_process_detail, render_processes,
+    render_quit_confirm, render_summary, render_time_jump,
 };
 
 /// Main render function.
@@ -58,6 +59,8 @@ pub fn render(
         ProcessDetail,
         PgDetail,
         PgsDetail,
+        PgtDetail,
+        PgiDetail,
         Debug,
         QuitConfirm,
     }
@@ -73,6 +76,12 @@ pub fn render(
         PopupState::PgsDetail { .. } if state.current_tab == Tab::PgStatements => {
             ActivePopup::PgsDetail
         }
+        PopupState::PgtDetail { .. } if state.current_tab == Tab::PgTables => {
+            ActivePopup::PgtDetail
+        }
+        PopupState::PgiDetail { .. } if state.current_tab == Tab::PgIndexes => {
+            ActivePopup::PgiDetail
+        }
         PopupState::Debug if state.is_live => ActivePopup::Debug,
         PopupState::QuitConfirm => ActivePopup::QuitConfirm,
         _ => ActivePopup::None,
@@ -86,6 +95,8 @@ pub fn render(
                     state.current_tab,
                     state.process_view_mode,
                     state.pgs.view_mode,
+                    state.pgt.view_mode,
+                    state.pgi.view_mode,
                     scroll,
                 );
             }
@@ -93,6 +104,8 @@ pub fn render(
         ActivePopup::ProcessDetail => render_process_detail(frame, area, state),
         ActivePopup::PgDetail => render_pg_detail(frame, area, state, interner),
         ActivePopup::PgsDetail => render_pgs_detail(frame, area, state, interner),
+        ActivePopup::PgtDetail => render_pgt_detail(frame, area, state, interner),
+        ActivePopup::PgiDetail => render_pgi_detail(frame, area, state, interner),
         ActivePopup::Debug => render_debug_popup(frame, area, state, timing),
         ActivePopup::QuitConfirm => render_quit_confirm(frame, area),
         ActivePopup::None => {}
@@ -120,5 +133,7 @@ fn render_content(
         Tab::Processes => render_processes(frame, area, state),
         Tab::PostgresActive => render_postgres(frame, area, state, interner),
         Tab::PgStatements => render_pg_statements(frame, area, state, interner),
+        Tab::PgTables => render_pg_tables(frame, area, state, interner),
+        Tab::PgIndexes => render_pg_indexes(frame, area, state, interner),
     }
 }

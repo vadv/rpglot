@@ -2,10 +2,11 @@ use crate::storage::chunk::Chunk;
 use crate::storage::interner::StringInterner;
 #[allow(unused_imports)]
 use crate::storage::model::{
-    DataBlock, DataBlockDiff, Delta, PgStatActivityInfo, PgStatStatementsInfo, ProcessInfo,
-    Snapshot, SystemCpuInfo, SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo,
-    SystemMemInfo, SystemNetInfo, SystemNetSnmpInfo, SystemPsiInfo, SystemSoftirqInfo,
-    SystemStatInfo, SystemVmstatInfo,
+    DataBlock, DataBlockDiff, Delta, PgStatActivityInfo, PgStatDatabaseInfo, PgStatStatementsInfo,
+    PgStatUserIndexesInfo, PgStatUserTablesInfo, ProcessInfo, Snapshot, SystemCpuInfo,
+    SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo, SystemMemInfo,
+    SystemNetInfo, SystemNetSnmpInfo, SystemPsiInfo, SystemSoftirqInfo, SystemStatInfo,
+    SystemVmstatInfo,
 };
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use std::collections::{HashMap, HashSet};
@@ -194,6 +195,24 @@ impl StorageManager {
                         hashes.insert(s.query_hash);
                     }
                 }
+                DataBlock::PgStatDatabase(dbs) => {
+                    for d in dbs {
+                        hashes.insert(d.datname_hash);
+                    }
+                }
+                DataBlock::PgStatUserTables(tables) => {
+                    for t in tables {
+                        hashes.insert(t.schemaname_hash);
+                        hashes.insert(t.relname_hash);
+                    }
+                }
+                DataBlock::PgStatUserIndexes(indexes) => {
+                    for i in indexes {
+                        hashes.insert(i.schemaname_hash);
+                        hashes.insert(i.relname_hash);
+                        hashes.insert(i.indexrelname_hash);
+                    }
+                }
                 _ => {}
             }
         }
@@ -347,6 +366,60 @@ impl StorageManager {
                     } else {
                         diff_blocks.push(DataBlockDiff::PgStatStatements {
                             updates: curr_stats.clone(),
+                            removals: Vec::new(),
+                        });
+                    }
+                }
+                DataBlock::PgStatDatabase(curr_db) => {
+                    let last_db = last.blocks.iter().find_map(|b| {
+                        if let DataBlock::PgStatDatabase(d) = b {
+                            Some(d)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(last_db) = last_db {
+                        diff_blocks.push(self.compute_pg_database_diff(last_db, curr_db));
+                    } else {
+                        diff_blocks.push(DataBlockDiff::PgStatDatabase {
+                            updates: curr_db.clone(),
+                            removals: Vec::new(),
+                        });
+                    }
+                }
+                DataBlock::PgStatUserTables(curr_tables) => {
+                    let last_tables = last.blocks.iter().find_map(|b| {
+                        if let DataBlock::PgStatUserTables(t) = b {
+                            Some(t)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(last_tables) = last_tables {
+                        diff_blocks.push(self.compute_pg_tables_diff(last_tables, curr_tables));
+                    } else {
+                        diff_blocks.push(DataBlockDiff::PgStatUserTables {
+                            updates: curr_tables.clone(),
+                            removals: Vec::new(),
+                        });
+                    }
+                }
+                DataBlock::PgStatUserIndexes(curr_indexes) => {
+                    let last_indexes = last.blocks.iter().find_map(|b| {
+                        if let DataBlock::PgStatUserIndexes(i) = b {
+                            Some(i)
+                        } else {
+                            None
+                        }
+                    });
+
+                    if let Some(last_indexes) = last_indexes {
+                        diff_blocks.push(self.compute_pg_indexes_diff(last_indexes, curr_indexes));
+                    } else {
+                        diff_blocks.push(DataBlockDiff::PgStatUserIndexes {
+                            updates: curr_indexes.clone(),
                             removals: Vec::new(),
                         });
                     }
@@ -566,6 +639,102 @@ impl StorageManager {
         }
 
         DataBlockDiff::PgStatStatements { updates, removals }
+    }
+
+    fn compute_pg_database_diff(
+        &self,
+        last: &[PgStatDatabaseInfo],
+        current: &[PgStatDatabaseInfo],
+    ) -> DataBlockDiff {
+        let mut updates = Vec::new();
+        let mut removals = Vec::new();
+
+        let last_map: HashMap<u32, &PgStatDatabaseInfo> =
+            last.iter().map(|d| (d.datid, d)).collect();
+        let current_map: HashMap<u32, &PgStatDatabaseInfo> =
+            current.iter().map(|d| (d.datid, d)).collect();
+
+        for (id, db) in &current_map {
+            if let Some(last_db) = last_map.get(id) {
+                if *last_db != *db {
+                    updates.push((*db).clone());
+                }
+            } else {
+                updates.push((*db).clone());
+            }
+        }
+
+        for id in last_map.keys() {
+            if !current_map.contains_key(id) {
+                removals.push(*id);
+            }
+        }
+
+        DataBlockDiff::PgStatDatabase { updates, removals }
+    }
+
+    fn compute_pg_tables_diff(
+        &self,
+        last: &[PgStatUserTablesInfo],
+        current: &[PgStatUserTablesInfo],
+    ) -> DataBlockDiff {
+        let mut updates = Vec::new();
+        let mut removals = Vec::new();
+
+        let last_map: HashMap<u32, &PgStatUserTablesInfo> =
+            last.iter().map(|t| (t.relid, t)).collect();
+        let current_map: HashMap<u32, &PgStatUserTablesInfo> =
+            current.iter().map(|t| (t.relid, t)).collect();
+
+        for (id, table) in &current_map {
+            if let Some(last_table) = last_map.get(id) {
+                if *last_table != *table {
+                    updates.push((*table).clone());
+                }
+            } else {
+                updates.push((*table).clone());
+            }
+        }
+
+        for id in last_map.keys() {
+            if !current_map.contains_key(id) {
+                removals.push(*id);
+            }
+        }
+
+        DataBlockDiff::PgStatUserTables { updates, removals }
+    }
+
+    fn compute_pg_indexes_diff(
+        &self,
+        last: &[PgStatUserIndexesInfo],
+        current: &[PgStatUserIndexesInfo],
+    ) -> DataBlockDiff {
+        let mut updates = Vec::new();
+        let mut removals = Vec::new();
+
+        let last_map: HashMap<u32, &PgStatUserIndexesInfo> =
+            last.iter().map(|i| (i.indexrelid, i)).collect();
+        let current_map: HashMap<u32, &PgStatUserIndexesInfo> =
+            current.iter().map(|i| (i.indexrelid, i)).collect();
+
+        for (id, index) in &current_map {
+            if let Some(last_index) = last_map.get(id) {
+                if *last_index != *index {
+                    updates.push((*index).clone());
+                }
+            } else {
+                updates.push((*index).clone());
+            }
+        }
+
+        for id in last_map.keys() {
+            if !current_map.contains_key(id) {
+                removals.push(*id);
+            }
+        }
+
+        DataBlockDiff::PgStatUserIndexes { updates, removals }
     }
 
     fn compute_system_cpu_diff(
@@ -1094,6 +1263,57 @@ impl StorageManager {
                                 *existing = update.clone();
                             } else {
                                 stmts.push(update.clone());
+                            }
+                        }
+                    }
+                }
+                DataBlockDiff::PgStatDatabase { updates, removals } => {
+                    if let Some(DataBlock::PgStatDatabase(dbs)) = new_blocks
+                        .iter_mut()
+                        .find(|b| matches!(b, DataBlock::PgStatDatabase(_)))
+                    {
+                        dbs.retain(|d| !removals.contains(&d.datid));
+                        for update in updates {
+                            if let Some(existing) = dbs.iter_mut().find(|d| d.datid == update.datid)
+                            {
+                                *existing = update.clone();
+                            } else {
+                                dbs.push(update.clone());
+                            }
+                        }
+                    }
+                }
+                DataBlockDiff::PgStatUserTables { updates, removals } => {
+                    if let Some(DataBlock::PgStatUserTables(tables)) = new_blocks
+                        .iter_mut()
+                        .find(|b| matches!(b, DataBlock::PgStatUserTables(_)))
+                    {
+                        tables.retain(|t| !removals.contains(&t.relid));
+                        for update in updates {
+                            if let Some(existing) =
+                                tables.iter_mut().find(|t| t.relid == update.relid)
+                            {
+                                *existing = update.clone();
+                            } else {
+                                tables.push(update.clone());
+                            }
+                        }
+                    }
+                }
+                DataBlockDiff::PgStatUserIndexes { updates, removals } => {
+                    if let Some(DataBlock::PgStatUserIndexes(indexes)) = new_blocks
+                        .iter_mut()
+                        .find(|b| matches!(b, DataBlock::PgStatUserIndexes(_)))
+                    {
+                        indexes.retain(|i| !removals.contains(&i.indexrelid));
+                        for update in updates {
+                            if let Some(existing) = indexes
+                                .iter_mut()
+                                .find(|i| i.indexrelid == update.indexrelid)
+                            {
+                                *existing = update.clone();
+                            } else {
+                                indexes.push(update.clone());
                             }
                         }
                     }

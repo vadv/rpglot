@@ -204,3 +204,262 @@ pub struct PgStatStatementsInfo {
     #[serde(default)]
     pub collected_at: i64,
 }
+
+/// Database-level statistics from pg_stat_database.
+///
+/// Source: `SELECT * FROM pg_stat_database`
+///
+/// This view contains one row per database, showing cumulative statistics
+/// about transactions, I/O, tuple operations, temp usage, and deadlocks.
+/// All numeric fields are cumulative counters; rates are computed in the TUI
+/// from deltas between consecutive snapshots.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgStatDatabaseInfo {
+    /// Database OID (diff key).
+    /// Source: `pg_stat_database.datid`
+    pub datid: u32,
+
+    /// Hash of database name.
+    /// Source: `pg_stat_database.datname` — interned via StringInterner
+    pub datname_hash: u64,
+
+    /// Committed transactions (cumulative).
+    /// Source: `pg_stat_database.xact_commit`
+    pub xact_commit: i64,
+
+    /// Rolled back transactions (cumulative).
+    /// Source: `pg_stat_database.xact_rollback`
+    pub xact_rollback: i64,
+
+    /// Disk blocks read (cumulative).
+    /// Source: `pg_stat_database.blks_read`
+    pub blks_read: i64,
+
+    /// Buffer cache hits (cumulative).
+    /// Source: `pg_stat_database.blks_hit`
+    pub blks_hit: i64,
+
+    /// Rows returned by sequential scans (cumulative).
+    /// Source: `pg_stat_database.tup_returned`
+    pub tup_returned: i64,
+
+    /// Rows fetched by index scans (cumulative).
+    /// Source: `pg_stat_database.tup_fetched`
+    pub tup_fetched: i64,
+
+    /// Rows inserted (cumulative).
+    /// Source: `pg_stat_database.tup_inserted`
+    pub tup_inserted: i64,
+
+    /// Rows updated (cumulative).
+    /// Source: `pg_stat_database.tup_updated`
+    pub tup_updated: i64,
+
+    /// Rows deleted (cumulative).
+    /// Source: `pg_stat_database.tup_deleted`
+    pub tup_deleted: i64,
+
+    /// Queries canceled due to recovery conflicts (cumulative).
+    /// Source: `pg_stat_database.conflicts`
+    pub conflicts: i64,
+
+    /// Temp files created (cumulative).
+    /// Source: `pg_stat_database.temp_files`
+    pub temp_files: i64,
+
+    /// Temp bytes written (cumulative).
+    /// Source: `pg_stat_database.temp_bytes`
+    pub temp_bytes: i64,
+
+    /// Deadlocks detected (cumulative).
+    /// Source: `pg_stat_database.deadlocks`
+    pub deadlocks: i64,
+
+    /// Data checksum failures (PG 12+, cumulative).
+    /// Source: `pg_stat_database.checksum_failures`
+    #[serde(default)]
+    pub checksum_failures: i64,
+
+    /// Time spent reading blocks, milliseconds (requires track_io_timing).
+    /// Source: `pg_stat_database.blk_read_time`
+    pub blk_read_time: f64,
+
+    /// Time spent writing blocks, milliseconds (requires track_io_timing).
+    /// Source: `pg_stat_database.blk_write_time`
+    pub blk_write_time: f64,
+
+    /// Total session time, milliseconds (PG 14+).
+    /// Source: `pg_stat_database.session_time`
+    #[serde(default)]
+    pub session_time: f64,
+
+    /// Time spent in active state, milliseconds (PG 14+).
+    /// Source: `pg_stat_database.active_time`
+    #[serde(default)]
+    pub active_time: f64,
+
+    /// Time idle in transaction, milliseconds (PG 14+).
+    /// Source: `pg_stat_database.idle_in_transaction_time`
+    #[serde(default)]
+    pub idle_in_transaction_time: f64,
+
+    /// Total sessions (PG 14+, cumulative).
+    /// Source: `pg_stat_database.sessions`
+    #[serde(default)]
+    pub sessions: i64,
+
+    /// Abandoned sessions (PG 14+, cumulative).
+    /// Source: `pg_stat_database.sessions_abandoned`
+    #[serde(default)]
+    pub sessions_abandoned: i64,
+
+    /// Fatal sessions (PG 14+, cumulative).
+    /// Source: `pg_stat_database.sessions_fatal`
+    #[serde(default)]
+    pub sessions_fatal: i64,
+
+    /// Killed sessions (PG 14+, cumulative).
+    /// Source: `pg_stat_database.sessions_killed`
+    #[serde(default)]
+    pub sessions_killed: i64,
+}
+
+/// Per-table statistics from pg_stat_user_tables.
+///
+/// Source: `SELECT * FROM pg_stat_user_tables`
+///
+/// This per-database view shows one row per user table, with cumulative
+/// counters for scans, tuple operations, and maintenance activity.
+/// Only tables in the currently connected database are visible.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgStatUserTablesInfo {
+    /// Table OID (diff key).
+    /// Source: `pg_stat_user_tables.relid`
+    pub relid: u32,
+
+    /// Hash of schema name.
+    /// Source: `pg_stat_user_tables.schemaname` — interned via StringInterner
+    pub schemaname_hash: u64,
+
+    /// Hash of table name.
+    /// Source: `pg_stat_user_tables.relname` — interned via StringInterner
+    pub relname_hash: u64,
+
+    /// Sequential scans initiated (cumulative).
+    /// Source: `pg_stat_user_tables.seq_scan`
+    pub seq_scan: i64,
+
+    /// Rows returned by sequential scans (cumulative).
+    /// Source: `pg_stat_user_tables.seq_tup_read`
+    pub seq_tup_read: i64,
+
+    /// Index scans initiated (cumulative).
+    /// Source: `pg_stat_user_tables.idx_scan`
+    pub idx_scan: i64,
+
+    /// Rows fetched by index scans (cumulative).
+    /// Source: `pg_stat_user_tables.idx_tup_fetch`
+    pub idx_tup_fetch: i64,
+
+    /// Rows inserted (cumulative).
+    /// Source: `pg_stat_user_tables.n_tup_ins`
+    pub n_tup_ins: i64,
+
+    /// Rows updated (cumulative).
+    /// Source: `pg_stat_user_tables.n_tup_upd`
+    pub n_tup_upd: i64,
+
+    /// Rows deleted (cumulative).
+    /// Source: `pg_stat_user_tables.n_tup_del`
+    pub n_tup_del: i64,
+
+    /// Rows HOT-updated (cumulative).
+    /// Source: `pg_stat_user_tables.n_tup_hot_upd`
+    pub n_tup_hot_upd: i64,
+
+    /// Estimated live rows (gauge).
+    /// Source: `pg_stat_user_tables.n_live_tup`
+    pub n_live_tup: i64,
+
+    /// Estimated dead rows (gauge, bloat indicator).
+    /// Source: `pg_stat_user_tables.n_dead_tup`
+    pub n_dead_tup: i64,
+
+    /// Manual vacuum count (cumulative).
+    /// Source: `pg_stat_user_tables.vacuum_count`
+    pub vacuum_count: i64,
+
+    /// Autovacuum count (cumulative).
+    /// Source: `pg_stat_user_tables.autovacuum_count`
+    pub autovacuum_count: i64,
+
+    /// Manual analyze count (cumulative).
+    /// Source: `pg_stat_user_tables.analyze_count`
+    pub analyze_count: i64,
+
+    /// Autoanalyze count (cumulative).
+    /// Source: `pg_stat_user_tables.autoanalyze_count`
+    pub autoanalyze_count: i64,
+
+    /// Last manual vacuum time (epoch secs, 0 = never).
+    /// Source: `pg_stat_user_tables.last_vacuum`
+    pub last_vacuum: i64,
+
+    /// Last autovacuum time (epoch secs, 0 = never).
+    /// Source: `pg_stat_user_tables.last_autovacuum`
+    pub last_autovacuum: i64,
+
+    /// Last manual analyze time (epoch secs, 0 = never).
+    /// Source: `pg_stat_user_tables.last_analyze`
+    pub last_analyze: i64,
+
+    /// Last autoanalyze time (epoch secs, 0 = never).
+    /// Source: `pg_stat_user_tables.last_autoanalyze`
+    pub last_autoanalyze: i64,
+}
+
+/// Per-index statistics from pg_stat_user_indexes.
+///
+/// Source: `SELECT * FROM pg_stat_user_indexes`
+///
+/// This per-database view shows one row per user index, with cumulative
+/// counters for index scans and tuple operations.
+/// Only indexes in the currently connected database are visible.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgStatUserIndexesInfo {
+    /// Index OID (diff key).
+    /// Source: `pg_stat_user_indexes.indexrelid`
+    pub indexrelid: u32,
+
+    /// Parent table OID.
+    /// Source: `pg_stat_user_indexes.relid`
+    pub relid: u32,
+
+    /// Hash of schema name.
+    /// Source: `pg_stat_user_indexes.schemaname` — interned via StringInterner
+    pub schemaname_hash: u64,
+
+    /// Hash of table name.
+    /// Source: `pg_stat_user_indexes.relname` — interned via StringInterner
+    pub relname_hash: u64,
+
+    /// Hash of index name.
+    /// Source: `pg_stat_user_indexes.indexrelname` — interned via StringInterner
+    pub indexrelname_hash: u64,
+
+    /// Index scans initiated (cumulative).
+    /// Source: `pg_stat_user_indexes.idx_scan`
+    pub idx_scan: i64,
+
+    /// Index entries returned (cumulative).
+    /// Source: `pg_stat_user_indexes.idx_tup_read`
+    pub idx_tup_read: i64,
+
+    /// Live table rows fetched by index scans (cumulative).
+    /// Source: `pg_stat_user_indexes.idx_tup_fetch`
+    pub idx_tup_fetch: i64,
+
+    /// Index size in bytes.
+    /// Source: `pg_relation_size(indexrelid)`
+    pub size_bytes: i64,
+}

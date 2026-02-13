@@ -19,7 +19,7 @@ use crate::util::parse_time_with_base;
 use super::event::{Event, EventHandler};
 use super::input::{KeyAction, handle_key};
 use super::render::render;
-use super::state::{AppState, InputMode, Tab};
+use super::state::{AppState, InputMode, PopupState, Tab};
 use super::widgets::processes::{
     calculate_cached_widths, extract_processes, get_total_cpu_time, get_total_memory,
     update_prev_cpu, update_prev_dsk, update_prev_mem,
@@ -73,9 +73,9 @@ impl App {
 
         // Main loop
         loop {
-            // Force full redraw when popup closes to avoid visual artifacts
+            // Force full redraw when popup opens or closes to avoid visual artifacts
             let popup_open = self.state.popup.is_open();
-            if self.state.popup_was_open && !popup_open {
+            if self.state.popup_was_open != popup_open {
                 terminal.clear()?;
             }
             self.state.popup_was_open = popup_open;
@@ -191,6 +191,12 @@ impl App {
         // Update pg_stat_statements rates cache (used by PGS tab).
         self.state.pgs.update_rates_from_snapshot(&snapshot);
 
+        // Update pg_stat_user_tables rates cache (used by PGT tab).
+        self.state.pgt.update_rates_from_snapshot(&snapshot);
+
+        // Update pg_stat_user_indexes rates cache (used by PGI tab).
+        self.state.pgi.update_rates_from_snapshot(&snapshot);
+
         // Update history position for non-live mode
         if !self.state.is_live
             && let Some(hp) = self.provider.as_any().and_then(|a| {
@@ -201,7 +207,70 @@ impl App {
             self.state.history_position = Some(hp);
         }
 
+        // Close detail popup if the referenced entity disappeared from the new snapshot.
+        self.validate_popup(&snapshot);
+
         self.state.current_snapshot = Some(snapshot);
+    }
+
+    /// Closes the detail popup if its target entity is no longer in the snapshot.
+    fn validate_popup(&mut self, snapshot: &Snapshot) {
+        let close = match &self.state.popup {
+            PopupState::ProcessDetail { pid, .. } => {
+                let pid = *pid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::Processes(procs) = b {
+                        procs.iter().any(|p| p.pid == pid)
+                    } else {
+                        false
+                    }
+                })
+            }
+            PopupState::PgDetail { pid, .. } => {
+                let pid = *pid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::PgStatActivity(activities) = b {
+                        activities.iter().any(|a| a.pid == pid)
+                    } else {
+                        false
+                    }
+                })
+            }
+            PopupState::PgsDetail { queryid, .. } => {
+                let qid = *queryid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::PgStatStatements(stmts) = b {
+                        stmts.iter().any(|s| s.queryid == qid)
+                    } else {
+                        false
+                    }
+                })
+            }
+            PopupState::PgtDetail { relid, .. } => {
+                let rid = *relid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::PgStatUserTables(tables) = b {
+                        tables.iter().any(|t| t.relid == rid)
+                    } else {
+                        false
+                    }
+                })
+            }
+            PopupState::PgiDetail { indexrelid, .. } => {
+                let irid = *indexrelid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::PgStatUserIndexes(indexes) = b {
+                        indexes.iter().any(|i| i.indexrelid == irid)
+                    } else {
+                        false
+                    }
+                })
+            }
+            _ => false,
+        };
+        if close {
+            self.state.popup = PopupState::None;
+        }
     }
 
     /// Advances to next snapshot.
@@ -378,6 +447,41 @@ impl App {
             }
             Tab::PgStatements => {
                 // No further drill-down from PGS
+            }
+            Tab::PgTables => {
+                // PGT -> PGI: drill-down to indexes for selected table
+                let Some(relid) = self.state.pgt.tracked_relid else {
+                    return;
+                };
+
+                // Find indexes belonging to this table and pick the one with max idx_scan
+                let best_indexrelid = snapshot.blocks.iter().find_map(|block| {
+                    if let DataBlock::PgStatUserIndexes(indexes) = block {
+                        let matching: Vec<_> =
+                            indexes.iter().filter(|i| i.relid == relid).collect();
+                        if matching.is_empty() {
+                            return None;
+                        }
+                        matching
+                            .iter()
+                            .max_by_key(|i| i.idx_scan)
+                            .map(|i| i.indexrelid)
+                    } else {
+                        None
+                    }
+                });
+
+                // Switch to PGI with filter (even if no indexes, to show empty state)
+                self.state.current_tab = Tab::PgIndexes;
+                self.state.pgi.filter_relid = Some(relid);
+                self.state.pgi.selected = 0;
+                self.state.pgi.tracked_indexrelid = None;
+                if let Some(irid) = best_indexrelid {
+                    self.state.pgi.navigate_to_indexrelid = Some(irid);
+                }
+            }
+            Tab::PgIndexes => {
+                // No further drill-down from PGI
             }
         }
     }

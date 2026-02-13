@@ -131,6 +131,13 @@ impl Styles {
             .add_modifier(Modifier::UNDERLINED)
     }
 
+    /// Section header style for detail popups.
+    pub fn section_header() -> Style {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    }
+
     /// Help text style.
     pub fn help() -> Style {
         Style::default().fg(Theme::FG_DIM)

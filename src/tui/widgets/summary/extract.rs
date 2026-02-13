@@ -1,13 +1,13 @@
 //! Metric extraction from snapshots.
 
 use crate::storage::model::{
-    DataBlock, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo, SystemPsiInfo,
-    SystemStatInfo, SystemVmstatInfo,
+    DataBlock, PgStatDatabaseInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
+    SystemPsiInfo, SystemStatInfo, SystemVmstatInfo,
 };
 
 use super::{
-    CpuMetrics, DiskSummary, NetSummary, PsiSummary, SummaryMetrics, TOP_CPUS, TOP_DISKS, TOP_NETS,
-    VmstatRates,
+    CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics, TOP_CPUS,
+    TOP_DISKS, TOP_NETS, VmstatRates,
 };
 
 /// Maximum realistic disk throughput (10 GB/s) - values above this indicate data issues
@@ -56,6 +56,7 @@ pub(super) fn extract_metrics(snapshot: &Snapshot, previous: Option<&Snapshot>) 
         top_nets: Vec::new(),
         psi: Vec::new(),
         vmstat_rates: None,
+        pg_summary: None,
     };
 
     // We compute top disks after the loop because for containers the filtering
@@ -150,6 +151,18 @@ pub(super) fn extract_metrics(snapshot: &Snapshot, previous: Option<&Snapshot>) 
                 });
                 metrics.vmstat_rates =
                     extract_vmstat_rates(vmstat, prev_vmstat, curr_stat, prev_stat, delta_time);
+            }
+            DataBlock::PgStatDatabase(dbs) => {
+                let prev_dbs = previous.and_then(|p| {
+                    p.blocks.iter().find_map(|b| {
+                        if let DataBlock::PgStatDatabase(d) = b {
+                            Some(d.as_slice())
+                        } else {
+                            None
+                        }
+                    })
+                });
+                metrics.pg_summary = extract_pg_summary(dbs, prev_dbs, delta_time);
             }
             _ => {}
         }
@@ -474,5 +487,70 @@ fn extract_vmstat_rates(
         pswpout_s,
         pgfault_s,
         ctxt_s,
+    })
+}
+
+/// Extracts aggregated PostgreSQL summary from pg_stat_database.
+/// Returns None if previous snapshot is unavailable (rates need two points).
+fn extract_pg_summary(
+    current: &[PgStatDatabaseInfo],
+    previous: Option<&[PgStatDatabaseInfo]>,
+    delta_time: f64,
+) -> Option<PgSummary> {
+    use std::collections::HashMap;
+
+    let prev = previous?;
+    if delta_time <= 0.0 {
+        return None;
+    }
+
+    let prev_map: HashMap<u32, &PgStatDatabaseInfo> = prev.iter().map(|d| (d.datid, d)).collect();
+
+    let mut sum_commit: i64 = 0;
+    let mut sum_rollback: i64 = 0;
+    let mut sum_blks_read: i64 = 0;
+    let mut sum_blks_hit: i64 = 0;
+    let mut sum_tup: i64 = 0;
+    let mut sum_temp_bytes: i64 = 0;
+    let mut sum_deadlocks: i64 = 0;
+    let mut sum_blk_read_time: f64 = 0.0;
+    let mut sum_blk_write_time: f64 = 0.0;
+
+    for db in current {
+        let Some(p) = prev_map.get(&db.datid) else {
+            continue;
+        };
+
+        sum_commit += db.xact_commit.saturating_sub(p.xact_commit);
+        sum_rollback += db.xact_rollback.saturating_sub(p.xact_rollback);
+        sum_blks_read += db.blks_read.saturating_sub(p.blks_read);
+        sum_blks_hit += db.blks_hit.saturating_sub(p.blks_hit);
+        sum_tup += db.tup_returned.saturating_sub(p.tup_returned)
+            + db.tup_fetched.saturating_sub(p.tup_fetched)
+            + db.tup_inserted.saturating_sub(p.tup_inserted)
+            + db.tup_updated.saturating_sub(p.tup_updated)
+            + db.tup_deleted.saturating_sub(p.tup_deleted);
+        sum_temp_bytes += db.temp_bytes.saturating_sub(p.temp_bytes);
+        sum_deadlocks += db.deadlocks.saturating_sub(p.deadlocks);
+        sum_blk_read_time += db.blk_read_time - p.blk_read_time;
+        sum_blk_write_time += db.blk_write_time - p.blk_write_time;
+    }
+
+    let total_blks = sum_blks_hit + sum_blks_read;
+    let hit_ratio = if total_blks > 0 {
+        sum_blks_hit as f64 * 100.0 / total_blks as f64
+    } else {
+        100.0
+    };
+
+    Some(PgSummary {
+        tps: (sum_commit + sum_rollback) as f64 / delta_time,
+        hit_ratio,
+        tup_s: sum_tup as f64 / delta_time,
+        tmp_bytes_s: sum_temp_bytes as f64 / delta_time,
+        deadlocks: sum_deadlocks,
+        blk_read_time_ms: sum_blk_read_time,
+        blk_write_time_ms: sum_blk_write_time,
+        rollbacks: sum_rollback,
     })
 }

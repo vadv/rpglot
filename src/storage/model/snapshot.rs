@@ -7,7 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::cgroup::CgroupInfo;
-use super::postgres::{PgStatActivityInfo, PgStatStatementsInfo};
+use super::postgres::{
+    PgStatActivityInfo, PgStatDatabaseInfo, PgStatStatementsInfo, PgStatUserIndexesInfo,
+    PgStatUserTablesInfo,
+};
 use super::process::ProcessInfo;
 use super::system::{
     SystemCpuInfo, SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo,
@@ -35,6 +38,18 @@ pub enum DataBlock {
     /// PostgreSQL query statistics.
     /// Source: `pg_stat_statements` extension
     PgStatStatements(Vec<PgStatStatementsInfo>),
+
+    /// PostgreSQL database-level statistics.
+    /// Source: `pg_stat_database` view
+    PgStatDatabase(Vec<PgStatDatabaseInfo>),
+
+    /// PostgreSQL per-table statistics (per-database view).
+    /// Source: `pg_stat_user_tables` view
+    PgStatUserTables(Vec<PgStatUserTablesInfo>),
+
+    /// PostgreSQL per-index statistics (per-database view).
+    /// Source: `pg_stat_user_indexes` view
+    PgStatUserIndexes(Vec<PgStatUserIndexesInfo>),
 
     /// CPU usage statistics (total and per-core).
     /// Source: `/proc/stat`
@@ -122,6 +137,27 @@ pub enum DataBlockDiff {
     PgStatStatements {
         updates: Vec<PgStatStatementsInfo>,
         removals: Vec<i64>,
+    },
+
+    /// PostgreSQL database stats changes.
+    /// `removals` contains datids of dropped databases.
+    PgStatDatabase {
+        updates: Vec<PgStatDatabaseInfo>,
+        removals: Vec<u32>,
+    },
+
+    /// PostgreSQL per-table stats changes.
+    /// `removals` contains relids of dropped/removed tables.
+    PgStatUserTables {
+        updates: Vec<PgStatUserTablesInfo>,
+        removals: Vec<u32>,
+    },
+
+    /// PostgreSQL per-index stats changes.
+    /// `removals` contains indexrelids of dropped/removed indexes.
+    PgStatUserIndexes {
+        updates: Vec<PgStatUserIndexesInfo>,
+        removals: Vec<u32>,
     },
 
     /// CPU statistics changes (per-core).

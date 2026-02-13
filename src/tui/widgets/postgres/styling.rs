@@ -32,12 +32,12 @@ fn format_duration(secs: i64) -> String {
     }
 }
 
-/// Format duration or "-" for zero/invalid.
-pub(super) fn format_duration_or_dash(secs: i64) -> String {
-    if secs <= 0 {
-        "-".to_string()
-    } else {
-        format!("{:>7}", format_duration(secs))
+/// Format duration or "-" if no timestamp (None).
+/// Some(0) shows "0s" (duration < 1 second), None shows "-" (timestamp was NULL).
+pub(super) fn format_duration_or_dash(secs: Option<i64>) -> String {
+    match secs {
+        Some(s) if s >= 0 => format!("{:>7}", format_duration(s)),
+        _ => format!("{:>7}", "-"),
     }
 }
 
@@ -102,14 +102,15 @@ pub(super) fn is_idle_state(state: &str) -> bool {
 }
 
 /// Style query duration with color coding.
-pub(super) fn styled_duration(secs: i64, state: &str) -> Span<'static> {
+pub(super) fn styled_duration(secs: Option<i64>, state: &str) -> Span<'static> {
     let text = format_duration_or_dash(secs);
     let lower_state = state.to_lowercase();
     let is_active = lower_state == "active" || lower_state.contains("trans");
+    let s = secs.unwrap_or(0);
 
-    let style = if is_active && secs > 300 {
+    let style = if is_active && s > 300 {
         Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-    } else if is_active && secs > 60 {
+    } else if is_active && s > 60 {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default()
@@ -125,7 +126,7 @@ pub(super) fn styled_duration(secs: i64, state: &str) -> Span<'static> {
 /// - Red: QDUR > 5x MEAN
 /// - Yellow: QDUR > 2x MEAN
 pub(super) fn styled_qdur_with_anomaly(
-    secs: i64,
+    secs: Option<i64>,
     state: &str,
     mean_exec_time_ms: Option<f64>,
     max_exec_time_ms: Option<f64>,
@@ -135,7 +136,7 @@ pub(super) fn styled_qdur_with_anomaly(
     let is_active = lower_state == "active" || lower_state.contains("trans");
 
     // Convert seconds to milliseconds for comparison
-    let qdur_ms = (secs * 1000) as f64;
+    let qdur_ms = (secs.unwrap_or(0) * 1000) as f64;
 
     let style = if !is_active {
         Style::default()

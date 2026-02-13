@@ -6,7 +6,9 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use crate::tui::state::{PgStatementsViewMode, ProcessViewMode, Tab};
+use crate::tui::state::{
+    PgIndexesViewMode, PgStatementsViewMode, PgTablesViewMode, ProcessViewMode, Tab,
+};
 
 /// Renders the help popup centered on screen with scroll support.
 pub fn render_help(
@@ -15,6 +17,8 @@ pub fn render_help(
     tab: Tab,
     view_mode: ProcessViewMode,
     pgs_view_mode: PgStatementsViewMode,
+    pgt_view_mode: PgTablesViewMode,
+    pgi_view_mode: PgIndexesViewMode,
     scroll: &mut usize,
 ) {
     // Calculate popup size (60% width, 80% height, clamped to 40-80 x 10-30)
@@ -30,7 +34,8 @@ pub fn render_help(
     frame.render_widget(Clear, popup_area);
 
     // Get help content based on tab
-    let (title, content) = get_help_content(tab, view_mode, pgs_view_mode);
+    let (title, content) =
+        get_help_content(tab, view_mode, pgs_view_mode, pgt_view_mode, pgi_view_mode);
     let content_lines = content.len();
 
     let block = Block::default()
@@ -91,11 +96,15 @@ fn get_help_content(
     tab: Tab,
     view_mode: ProcessViewMode,
     pgs_view_mode: PgStatementsViewMode,
+    pgt_view_mode: PgTablesViewMode,
+    pgi_view_mode: PgIndexesViewMode,
 ) -> (&'static str, Vec<Line<'static>>) {
     match tab {
         Tab::Processes => get_process_help(view_mode),
         Tab::PostgresActive => ("PostgreSQL Activity Help (PGA)", get_postgres_help()),
         Tab::PgStatements => get_pgs_help(pgs_view_mode),
+        Tab::PgTables => get_pgt_help(pgt_view_mode),
+        Tab::PgIndexes => get_pgi_help(pgi_view_mode),
     }
 }
 
@@ -575,4 +584,225 @@ fn get_postgres_help() -> Vec<Line<'static>> {
         Line::from("- Statement Statistics (from pg_stat_statements, if available)"),
         Line::from("- Full query text"),
     ]
+}
+
+fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(Span::styled(
+        "View modes: a=Activity, x=Scans, n=Maintenance",
+        Style::default().fg(Color::Cyan),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Filtering: matches schema or table name (substring)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Rates: per-second (/s) computed from cumulative counter deltas",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "-- means not enough data yet (first sample or after stats reset)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Sorting: s=next column, r=reverse direction",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    match mode {
+        PgTablesViewMode::Activity => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Activity):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("SEQ/s  - sequential scans per second (missing indexes?)"),
+                Line::from("IDX/s  - index scans per second (healthy usage)"),
+                Line::from("INS/s  - rows inserted per second"),
+                Line::from("UPD/s  - rows updated per second"),
+                Line::from("DEL/s  - rows deleted per second"),
+                Line::from("LIVE   - estimated live rows"),
+                Line::from("DEAD   - estimated dead rows (bloat)"),
+                Line::from("TABLE  - schema.table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("High SEQ/s + large table = missing index, check EXPLAIN"),
+                Line::from("DEAD >> LIVE = autovacuum falling behind"),
+                Line::from("  check autovacuum_max_workers and per-table settings"),
+                Line::from("> or J to drill-down to indexes (PGI) for selected table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Red    - dead% > 20% (severe bloat)"),
+                Line::from("Yellow - dead% > 5% or seq% > 80%"),
+            ]);
+            ("PostgreSQL Tables Help (PGT) - Activity (a)", lines)
+        }
+        PgTablesViewMode::Scans => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Scans):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("SEQ/s     - sequential scans per second"),
+                Line::from("SEQ_TUP/s - rows from sequential scans per second (seq scan cost)"),
+                Line::from("IDX/s     - index scans per second"),
+                Line::from("IDX_TUP/s - rows from index scans per second"),
+                Line::from("SEQ%      - percentage of scans that are sequential"),
+                Line::from("            high SEQ% on large table = missing or wrong index"),
+                Line::from("TABLE     - schema.table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("SEQ% > 80% on large table = almost certainly needs an index"),
+                Line::from("High SEQ_TUP/s = large sequential reads, heavy I/O cost"),
+                Line::from("SEQ% = -- means no scans at all (rarely accessed table)"),
+            ]);
+            ("PostgreSQL Tables Help (PGT) - Scans (x)", lines)
+        }
+        PgTablesViewMode::Maintenance => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Maintenance):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("DEAD      - estimated dead tuples"),
+                Line::from("LIVE      - estimated live tuples"),
+                Line::from("DEAD%     - dead / (live + dead) * 100; >5% = needs attention"),
+                Line::from("VAC/s     - manual VACUUM rate"),
+                Line::from("AVAC/s    - autovacuum rate"),
+                Line::from("LAST_AVAC - time since last autovacuum (- = never)"),
+                Line::from("LAST_AANL - time since last autoanalyze (- = never)"),
+                Line::from("TABLE     - schema.table"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("DEAD% > 20% = severe bloat, consider manual VACUUM FULL"),
+                Line::from("LAST_AVAC = - = table never autovacuumed, check config"),
+                Line::from("  check autovacuum_vacuum_threshold and scale_factor"),
+                Line::from("High VAC/s = frequent manual vacuuming, rely on autovacuum"),
+                Line::from("LAST_AANL = - = planner stats may be stale, run ANALYZE"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Red    - dead% > 20% (critical bloat)"),
+                Line::from("Yellow - dead% > 5% (needs attention)"),
+            ]);
+            ("PostgreSQL Tables Help (PGT) - Maintenance (n)", lines)
+        }
+    }
+}
+
+fn get_pgi_help(mode: PgIndexesViewMode) -> (&'static str, Vec<Line<'static>>) {
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(Span::styled(
+        "View modes: u=Usage, w=Unused",
+        Style::default().fg(Color::Cyan),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Filtering: matches schema, table, or index name (substring)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Sorting: s=next column, r=reverse direction",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    match mode {
+        PgIndexesViewMode::Usage => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Usage):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("IDX/s     - index scans per second"),
+                Line::from("TUP_RD/s  - index entries read per second"),
+                Line::from("TUP_FT/s  - live table rows fetched per second"),
+                Line::from("SIZE      - index size on disk"),
+                Line::from("TABLE     - parent table"),
+                Line::from("INDEX     - index name"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("TUP_RD/s >> TUP_FT/s = many dead/invisible tuples in index"),
+                Line::from("  index may need REINDEX or table needs VACUUM"),
+                Line::from("Large SIZE + low IDX/s = candidate for removal (see w:unused)"),
+                Line::from("High IDX/s = hot index, ensure it fits in shared_buffers"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([Line::from(
+                "Yellow - idx_scan = 0 (unused index, wasting resources)",
+            )]);
+            ("PostgreSQL Indexes Help (PGI) - Usage (u)", lines)
+        }
+        PgIndexesViewMode::Unused => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Unused):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("IDX_SCAN - total scans (cumulative, since stats reset)"),
+                Line::from("           sorted ascending: unused indexes first"),
+                Line::from("SIZE     - index size on disk (wasted space)"),
+                Line::from("TABLE    - parent table"),
+                Line::from("INDEX    - index name"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("IDX_SCAN = 0 = index never used since stats reset"),
+                Line::from("  safe to drop ONLY IF stats were reset long ago"),
+                Line::from("  check pg_stat_reset_time() before dropping"),
+                Line::from("Large SIZE + IDX_SCAN = 0 = wasted disk and maintenance cost"),
+                Line::from("  each index slows down INSERT/UPDATE/DELETE operations"),
+                Line::from("Unique/PK indexes may show low scans but are still required"),
+                Line::from("  check pg_indexes.indisunique before dropping"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Color coding:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([Line::from("Yellow - idx_scan = 0 (unused index)")]);
+            ("PostgreSQL Indexes Help (PGI) - Unused (w)", lines)
+        }
+    }
 }

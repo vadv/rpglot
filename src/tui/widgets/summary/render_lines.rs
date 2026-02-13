@@ -7,7 +7,9 @@ use crate::tui::state::Tab;
 use crate::tui::style::Styles;
 
 use super::metric_widths::*;
-use super::{CpuMetrics, DiskSummary, NetSummary, PsiSummary, SummaryMetrics, VmstatRates};
+use super::{
+    CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics, VmstatRates,
+};
 
 fn line_with_padding(spans: Vec<Span<'static>>, width: usize) -> Line<'static> {
     let content_len: usize = spans.iter().map(|s| s.content.chars().count()).sum();
@@ -314,6 +316,62 @@ pub(super) fn render_vmstat_line(rates: &VmstatRates, width: usize) -> Line<'sta
     line_with_padding(spans, width)
 }
 
+/// Renders PostgreSQL summary line from pg_stat_database.
+/// Format: PG  │ tps:   1234  hit:  99.2%  tup:   5.6K/s  tmp:   0 B/s  dlock:     0
+pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
+    let mut spans = vec![Span::styled(" PG", Styles::cpu()), Span::raw(" │ ")];
+
+    spans.extend(metric_spans_default("tps", &format_rate(pg.tps), PG_TPS));
+    spans.push(Span::raw("  "));
+
+    let hit_style = if pg.hit_ratio < 90.0 {
+        Styles::critical()
+    } else if pg.hit_ratio < 95.0 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "hit",
+        &format!("{:.1}%", pg.hit_ratio),
+        PG_HIT,
+        hit_style,
+    ));
+    spans.push(Span::raw("  "));
+
+    spans.extend(metric_spans_default("tup", &format_rate(pg.tup_s), PG_TUP));
+    spans.push(Span::raw("  "));
+
+    let tmp_style = if pg.tmp_bytes_s > 100.0 * 1024.0 * 1024.0 {
+        Styles::critical()
+    } else if pg.tmp_bytes_s > 0.0 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "tmp",
+        &format_bytes_rate(pg.tmp_bytes_s),
+        PG_TMP,
+        tmp_style,
+    ));
+    spans.push(Span::raw("  "));
+
+    let dlock_style = if pg.deadlocks > 0 {
+        Styles::critical()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "dlock",
+        &format!("{}", pg.deadlocks),
+        PG_DLOCK,
+        dlock_style,
+    ));
+
+    line_with_padding(spans, width)
+}
+
 /// Formats a rate value with K/M suffix if needed.
 fn format_rate(value: f64) -> String {
     if value >= 1_000_000.0 {
@@ -322,6 +380,19 @@ fn format_rate(value: f64) -> String {
         format!("{:.1}K/s", value / 1000.0)
     } else {
         format!("{:.0}/s", value)
+    }
+}
+
+/// Formats a bytes-per-second rate with human-readable units.
+fn format_bytes_rate(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
+        format!("{:.1}G/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 * 1024.0 {
+        format!("{:.1}M/s", bytes_per_sec / (1024.0 * 1024.0))
+    } else if bytes_per_sec >= 1024.0 {
+        format!("{:.1}K/s", bytes_per_sec / 1024.0)
+    } else {
+        format!("{:.0}B/s", bytes_per_sec)
     }
 }
 
@@ -676,6 +747,16 @@ pub(super) fn render_help_line(width: usize, tab: Tab) -> Line<'static> {
         }
         Tab::PgStatements => {
             spans.push(Span::styled("t/c/i/e", Styles::help_key()));
+            spans.push(Span::styled(":view ", Styles::help()));
+        }
+        Tab::PgTables => {
+            spans.push(Span::styled("a/x/n", Styles::help_key()));
+            spans.push(Span::styled(":view ", Styles::help()));
+            spans.push(Span::styled(">", Styles::help_key()));
+            spans.push(Span::styled(":drill ", Styles::help()));
+        }
+        Tab::PgIndexes => {
+            spans.push(Span::styled("u/w", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));
         }
     }

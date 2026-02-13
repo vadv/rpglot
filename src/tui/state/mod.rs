@@ -17,11 +17,19 @@ pub enum Tab {
     Processes,
     PostgresActive,
     PgStatements,
+    PgTables,
+    PgIndexes,
 }
 
 impl Tab {
     pub fn all() -> &'static [Tab] {
-        &[Tab::Processes, Tab::PostgresActive, Tab::PgStatements]
+        &[
+            Tab::Processes,
+            Tab::PostgresActive,
+            Tab::PgStatements,
+            Tab::PgTables,
+            Tab::PgIndexes,
+        ]
     }
 }
 
@@ -45,6 +53,8 @@ impl Tab {
             Tab::Processes => "PRC",
             Tab::PostgresActive => "PGA",
             Tab::PgStatements => "PGS",
+            Tab::PgTables => "PGT",
+            Tab::PgIndexes => "PGI",
         }
     }
 
@@ -53,16 +63,20 @@ impl Tab {
         match self {
             Tab::Processes => Tab::PostgresActive,
             Tab::PostgresActive => Tab::PgStatements,
-            Tab::PgStatements => Tab::Processes,
+            Tab::PgStatements => Tab::PgTables,
+            Tab::PgTables => Tab::PgIndexes,
+            Tab::PgIndexes => Tab::Processes,
         }
     }
 
     /// Returns the previous tab.
     pub fn prev(&self) -> Tab {
         match self {
-            Tab::Processes => Tab::PgStatements,
+            Tab::Processes => Tab::PgIndexes,
             Tab::PostgresActive => Tab::Processes,
             Tab::PgStatements => Tab::PostgresActive,
+            Tab::PgTables => Tab::PgStatements,
+            Tab::PgIndexes => Tab::PgTables,
         }
     }
 }
@@ -88,11 +102,35 @@ pub enum PopupState {
     /// Debug/timing popup (live mode only).
     Debug,
     /// Process detail popup (PRC tab).
-    ProcessDetail { pid: u32, scroll: usize },
+    ProcessDetail {
+        pid: u32,
+        scroll: usize,
+        show_help: bool,
+    },
     /// PostgreSQL session detail popup (PGA tab).
-    PgDetail { pid: i32, scroll: usize },
+    PgDetail {
+        pid: i32,
+        scroll: usize,
+        show_help: bool,
+    },
     /// pg_stat_statements detail popup (PGS tab).
-    PgsDetail { queryid: i64, scroll: usize },
+    PgsDetail {
+        queryid: i64,
+        scroll: usize,
+        show_help: bool,
+    },
+    /// pg_stat_user_tables detail popup (PGT tab).
+    PgtDetail {
+        relid: u32,
+        scroll: usize,
+        show_help: bool,
+    },
+    /// pg_stat_user_indexes detail popup (PGI tab).
+    PgiDetail {
+        indexrelid: u32,
+        scroll: usize,
+        show_help: bool,
+    },
 }
 
 impl Default for PopupState {
@@ -107,12 +145,15 @@ impl PopupState {
         !matches!(self, Self::None)
     }
 
-    /// Returns true if a detail popup (ProcessDetail, PgDetail, PgsDetail) is open.
+    /// Returns true if a detail popup (ProcessDetail, PgDetail, PgsDetail, PgtDetail, PgiDetail) is open.
     pub fn is_detail_open(&self) -> bool {
         matches!(
             self,
-            Self::ProcessDetail { .. } | Self::PgDetail { .. } | Self::PgsDetail { .. }
+            Self::ProcessDetail { .. }
+                | Self::PgDetail { .. }
+                | Self::PgsDetail { .. }
+                | Self::PgtDetail { .. }
+                | Self::PgiDetail { .. }
         )
     }
 }
-

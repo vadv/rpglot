@@ -51,6 +51,9 @@ pub fn render_debug_popup(
         lines.push(format_timing_line("  NetSNMP", t.netsnmp));
         lines.push(format_timing_line("  PG Activity", t.pg_activity));
         lines.push(format_timing_line("  PG Statements", t.pg_statements));
+        lines.push(format_timing_line("  PG Database", t.pg_database));
+        lines.push(format_timing_line("  PG Tables", t.pg_tables));
+        lines.push(format_timing_line("  PG Indexes", t.pg_indexes));
         lines.push(format_timing_line("  Cgroup", t.cgroup));
         // Show PG statements caching interval
         if let Some(interval) = t.pg_stmts_cache_interval {

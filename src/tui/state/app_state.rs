@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use crate::storage::Snapshot;
 
 use super::{
-    CachedWidths, InputMode, PgActivityTabState, PgStatementsTabState, PopupState, ProcessRow,
-    ProcessViewMode, Tab, TabState, TableState,
+    CachedWidths, InputMode, PgActivityTabState, PgIndexesTabState, PgStatementsTabState,
+    PgTablesTabState, PopupState, ProcessRow, ProcessViewMode, Tab, TabState, TableState,
 };
 
 /// Main application state.
@@ -77,6 +77,14 @@ pub struct AppState {
     /// pg_stat_statements (PGS) tab state.
     pub pgs: PgStatementsTabState,
 
+    // ===== pg_stat_user_tables (PGT tab) =====
+    /// pg_stat_user_tables (PGT) tab state.
+    pub pgt: PgTablesTabState,
+
+    // ===== pg_stat_user_indexes (PGI tab) =====
+    /// pg_stat_user_indexes (PGI) tab state.
+    pub pgi: PgIndexesTabState,
+
     // ===== Status message =====
     /// Temporary status message shown in the header (e.g., why an action was blocked).
     pub status_message: Option<String>,
@@ -129,6 +137,8 @@ impl AppState {
             pga: PgActivityTabState::default(),
             drill_down_requested: false,
             pgs: PgStatementsTabState::default(),
+            pgt: PgTablesTabState::default(),
+            pgi: PgIndexesTabState::default(),
 
             status_message: None,
 
@@ -159,6 +169,18 @@ impl AppState {
                 sort_ascending: self.pgs.sort_ascending,
                 selected: self.pgs.selected,
             },
+            Tab::PgTables => TabState {
+                filter: self.pgt.filter.clone(),
+                sort_column: self.pgt.sort_column,
+                sort_ascending: self.pgt.sort_ascending,
+                selected: self.pgt.selected,
+            },
+            Tab::PgIndexes => TabState {
+                filter: self.pgi.filter.clone(),
+                sort_column: self.pgi.sort_column,
+                sort_ascending: self.pgi.sort_ascending,
+                selected: self.pgi.selected,
+            },
         };
         self.tab_states.insert(self.current_tab, state);
     }
@@ -188,6 +210,20 @@ impl AppState {
                     self.pgs.sort_ascending = state.sort_ascending;
                     self.pgs.selected = state.selected;
                 }
+                Tab::PgTables => {
+                    self.pgt.filter = state.filter.clone();
+                    self.filter_input = state.filter.clone().unwrap_or_default();
+                    self.pgt.sort_column = state.sort_column;
+                    self.pgt.sort_ascending = state.sort_ascending;
+                    self.pgt.selected = state.selected;
+                }
+                Tab::PgIndexes => {
+                    self.pgi.filter = state.filter.clone();
+                    self.filter_input = state.filter.clone().unwrap_or_default();
+                    self.pgi.sort_column = state.sort_column;
+                    self.pgi.sort_ascending = state.sort_ascending;
+                    self.pgi.selected = state.selected;
+                }
             }
         }
     }
@@ -206,6 +242,13 @@ impl AppState {
                 }
                 Tab::PgStatements => {
                     self.pgs.tracked_queryid = None;
+                }
+                Tab::PgTables => {
+                    self.pgt.tracked_relid = None;
+                }
+                Tab::PgIndexes => {
+                    self.pgi.tracked_indexrelid = None;
+                    self.pgi.filter_relid = None; // clear drill-down filter on manual tab switch
                 }
                 Tab::Processes => {}
             }

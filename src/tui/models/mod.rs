@@ -84,6 +84,100 @@ impl PgActivityViewMode {
     }
 }
 
+/// pg_stat_user_tables view modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PgTablesViewMode {
+    /// Activity view: SEQ/s, IDX/s, INS/s, UPD/s, DEL/s, LIVE, DEAD, TABLE
+    #[default]
+    Activity,
+    /// Scans view: SEQ/s, SEQ_TUP/s, IDX/s, IDX_TUP/s, SEQ%, TABLE
+    Scans,
+    /// Maintenance view: DEAD, LIVE, DEAD%, VAC/s, AVAC/s, LAST_AVAC, LAST_AANL, TABLE
+    Maintenance,
+}
+
+impl PgTablesViewMode {
+    /// Default sort column index for this view mode.
+    pub fn default_sort_column(&self) -> usize {
+        match self {
+            Self::Activity => 0,    // SEQ/s
+            Self::Scans => 4,       // SEQ%
+            Self::Maintenance => 2, // DEAD%
+        }
+    }
+
+    /// Number of columns in this view mode.
+    pub fn column_count(&self) -> usize {
+        match self {
+            Self::Activity => 8,    // SEQ/s IDX/s INS/s UPD/s DEL/s LIVE DEAD TABLE
+            Self::Scans => 6,       // SEQ/s SEQ_TUP/s IDX/s IDX_TUP/s SEQ% TABLE
+            Self::Maintenance => 8, // DEAD LIVE DEAD% VAC/s AVAC/s LAST_AVAC LAST_AANL TABLE
+        }
+    }
+}
+
+/// pg_stat_user_indexes view modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PgIndexesViewMode {
+    /// Usage view: IDX/s, TUP_RD/s, TUP_FT/s, SIZE, TABLE, INDEX
+    #[default]
+    Usage,
+    /// Unused/waste view: IDX_SCAN, SIZE, TABLE, INDEX (sorted ascending)
+    Unused,
+}
+
+impl PgIndexesViewMode {
+    /// Default sort column index for this view mode.
+    pub fn default_sort_column(&self) -> usize {
+        match self {
+            Self::Usage => 0,  // IDX/s
+            Self::Unused => 0, // IDX_SCAN
+        }
+    }
+
+    /// Number of columns in this view mode.
+    pub fn column_count(&self) -> usize {
+        match self {
+            Self::Usage => 6,  // IDX/s TUP_RD/s TUP_FT/s SIZE TABLE INDEX
+            Self::Unused => 4, // IDX_SCAN SIZE TABLE INDEX
+        }
+    }
+
+    /// Whether this view mode defaults to ascending sort.
+    pub fn default_sort_ascending(&self) -> bool {
+        match self {
+            Self::Usage => false, // highest usage first
+            Self::Unused => true, // unused (0 scans) first
+        }
+    }
+}
+
+/// Rate metrics for a single `pg_stat_user_tables` entry.
+///
+/// Rates are computed from deltas between two snapshots using `snapshot.timestamp`.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PgTablesRates {
+    pub dt_secs: f64,
+    pub seq_scan_s: Option<f64>,
+    pub seq_tup_read_s: Option<f64>,
+    pub idx_scan_s: Option<f64>,
+    pub idx_tup_fetch_s: Option<f64>,
+    pub n_tup_ins_s: Option<f64>,
+    pub n_tup_upd_s: Option<f64>,
+    pub n_tup_del_s: Option<f64>,
+    pub vacuum_count_s: Option<f64>,
+    pub autovacuum_count_s: Option<f64>,
+}
+
+/// Rate metrics for a single `pg_stat_user_indexes` entry.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PgIndexesRates {
+    pub dt_secs: f64,
+    pub idx_scan_s: Option<f64>,
+    pub idx_tup_read_s: Option<f64>,
+    pub idx_tup_fetch_s: Option<f64>,
+}
+
 /// Rate metrics for a single `pg_stat_statements` entry.
 ///
 /// Rates are computed from deltas between two **real samples** of statement counters,

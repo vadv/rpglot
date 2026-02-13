@@ -125,10 +125,17 @@ pub fn calculate_summary_height(snapshot: Option<&Snapshot>) -> u16 {
             })
             .unwrap_or((false, false));
 
-        // Left column: MEM(+SWP) + DSK×N + NET×N
+        // Left column: MEM(+SWP) + DSK×N + NET×N + PG
         // In container mode with memory limit, SWP is hidden.
         let left_base = if cgroup_mem_limited { 1 } else { 2 };
-        let left_lines = left_base + disk_count + net_count;
+
+        let has_pg_database = snap
+            .blocks
+            .iter()
+            .any(|b| matches!(b, DataBlock::PgStatDatabase(_)));
+        let pg_lines = if has_pg_database { 1 } else { 0 };
+
+        let left_lines = left_base + disk_count + net_count + pg_lines;
 
         // Right column: CPL + CPU (+ cpu×N) + PSI + VMS
         // In container mode with CPU quota, per-CPU breakdown is not shown.
@@ -288,6 +295,11 @@ fn build_left_column(metrics: &SummaryMetrics, width: usize) -> Vec<Line<'static
         }
     }
 
+    // Add PostgreSQL summary line if data is available
+    if let Some(ref pg) = metrics.pg_summary {
+        lines.push(render_pg_line(pg, width));
+    }
+
     lines
 }
 
@@ -369,6 +381,9 @@ struct SummaryMetrics {
 
     // Vmstat rates (from current and previous vmstat/stat)
     vmstat_rates: Option<VmstatRates>,
+
+    // PostgreSQL instance-level summary (from pg_stat_database)
+    pg_summary: Option<PgSummary>,
 }
 
 /// CPU metrics for a single CPU or total.
@@ -438,6 +453,31 @@ struct VmstatRates {
     ctxt_s: f64,
 }
 
+/// PostgreSQL instance-level summary from pg_stat_database.
+/// Rates are computed from deltas between consecutive snapshots.
+#[derive(Clone, Default)]
+struct PgSummary {
+    /// Transactions per second (commit + rollback).
+    tps: f64,
+    /// Buffer cache hit ratio (0..100).
+    hit_ratio: f64,
+    /// Tuples per second (returned + fetched + inserted + updated + deleted).
+    tup_s: f64,
+    /// Temp bytes per second.
+    tmp_bytes_s: f64,
+    /// Deadlocks in this interval.
+    deadlocks: i64,
+    /// Block read time delta (ms).
+    #[allow(dead_code)]
+    blk_read_time_ms: f64,
+    /// Block write time delta (ms).
+    #[allow(dead_code)]
+    blk_write_time_ms: f64,
+    /// Rollbacks in this interval.
+    #[allow(dead_code)]
+    rollbacks: i64,
+}
+
 // ============================================================================
 // Fixed-width metric formatting (Variant 2: right-aligned values)
 // Each metric has a fixed width: "label:" + right-aligned value
@@ -494,6 +534,13 @@ pub(super) mod metric_widths {
     pub const NET_PKT: usize = IO_OPS;
     pub const NET_ERR: usize = IO_STAT;
     pub const NET_DRP: usize = IO_STAT;
+
+    // PG line: tps:   1234  hit:  99.2%  tup:   5.6K/s  tmp:   0 B/s  dlock:     0
+    pub const PG_TPS: usize = 12; // "tps:" + value
+    pub const PG_HIT: usize = 12; // "hit:" + value
+    pub const PG_TUP: usize = 14; // "tup:" + value
+    pub const PG_TMP: usize = 14; // "tmp:" + value
+    pub const PG_DLOCK: usize = 11; // "dlock:" + value
 }
 
 use metric_widths::*;

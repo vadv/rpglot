@@ -1,10 +1,16 @@
-//! Per-tab state: PGA (pg_stat_activity) and PGS (pg_stat_statements).
+//! Per-tab state: PGA (pg_stat_activity), PGS (pg_stat_statements),
+//! PGT (pg_stat_user_tables), PGI (pg_stat_user_indexes).
 
-use crate::storage::model::{DataBlock, PgStatStatementsInfo, Snapshot};
+use crate::storage::model::{
+    DataBlock, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, Snapshot,
+};
 use ratatui::widgets::TableState as RatatuiTableState;
 use std::collections::HashMap;
 
-use super::{PgActivityViewMode, PgStatementsRates, PgStatementsViewMode};
+use super::{
+    PgActivityViewMode, PgIndexesRates, PgIndexesViewMode, PgStatementsRates, PgStatementsViewMode,
+    PgTablesRates, PgTablesViewMode,
+};
 
 /// State for the PostgreSQL Activity (PGA) tab.
 #[derive(Debug)]
@@ -484,5 +490,383 @@ mod pgs_rates_tests {
         let r = state.pgs.rates.get(&1).unwrap();
         assert!((r.calls_s.unwrap() - 0.2).abs() < 1e-9);
         assert!((r.exec_time_ms_s.unwrap() - 2.0).abs() < 1e-9);
+    }
+}
+
+// ===========================================================================
+// PGT (pg_stat_user_tables) tab state
+// ===========================================================================
+
+/// State for the PostgreSQL Tables (PGT) tab.
+#[derive(Debug)]
+pub struct PgTablesTabState {
+    pub selected: usize,
+    pub filter: Option<String>,
+    pub sort_column: usize,
+    pub sort_ascending: bool,
+    pub view_mode: PgTablesViewMode,
+    pub tracked_relid: Option<u32>,
+    pub ratatui_state: RatatuiTableState,
+    // Rate computation state
+    pub rates: HashMap<u32, PgTablesRates>,
+    pub prev_sample_ts: Option<i64>,
+    pub prev_sample: HashMap<u32, PgStatUserTablesInfo>,
+    pub dt_secs: Option<f64>,
+}
+
+impl Default for PgTablesTabState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            filter: None,
+            sort_column: PgTablesViewMode::Activity.default_sort_column(),
+            sort_ascending: false,
+            view_mode: PgTablesViewMode::Activity,
+            tracked_relid: None,
+            ratatui_state: RatatuiTableState::default(),
+            rates: HashMap::new(),
+            prev_sample_ts: None,
+            prev_sample: HashMap::new(),
+            dt_secs: None,
+        }
+    }
+}
+
+impl PgTablesTabState {
+    pub fn next_sort_column(&mut self) {
+        let count = self.view_mode.column_count();
+        if count == 0 {
+            return;
+        }
+        self.sort_column = (self.sort_column + 1) % count;
+    }
+
+    pub fn toggle_sort_direction(&mut self) {
+        self.sort_ascending = !self.sort_ascending;
+    }
+
+    pub fn select_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+        self.tracked_relid = None;
+    }
+
+    pub fn select_down(&mut self) {
+        self.selected = self.selected.saturating_add(1);
+        self.tracked_relid = None;
+    }
+
+    pub fn page_up(&mut self, n: usize) {
+        self.selected = self.selected.saturating_sub(n);
+        self.tracked_relid = None;
+    }
+
+    pub fn page_down(&mut self, n: usize) {
+        self.selected = self.selected.saturating_add(n);
+        self.tracked_relid = None;
+    }
+
+    pub fn home(&mut self) {
+        self.selected = 0;
+        self.tracked_relid = None;
+    }
+
+    pub fn end(&mut self) {
+        self.selected = usize::MAX;
+        self.tracked_relid = None;
+    }
+
+    /// Resolves selection after filtering/sorting.
+    pub fn resolve_selection(&mut self, row_relids: &[u32]) {
+        if let Some(tracked) = self.tracked_relid {
+            if let Some(idx) = row_relids.iter().position(|&r| r == tracked) {
+                self.selected = idx;
+            } else {
+                self.tracked_relid = None;
+            }
+        }
+
+        if !row_relids.is_empty() {
+            self.selected = self.selected.min(row_relids.len() - 1);
+            self.tracked_relid = Some(row_relids[self.selected]);
+        } else {
+            self.selected = 0;
+            self.tracked_relid = None;
+        }
+
+        self.ratatui_state.select(Some(self.selected));
+    }
+
+    pub fn reset_rate_state(&mut self) {
+        self.rates.clear();
+        self.prev_sample_ts = None;
+        self.prev_sample.clear();
+        self.dt_secs = None;
+    }
+
+    pub fn update_rates_from_snapshot(&mut self, snapshot: &Snapshot) {
+        let Some(current) = snapshot.blocks.iter().find_map(|b| {
+            if let DataBlock::PgStatUserTables(v) = b {
+                Some(v)
+            } else {
+                None
+            }
+        }) else {
+            self.reset_rate_state();
+            return;
+        };
+
+        if current.is_empty() {
+            self.reset_rate_state();
+            return;
+        }
+
+        let now_ts = snapshot.timestamp;
+
+        if let Some(prev_ts) = self.prev_sample_ts {
+            if now_ts < prev_ts {
+                // Time went backwards — reset baseline
+                self.rates.clear();
+                self.prev_sample_ts = Some(now_ts);
+                self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
+                return;
+            }
+            if now_ts == prev_ts {
+                return; // Same timestamp, keep existing rates
+            }
+        }
+
+        let Some(prev_ts) = self.prev_sample_ts else {
+            // First sample — just store baseline
+            self.prev_sample_ts = Some(now_ts);
+            self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
+            self.rates.clear();
+            return;
+        };
+
+        let dt = (now_ts - prev_ts) as f64;
+        if dt <= 0.0 {
+            return;
+        }
+
+        fn delta(curr: i64, prev: i64) -> Option<i64> {
+            (curr >= prev).then_some(curr - prev)
+        }
+
+        let mut rates = HashMap::with_capacity(current.len());
+        for t in current {
+            let prev = self.prev_sample.get(&t.relid);
+            let mut r = PgTablesRates {
+                dt_secs: dt,
+                ..Default::default()
+            };
+            if let Some(p) = prev {
+                r.seq_scan_s = delta(t.seq_scan, p.seq_scan).map(|d| d as f64 / dt);
+                r.seq_tup_read_s = delta(t.seq_tup_read, p.seq_tup_read).map(|d| d as f64 / dt);
+                r.idx_scan_s = delta(t.idx_scan, p.idx_scan).map(|d| d as f64 / dt);
+                r.idx_tup_fetch_s = delta(t.idx_tup_fetch, p.idx_tup_fetch).map(|d| d as f64 / dt);
+                r.n_tup_ins_s = delta(t.n_tup_ins, p.n_tup_ins).map(|d| d as f64 / dt);
+                r.n_tup_upd_s = delta(t.n_tup_upd, p.n_tup_upd).map(|d| d as f64 / dt);
+                r.n_tup_del_s = delta(t.n_tup_del, p.n_tup_del).map(|d| d as f64 / dt);
+                r.vacuum_count_s = delta(t.vacuum_count, p.vacuum_count).map(|d| d as f64 / dt);
+                r.autovacuum_count_s =
+                    delta(t.autovacuum_count, p.autovacuum_count).map(|d| d as f64 / dt);
+            }
+            rates.insert(t.relid, r);
+        }
+
+        self.rates = rates;
+        self.prev_sample_ts = Some(now_ts);
+        self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
+        self.dt_secs = Some(dt);
+    }
+}
+
+// ===========================================================================
+// PGI (pg_stat_user_indexes) tab state
+// ===========================================================================
+
+/// State for the PostgreSQL Indexes (PGI) tab.
+#[derive(Debug)]
+pub struct PgIndexesTabState {
+    pub selected: usize,
+    pub filter: Option<String>,
+    /// When set, only show indexes belonging to this table (drill-down from PGT).
+    pub filter_relid: Option<u32>,
+    pub sort_column: usize,
+    pub sort_ascending: bool,
+    pub view_mode: PgIndexesViewMode,
+    pub tracked_indexrelid: Option<u32>,
+    pub navigate_to_indexrelid: Option<u32>,
+    pub ratatui_state: RatatuiTableState,
+    // Rate computation state
+    pub rates: HashMap<u32, PgIndexesRates>,
+    pub prev_sample_ts: Option<i64>,
+    pub prev_sample: HashMap<u32, PgStatUserIndexesInfo>,
+    pub dt_secs: Option<f64>,
+}
+
+impl Default for PgIndexesTabState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            filter: None,
+            filter_relid: None,
+            sort_column: PgIndexesViewMode::Usage.default_sort_column(),
+            sort_ascending: false,
+            view_mode: PgIndexesViewMode::Usage,
+            tracked_indexrelid: None,
+            navigate_to_indexrelid: None,
+            ratatui_state: RatatuiTableState::default(),
+            rates: HashMap::new(),
+            prev_sample_ts: None,
+            prev_sample: HashMap::new(),
+            dt_secs: None,
+        }
+    }
+}
+
+impl PgIndexesTabState {
+    pub fn next_sort_column(&mut self) {
+        let count = self.view_mode.column_count();
+        if count == 0 {
+            return;
+        }
+        self.sort_column = (self.sort_column + 1) % count;
+    }
+
+    pub fn toggle_sort_direction(&mut self) {
+        self.sort_ascending = !self.sort_ascending;
+    }
+
+    pub fn select_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+        self.tracked_indexrelid = None;
+    }
+
+    pub fn select_down(&mut self) {
+        self.selected = self.selected.saturating_add(1);
+        self.tracked_indexrelid = None;
+    }
+
+    pub fn page_up(&mut self, n: usize) {
+        self.selected = self.selected.saturating_sub(n);
+        self.tracked_indexrelid = None;
+    }
+
+    pub fn page_down(&mut self, n: usize) {
+        self.selected = self.selected.saturating_add(n);
+        self.tracked_indexrelid = None;
+    }
+
+    pub fn home(&mut self) {
+        self.selected = 0;
+        self.tracked_indexrelid = None;
+    }
+
+    pub fn end(&mut self) {
+        self.selected = usize::MAX;
+        self.tracked_indexrelid = None;
+    }
+
+    /// Resolves selection after filtering/sorting.
+    pub fn resolve_selection(&mut self, row_indexrelids: &[u32]) {
+        // Consume navigate_to
+        if let Some(target) = self.navigate_to_indexrelid.take() {
+            self.tracked_indexrelid = Some(target);
+        }
+
+        if let Some(tracked) = self.tracked_indexrelid {
+            if let Some(idx) = row_indexrelids.iter().position(|&r| r == tracked) {
+                self.selected = idx;
+            } else {
+                self.tracked_indexrelid = None;
+            }
+        }
+
+        if !row_indexrelids.is_empty() {
+            self.selected = self.selected.min(row_indexrelids.len() - 1);
+            self.tracked_indexrelid = Some(row_indexrelids[self.selected]);
+        } else {
+            self.selected = 0;
+            self.tracked_indexrelid = None;
+        }
+
+        self.ratatui_state.select(Some(self.selected));
+    }
+
+    pub fn reset_rate_state(&mut self) {
+        self.rates.clear();
+        self.prev_sample_ts = None;
+        self.prev_sample.clear();
+        self.dt_secs = None;
+    }
+
+    pub fn update_rates_from_snapshot(&mut self, snapshot: &Snapshot) {
+        let Some(current) = snapshot.blocks.iter().find_map(|b| {
+            if let DataBlock::PgStatUserIndexes(v) = b {
+                Some(v)
+            } else {
+                None
+            }
+        }) else {
+            self.reset_rate_state();
+            return;
+        };
+
+        if current.is_empty() {
+            self.reset_rate_state();
+            return;
+        }
+
+        let now_ts = snapshot.timestamp;
+
+        if let Some(prev_ts) = self.prev_sample_ts {
+            if now_ts < prev_ts {
+                self.rates.clear();
+                self.prev_sample_ts = Some(now_ts);
+                self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
+                return;
+            }
+            if now_ts == prev_ts {
+                return;
+            }
+        }
+
+        let Some(prev_ts) = self.prev_sample_ts else {
+            self.prev_sample_ts = Some(now_ts);
+            self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
+            self.rates.clear();
+            return;
+        };
+
+        let dt = (now_ts - prev_ts) as f64;
+        if dt <= 0.0 {
+            return;
+        }
+
+        fn delta(curr: i64, prev: i64) -> Option<i64> {
+            (curr >= prev).then_some(curr - prev)
+        }
+
+        let mut rates = HashMap::with_capacity(current.len());
+        for idx in current {
+            let prev = self.prev_sample.get(&idx.indexrelid);
+            let mut r = PgIndexesRates {
+                dt_secs: dt,
+                ..Default::default()
+            };
+            if let Some(p) = prev {
+                r.idx_scan_s = delta(idx.idx_scan, p.idx_scan).map(|d| d as f64 / dt);
+                r.idx_tup_read_s = delta(idx.idx_tup_read, p.idx_tup_read).map(|d| d as f64 / dt);
+                r.idx_tup_fetch_s =
+                    delta(idx.idx_tup_fetch, p.idx_tup_fetch).map(|d| d as f64 / dt);
+            }
+            rates.insert(idx.indexrelid, r);
+        }
+
+        self.rates = rates;
+        self.prev_sample_ts = Some(now_ts);
+        self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
+        self.dt_secs = Some(dt);
     }
 }
