@@ -45,16 +45,6 @@ export function useHistorySnapshot() {
     }
   };
 
-  const jumpToTimestamp = async (timestamp: number) => {
-    setLoading(true);
-    try {
-      const snap = await fetchSnapshot({ timestamp });
-      setSnapshot(snap);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Load first snapshot on mount
   useEffect(() => {
     fetchSnapshot()
@@ -62,5 +52,5 @@ export function useHistorySnapshot() {
       .catch(() => {});
   }, []);
 
-  return { snapshot, loading, jumpTo, jumpToTimestamp };
+  return { snapshot, loading, jumpTo };
 }

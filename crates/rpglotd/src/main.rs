@@ -3,6 +3,7 @@
 //! Collects system metrics from /proc filesystem and stores them to disk.
 //! Supports hourly file segmentation and automatic rotation by size and age.
 
+use rpglot_core::util::print_pg_warning;
 use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -406,25 +407,6 @@ fn main() {
     }
 
     info!("Shutdown complete");
-}
-
-/// Prints a colored PostgreSQL warning with configuration hints.
-fn print_pg_warning(error: &str) {
-    // ANSI colors: red for error, yellow for hints, reset after
-    const RED: &str = "\x1b[1;31m";
-    const YELLOW: &str = "\x1b[33m";
-    const RESET: &str = "\x1b[0m";
-
-    eprintln!("{RED}PostgreSQL: {error}{RESET}");
-    eprintln!();
-    eprintln!("{YELLOW}  Configure connection with environment variables:");
-    eprintln!("    export PGHOST=localhost");
-    eprintln!("    export PGPORT=5432");
-    eprintln!("    export PGUSER=postgres");
-    eprintln!("    export PGPASSWORD=secret");
-    eprintln!("    export PGDATABASE=postgres");
-    eprintln!();
-    eprintln!("  PostgreSQL metrics will be disabled.{RESET}");
 }
 
 #[cfg(test)]

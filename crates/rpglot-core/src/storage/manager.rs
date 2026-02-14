@@ -1040,42 +1040,6 @@ impl StorageManager {
         Ok(())
     }
 
-    /// Loads all chunks from the storage directory and returns reconstructed snapshots.
-    ///
-    /// Snapshots are returned in chronological order (oldest first).
-    /// Also includes unflushed snapshots from WAL file.
-    #[allow(dead_code)]
-    pub fn load_all_snapshots(&self) -> std::io::Result<Vec<Snapshot>> {
-        let mut chunks = self.load_chunks()?;
-
-        // Sort by first timestamp in each chunk
-        chunks.sort_by_key(|c| c.deltas.first().map(|d| d.timestamp()).unwrap_or(0));
-
-        let mut snapshots = Vec::new();
-        for chunk in chunks {
-            let chunk_snapshots = Self::reconstruct_snapshots_from_chunk(&chunk)?;
-            snapshots.extend(chunk_snapshots);
-        }
-
-        // Also read unflushed snapshots from WAL
-        let wal_snapshots = self.load_wal_snapshots()?;
-        snapshots.extend(wal_snapshots);
-
-        // Sort all snapshots by timestamp (WAL snapshots might overlap with last chunk)
-        snapshots.sort_by_key(|s| s.timestamp);
-
-        // Deduplicate by timestamp (in case WAL was partially flushed)
-        snapshots.dedup_by_key(|s| s.timestamp);
-
-        Ok(snapshots)
-    }
-
-    /// Loads unflushed snapshots from WAL file.
-    fn load_wal_snapshots(&self) -> std::io::Result<Vec<Snapshot>> {
-        let (snapshots, _) = self.load_wal_snapshots_with_interner()?;
-        Ok(snapshots)
-    }
-
     /// Loads unflushed snapshots and their interners from WAL file.
     fn load_wal_snapshots_with_interner(&self) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
         let wal_path = self.base_path.join("wal.log");
@@ -1100,7 +1064,6 @@ impl StorageManager {
     ///
     /// Also loads unflushed snapshots from WAL and their interners.
     /// Snapshots are returned in chronological order (oldest first).
-    #[allow(dead_code)]
     pub fn load_all_snapshots_with_interner(
         &self,
     ) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
@@ -1133,7 +1096,6 @@ impl StorageManager {
     }
 
     /// Loads all chunk files from the storage directory.
-    #[allow(dead_code)]
     fn load_chunks(&self) -> std::io::Result<Vec<Chunk>> {
         let mut chunks = Vec::new();
 
@@ -1151,7 +1113,6 @@ impl StorageManager {
     }
 
     /// Reconstructs full snapshots from a chunk's deltas.
-    #[allow(dead_code)]
     fn reconstruct_snapshots_from_chunk(chunk: &Chunk) -> std::io::Result<Vec<Snapshot>> {
         let mut snapshots = Vec::new();
         let mut last_snapshot: Option<Snapshot> = None;
@@ -1177,7 +1138,6 @@ impl StorageManager {
     }
 
     /// Applies a diff to a base snapshot to produce a new snapshot.
-    #[allow(dead_code)]
     fn apply_diff(base: &Snapshot, timestamp: i64, diff_blocks: &[DataBlockDiff]) -> Snapshot {
         let mut new_blocks = base.blocks.clone();
 
@@ -1468,7 +1428,6 @@ impl StorageManager {
     }
 
     /// Returns the number of snapshots in the WAL (unflushed).
-    #[allow(dead_code)]
     pub fn current_chunk_size(&self) -> usize {
         self.wal_entries_count
     }
@@ -1669,7 +1628,7 @@ mod tests {
         assert_eq!(manager.current_chunk_size(), 1);
 
         // Verify snapshot can be loaded from WAL
-        let snapshots = manager.load_all_snapshots().unwrap();
+        let (snapshots, _) = manager.load_all_snapshots_with_interner().unwrap();
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].timestamp, 100);
     }
@@ -1952,7 +1911,7 @@ mod tests {
 
         // Create a new manager to read (simulates rpglot -r)
         let reader = StorageManager::new(dir.path());
-        let snapshots = reader.load_all_snapshots().unwrap();
+        let (snapshots, _) = reader.load_all_snapshots_with_interner().unwrap();
 
         // Should read 2 snapshots from WAL
         assert_eq!(snapshots.len(), 2);
@@ -2006,7 +1965,7 @@ mod tests {
 
         // Create a new manager to read
         let reader = StorageManager::new(dir.path());
-        let snapshots = reader.load_all_snapshots().unwrap();
+        let (snapshots, _) = reader.load_all_snapshots_with_interner().unwrap();
 
         // Should read all 3 snapshots (2 from chunk + 1 from WAL)
         assert_eq!(snapshots.len(), 3);

@@ -65,7 +65,6 @@ pub struct CollectorTiming {
 ///
 /// Combines process and system collectors into a single interface
 /// that produces complete snapshots for storage.
-#[allow(dead_code)]
 pub struct Collector<F: FileSystem + Clone> {
     fs: F,
     process_collector: ProcessCollector<F>,
@@ -78,7 +77,6 @@ pub struct Collector<F: FileSystem + Clone> {
     last_timing: Option<CollectorTiming>,
 }
 
-#[allow(dead_code)]
 impl<F: FileSystem + Clone> Collector<F> {
     /// Default cgroup path for containers.
     const DEFAULT_CGROUP_PATH: &'static str = "/sys/fs/cgroup";

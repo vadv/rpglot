@@ -13,7 +13,6 @@ use super::{ProviderError, SnapshotProvider};
 ///
 /// Loads snapshots from stored chunk files and provides navigation
 /// through the history (forward and backward in time).
-#[allow(dead_code)]
 pub struct HistoryProvider {
     snapshots: Vec<Snapshot>,
     cursor: usize,
@@ -21,7 +20,6 @@ pub struct HistoryProvider {
     interner: StringInterner,
 }
 
-#[allow(dead_code)]
 impl HistoryProvider {
     /// Creates a new history provider by loading snapshots from the given storage path.
     ///

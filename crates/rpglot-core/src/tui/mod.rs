@@ -5,13 +5,10 @@
 
 mod app;
 mod event;
-pub mod fmt;
 mod input;
-pub(crate) mod models;
 mod render;
 pub(crate) mod state;
 pub(crate) mod style;
-mod table;
 mod widgets;
 
 pub use app::App;

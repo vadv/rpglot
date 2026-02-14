@@ -7,7 +7,7 @@ use ratatui::style::Modifier;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Row, Table};
 
-use crate::tui::fmt::normalize_for_display;
+use crate::fmt::normalize_for_display;
 use crate::tui::state::{
     AppState, CachedWidths, ColumnType, DiffStatus, ProcessRow, ProcessViewMode, TableRow,
 };

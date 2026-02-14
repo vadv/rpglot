@@ -61,17 +61,10 @@ pub mod procfs;
 pub mod traits;
 
 // Re-exports for public API (will be used by consumers of this library)
-#[allow(unused_imports)]
 pub use cgroup::CgroupCollector;
-#[allow(unused_imports)]
 pub use collector::{Collector, CollectorTiming};
-#[allow(unused_imports)]
 pub use mock::MockFs;
-#[allow(unused_imports)]
 pub use pg_collector::{PgCollectError, PostgresCollector};
-#[allow(unused_imports)]
 pub use procfs::CollectError;
-#[allow(unused_imports)]
 pub use procfs::UserResolver;
-#[allow(unused_imports)]
 pub use traits::{FileSystem, RealFs};

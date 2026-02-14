@@ -13,7 +13,6 @@ use std::any::Any;
 ///
 /// Collects snapshots from the system using the `Collector` and optionally
 /// writes them to storage for later analysis.
-#[allow(dead_code)]
 pub struct LiveProvider<F: FileSystem + Clone> {
     collector: Collector<F>,
     storage: Option<StorageManager>,
@@ -21,7 +20,6 @@ pub struct LiveProvider<F: FileSystem + Clone> {
     last_error: Option<ProviderError>,
 }
 
-#[allow(dead_code)]
 impl<F: FileSystem + Clone> LiveProvider<F> {
     /// Creates a new live provider.
     ///

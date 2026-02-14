@@ -5,7 +5,6 @@
 
 use super::filesystem::MockFs;
 
-#[allow(dead_code)]
 impl MockFs {
     /// Creates a typical system with a few processes.
     ///

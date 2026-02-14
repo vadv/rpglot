@@ -197,7 +197,7 @@ pub fn kv_delta_i64(key: &str, current: i64, prev: Option<i64>) -> Line<'static>
 /// Key-value for PG block counters: displays blocks as human-readable bytes
 /// (blocks * 8192), delta also in bytes.
 pub fn kv_delta_blks(key: &str, blocks: i64, prev_blocks: Option<i64>) -> Line<'static> {
-    use crate::tui::fmt::format_blks_as_bytes;
+    use crate::fmt::format_blks_as_bytes;
     let bytes = blocks as f64 * 8192.0;
     let mut spans = vec![
         Span::styled(format!("{:>20}: ", key), Styles::cpu()),
@@ -238,7 +238,7 @@ pub fn kv_delta_f64(key: &str, current: f64, prev: Option<f64>, precision: usize
 // Value formatting — delegated to crate::tui::fmt with FmtStyle::Detail
 // ---------------------------------------------------------------------------
 
-use crate::tui::fmt::{self, FmtStyle};
+use crate::fmt::{self, FmtStyle};
 
 pub use fmt::{format_bytes_signed, format_delta_kb, format_kb, format_ns, format_ticks};
 

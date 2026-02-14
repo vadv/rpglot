@@ -286,7 +286,6 @@ pub enum Delta {
 
 impl Delta {
     /// Returns the timestamp of this delta.
-    #[allow(dead_code)]
     pub fn timestamp(&self) -> i64 {
         match self {
             Delta::Full(s) => s.timestamp,

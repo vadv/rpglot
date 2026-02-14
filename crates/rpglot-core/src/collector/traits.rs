@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 ///
 /// This trait allows collectors to read from the real filesystem or from
 /// a mock implementation for testing purposes.
-#[allow(dead_code)]
 pub trait FileSystem: Send + Sync {
     /// Reads the entire contents of a file as a string.
     ///
@@ -43,11 +42,9 @@ pub trait FileSystem: Send + Sync {
 /// Real filesystem implementation that delegates to `std::fs`.
 ///
 /// Use this in production to read from the actual `/proc` filesystem.
-#[allow(dead_code)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RealFs;
 
-#[allow(dead_code)]
 impl RealFs {
     /// Creates a new `RealFs` instance.
     pub fn new() -> Self {

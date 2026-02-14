@@ -102,7 +102,7 @@ impl App {
                         KeyAction::None => {}
                     }
                 }
-                Ok(Event::Resize(width, _)) => {
+                Ok(Event::Resize(width)) => {
                     // Recalculate column widths on resize
                     if self.state.terminal_width != width {
                         self.state.terminal_width = width;

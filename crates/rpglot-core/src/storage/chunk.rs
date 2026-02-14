@@ -28,7 +28,6 @@ impl Chunk {
         zstd::encode_all(&raw_data[..], 3)
     }
 
-    #[allow(dead_code)]
     pub fn decompress(data: &[u8]) -> Result<Self, std::io::Error> {
         let decompressed = zstd::decode_all(data)?;
         bincode::deserialize(&decompressed).map_err(std::io::Error::other)

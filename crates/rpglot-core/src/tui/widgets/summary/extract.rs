@@ -461,7 +461,6 @@ fn extract_psi(psi_list: &[SystemPsiInfo]) -> Vec<PsiSummary> {
             PsiSummary {
                 name,
                 some: psi.some_avg10,
-                full: psi.full_avg10,
             }
         })
         .collect()
@@ -558,8 +557,6 @@ fn extract_pg_summary(
     let mut sum_tup: i64 = 0;
     let mut sum_temp_bytes: i64 = 0;
     let mut sum_deadlocks: i64 = 0;
-    let mut sum_blk_read_time: f64 = 0.0;
-    let mut sum_blk_write_time: f64 = 0.0;
 
     for db in current {
         let Some(p) = prev_map.get(&db.datid) else {
@@ -577,8 +574,6 @@ fn extract_pg_summary(
             + db.tup_deleted.saturating_sub(p.tup_deleted);
         sum_temp_bytes += db.temp_bytes.saturating_sub(p.temp_bytes);
         sum_deadlocks += db.deadlocks.saturating_sub(p.deadlocks);
-        sum_blk_read_time += db.blk_read_time - p.blk_read_time;
-        sum_blk_write_time += db.blk_write_time - p.blk_write_time;
     }
 
     let total_blks = sum_blks_hit + sum_blks_read;
@@ -594,8 +589,5 @@ fn extract_pg_summary(
         tup_s: sum_tup as f64 / delta_time,
         tmp_bytes_s: sum_temp_bytes as f64 / delta_time,
         deadlocks: sum_deadlocks,
-        blk_read_time_ms: sum_blk_read_time,
-        blk_write_time_ms: sum_blk_write_time,
-        rollbacks: sum_rollback,
     })
 }

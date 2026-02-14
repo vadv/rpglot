@@ -29,12 +29,6 @@ impl Theme {
     pub const CPU_COLOR: Color = Color::Cyan;
     pub const MEM_COLOR: Color = Color::Magenta;
     pub const DISK_COLOR: Color = Color::Yellow;
-    #[allow(dead_code)]
-    pub const NET_COLOR: Color = Color::Green;
-
-    // Sparkline colors
-    #[allow(dead_code)]
-    pub const SPARKLINE_COLOR: Color = Color::Cyan;
 }
 
 /// Pre-defined styles.
@@ -116,12 +110,6 @@ impl Styles {
     /// Disk metric style.
     pub fn disk() -> Style {
         Style::default().fg(Theme::DISK_COLOR)
-    }
-
-    /// Network metric style.
-    #[allow(dead_code)]
-    pub fn net() -> Style {
-        Style::default().fg(Theme::NET_COLOR)
     }
 
     /// Filter input style.

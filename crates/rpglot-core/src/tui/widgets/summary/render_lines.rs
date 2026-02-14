@@ -3,7 +3,7 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::tui::fmt::{self, FmtStyle};
+use crate::fmt::{self, FmtStyle};
 use crate::tui::state::Tab;
 use crate::tui::style::Styles;
 
@@ -622,12 +622,12 @@ pub(super) fn render_swp_line(metrics: &SummaryMetrics, width: usize) -> Line<'s
 
 /// Formats disk name with fixed width padding (right-padded name + colon)
 fn fmt_disk_name(name: &str) -> String {
-    let truncated = if name.len() > DSK_NAME {
-        &name[..DSK_NAME]
+    let truncated = if name.len() > DEV_NAME {
+        &name[..DEV_NAME]
     } else {
         name
     };
-    format!("{:width$}:", truncated, width = DSK_NAME)
+    format!("{:width$}:", truncated, width = DEV_NAME)
 }
 
 /// Renders empty DSK line when no disk data.
@@ -701,12 +701,12 @@ pub(super) fn render_single_dsk_line(
 
 /// Formats network interface name with fixed width padding (right-padded name + colon)
 fn fmt_net_name(name: &str) -> String {
-    let truncated = if name.len() > NET_NAME {
-        &name[..NET_NAME]
+    let truncated = if name.len() > DEV_NAME {
+        &name[..DEV_NAME]
     } else {
         name
     };
-    format!("{:width$}:", truncated, width = NET_NAME)
+    format!("{:width$}:", truncated, width = DEV_NAME)
 }
 
 /// Renders empty NET line when no network data.

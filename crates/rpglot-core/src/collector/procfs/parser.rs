@@ -28,7 +28,6 @@ impl std::fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// Parsed data from `/proc/[pid]/stat`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ProcStat {
     pub pid: u32,
@@ -153,7 +152,6 @@ pub fn parse_proc_stat(content: &str) -> Result<ProcStat, ParseError> {
 }
 
 /// Parsed data from `/proc/[pid]/status`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ProcStatus {
     pub name: String,
@@ -243,7 +241,6 @@ pub fn parse_proc_status(content: &str) -> Result<ProcStatus, ParseError> {
 }
 
 /// Parsed data from `/proc/[pid]/io`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ProcIo {
     pub rchar: u64,
@@ -281,7 +278,6 @@ pub fn parse_proc_io(content: &str) -> Result<ProcIo, ParseError> {
 }
 
 /// Parsed data from `/proc/meminfo`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct MemInfo {
     pub mem_total: u64,
@@ -347,7 +343,6 @@ pub fn parse_meminfo(content: &str) -> Result<MemInfo, ParseError> {
 }
 
 /// Single CPU stats from `/proc/stat`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct CpuStat {
     pub cpu_id: Option<u32>, // None for aggregate "cpu" line
@@ -364,7 +359,6 @@ pub struct CpuStat {
 }
 
 /// Global stats from `/proc/stat`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct GlobalStat {
     pub cpus: Vec<CpuStat>,
@@ -425,7 +419,6 @@ pub fn parse_global_stat(content: &str) -> Result<GlobalStat, ParseError> {
 }
 
 /// Parsed data from `/proc/loadavg`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct LoadAvg {
     pub load1: f64,
@@ -473,7 +466,6 @@ pub fn parse_loadavg(content: &str) -> Result<LoadAvg, ParseError> {
 }
 
 /// Parsed entry from `/etc/passwd`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct PasswdEntry {
     pub username: String,
@@ -513,7 +505,6 @@ pub struct UserResolver {
     uid_to_name: HashMap<u32, String>,
 }
 
-#[allow(dead_code)]
 impl UserResolver {
     /// Creates a new empty resolver.
     pub fn new() -> Self {
@@ -544,7 +535,6 @@ impl UserResolver {
 // ============ Disk Stats Parser ============
 
 /// Parsed data from `/proc/diskstats`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct DiskStats {
     /// Block device major number.
@@ -667,7 +657,6 @@ pub fn parse_mountinfo_device_ids(content: &str) -> HashSet<(u32, u32)> {
 // ============ Network Device Stats Parser ============
 
 /// Parsed data from `/proc/net/dev`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct NetDevStats {
     /// Interface name (eth0, lo, etc.)
@@ -739,7 +728,6 @@ pub fn parse_net_dev(content: &str) -> Result<Vec<NetDevStats>, ParseError> {
 // ============ PSI (Pressure Stall Information) Parser ============
 
 /// Parsed data from `/proc/pressure/{cpu,memory,io}`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct PsiStats {
     /// "some" line averages and total
@@ -797,7 +785,6 @@ pub fn parse_psi(content: &str) -> Result<PsiStats, ParseError> {
 // ============ Vmstat Parser ============
 
 /// Parsed data from `/proc/vmstat`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct VmstatInfo {
     pub pgpgin: u64,
@@ -848,7 +835,6 @@ pub fn parse_vmstat(content: &str) -> Result<VmstatInfo, ParseError> {
 // ============ Network SNMP Parser ============
 
 /// Parsed data from `/proc/net/snmp`.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct NetSnmpStats {
     // TCP statistics
@@ -931,7 +917,6 @@ pub fn parse_net_snmp(content: &str) -> Result<NetSnmpStats, ParseError> {
 // ============ Network Netstat Parser ============
 
 /// Parsed data from `/proc/net/netstat` (TcpExt/IpExt).
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct NetstatStats {
     // TcpExt statistics

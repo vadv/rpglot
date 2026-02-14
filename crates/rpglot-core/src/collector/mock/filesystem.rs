@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 ///
 /// Stores files and directories in memory, allowing tests to simulate
 /// various `/proc` filesystem states without needing actual Linux access.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct MockFs {
     /// Map from path to file contents.
@@ -21,7 +20,6 @@ pub struct MockFs {
     directories: HashSet<PathBuf>,
 }
 
-#[allow(dead_code)]
 impl MockFs {
     /// Creates a new empty mock filesystem.
     pub fn new() -> Self {
@@ -100,7 +98,6 @@ impl MockFs {
     }
 }
 
-#[allow(dead_code)]
 fn load_directory_recursive(
     fs: &mut MockFs,
     real_path: &Path,

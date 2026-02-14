@@ -1,8 +1,7 @@
 //! Application state management.
 
-// Re-export table and models types so existing `use super::state::*` paths keep working.
-pub use super::models::*;
-pub use super::table::*;
+pub use crate::models::*;
+pub use crate::table::*;
 
 mod app_state;
 mod tab_states;

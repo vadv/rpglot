@@ -444,9 +444,6 @@ struct PsiSummary {
     name: &'static str,
     /// some avg10 (% of time at least one task was stalled)
     some: f32,
-    /// full avg10 (% of time ALL tasks were stalled)
-    #[allow(dead_code)]
-    full: f32,
 }
 
 /// Vmstat rates for display.
@@ -480,15 +477,6 @@ struct PgSummary {
     tmp_bytes_s: f64,
     /// Deadlocks in this interval.
     deadlocks: i64,
-    /// Block read time delta (ms).
-    #[allow(dead_code)]
-    blk_read_time_ms: f64,
-    /// Block write time delta (ms).
-    #[allow(dead_code)]
-    blk_write_time_ms: f64,
-    /// Rollbacks in this interval.
-    #[allow(dead_code)]
-    rollbacks: i64,
 }
 
 /// PostgreSQL background writer summary (rates from pg_stat_bgwriter).
@@ -514,7 +502,6 @@ struct BgwSummary {
 // ============================================================================
 
 /// Fixed widths for metrics (calculated from common sense and typical data)
-#[allow(dead_code)]
 pub(super) mod metric_widths {
     // CPL line: avg1:  0.17  avg5:  0.24  avg15:  0.26  procs:  786  run:   1
     pub const AVG: usize = 12; // "avg1:" (5) + value (7) = "avg1:   0.17"
@@ -552,18 +539,6 @@ pub(super) mod metric_widths {
     pub const IO_MB: usize = 10; // "rMB:/rxMB:" + value = 10 chars
     pub const IO_OPS: usize = 11; // "rd/s:/rxPk:" + value = 11 chars
     pub const IO_STAT: usize = 9; // "aw:/er:" + value = 9 chars
-
-    // Legacy constants for backward compatibility (deprecated)
-    pub const DSK_NAME: usize = DEV_NAME;
-    pub const DSK_MB: usize = IO_MB;
-    pub const DSK_IOS: usize = IO_OPS;
-    pub const DSK_AW: usize = IO_STAT;
-    pub const DSK_UT: usize = IO_STAT;
-    pub const NET_NAME: usize = DEV_NAME;
-    pub const NET_MB: usize = IO_MB;
-    pub const NET_PKT: usize = IO_OPS;
-    pub const NET_ERR: usize = IO_STAT;
-    pub const NET_DRP: usize = IO_STAT;
 
     // PG line: tps:   1234  hit:  99.2%  tup:   5.6K/s  tmp:   0 B/s  dlock:     0
     // Aligned with DSK/NET: 1-space separators, wider fields for stable layout

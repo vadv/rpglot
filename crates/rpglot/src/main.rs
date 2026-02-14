@@ -16,6 +16,7 @@ use std::thread;
 use std::time::Duration;
 
 use clap::Parser;
+use rpglot_core::util::print_pg_warning;
 
 #[cfg(target_os = "linux")]
 use rpglot_core::collector::RealFs;
@@ -192,23 +193,4 @@ fn check_postgres_connection() {
             thread::sleep(Duration::from_secs(3));
         }
     }
-}
-
-/// Prints a colored PostgreSQL warning with configuration hints.
-fn print_pg_warning(error: &str) {
-    // ANSI colors: red for error, yellow for hints, reset after
-    const RED: &str = "\x1b[1;31m";
-    const YELLOW: &str = "\x1b[33m";
-    const RESET: &str = "\x1b[0m";
-
-    eprintln!("{RED}PostgreSQL: {error}{RESET}");
-    eprintln!();
-    eprintln!("{YELLOW}  Configure connection with environment variables:");
-    eprintln!("    export PGHOST=localhost");
-    eprintln!("    export PGPORT=5432");
-    eprintln!("    export PGUSER=postgres");
-    eprintln!("    export PGPASSWORD=secret");
-    eprintln!("    export PGDATABASE=postgres");
-    eprintln!();
-    eprintln!("  PostgreSQL metrics will be disabled.{RESET}");
 }

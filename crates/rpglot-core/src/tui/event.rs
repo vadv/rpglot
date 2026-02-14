@@ -15,16 +15,15 @@ pub enum Event {
     Tick,
     /// Keyboard input.
     Key(KeyEvent),
-    /// Terminal resize.
-    #[allow(dead_code)]
-    Resize(u16, u16),
+    /// Terminal resize (width).
+    Resize(u16),
 }
 
 /// Event handler that polls for terminal events in a separate thread.
 pub struct EventHandler {
     rx: Receiver<Event>,
-    #[allow(dead_code)]
-    tx: Sender<Event>,
+    /// Kept alive to prevent channel closure.
+    _tx: Sender<Event>,
 }
 
 impl EventHandler {
@@ -40,7 +39,7 @@ impl EventHandler {
                     if let Ok(evt) = event::read() {
                         let event = match evt {
                             CrosstermEvent::Key(key) => Event::Key(key),
-                            CrosstermEvent::Resize(w, h) => Event::Resize(w, h),
+                            CrosstermEvent::Resize(w, _) => Event::Resize(w),
                             _ => continue,
                         };
                         if event_tx.send(event).is_err() {
@@ -56,7 +55,7 @@ impl EventHandler {
             }
         });
 
-        Self { rx, tx }
+        Self { rx, _tx: tx }
     }
 
     /// Receives the next event, blocking until one is available.

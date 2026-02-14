@@ -21,20 +21,16 @@ impl StringInterner {
     }
 
     /// Resolves a hash back to a string.
-    #[allow(dead_code)]
     pub fn resolve(&self, hash: u64) -> Option<&str> {
         self.strings.get(&hash).map(|s| s.as_str())
     }
 
-    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.strings.clear();
         self.strings.shrink_to_fit();
     }
 
     /// Merges another interner into this one.
-    /// Existing entries are not overwritten.
-    #[allow(dead_code)]
     pub fn merge(&mut self, other: &StringInterner) {
         for (hash, s) in &other.strings {
             self.strings.entry(*hash).or_insert_with(|| s.clone());

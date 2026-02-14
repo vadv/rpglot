@@ -10,9 +10,11 @@ import {
   type ColumnFiltersState,
 } from "@tanstack/react-table";
 import { Search, Inbox, ChevronUp, ChevronDown } from "lucide-react";
+import { Tooltip } from "./Tooltip";
 import type { ColumnSchema, ViewSchema } from "../api/types";
 import { formatValue } from "../utils/formatters";
 import { getThresholdClass } from "../utils/thresholds";
+import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
 
 interface DataTableProps {
   data: Record<string, unknown>[];
@@ -310,6 +312,27 @@ export function DataTable({
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const isSorted = header.column.getIsSorted();
+                  const desc = COLUMN_DESCRIPTIONS[header.id];
+                  const headerContent = (
+                    <span className="flex items-center gap-0.5">
+                      {flexRender(
+                        header.column.columnDef.header,
+                        header.getContext(),
+                      )}
+                      {isSorted === "asc" && (
+                        <ChevronUp
+                          size={12}
+                          className="text-[var(--accent-text)]"
+                        />
+                      )}
+                      {isSorted === "desc" && (
+                        <ChevronDown
+                          size={12}
+                          className="text-[var(--accent-text)]"
+                        />
+                      )}
+                    </span>
+                  );
                   return (
                     <th
                       key={header.id}
@@ -324,24 +347,13 @@ export function DataTable({
                           : ""
                       } ${isSorted ? "text-[var(--accent-text)]" : "text-[var(--text-secondary)]"}`}
                     >
-                      <span className="flex items-center gap-0.5">
-                        {flexRender(
-                          header.column.columnDef.header,
-                          header.getContext(),
-                        )}
-                        {isSorted === "asc" && (
-                          <ChevronUp
-                            size={12}
-                            className="text-[var(--accent-text)]"
-                          />
-                        )}
-                        {isSorted === "desc" && (
-                          <ChevronDown
-                            size={12}
-                            className="text-[var(--accent-text)]"
-                          />
-                        )}
-                      </span>
+                      {desc ? (
+                        <Tooltip content={desc} side="bottom">
+                          {headerContent}
+                        </Tooltip>
+                      ) : (
+                        headerContent
+                      )}
                     </th>
                   );
                 })}
@@ -363,17 +375,22 @@ export function DataTable({
                       : `${idx % 2 === 0 ? "bg-[var(--bg-base)]" : "bg-[var(--bg-overlay)]"} hover:bg-[var(--bg-hover)] border-l-2 border-l-transparent`
                   }`}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <td
-                      key={cell.id}
-                      className="px-2 py-1 whitespace-nowrap max-w-md truncate tabular-nums"
-                    >
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext(),
-                      )}
-                    </td>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const rawValue = cell.getValue();
+                    const titleText = rawValue != null ? String(rawValue) : "";
+                    return (
+                      <td
+                        key={cell.id}
+                        className="px-2 py-1 whitespace-nowrap max-w-md truncate tabular-nums"
+                        title={titleText}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext(),
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}

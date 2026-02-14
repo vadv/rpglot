@@ -17,15 +17,12 @@ use crate::storage::StringInterner;
 use crate::storage::model::Snapshot;
 
 /// Error types that can occur during snapshot operations.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ProviderError {
     /// I/O error while reading/writing data.
     Io(String),
     /// Error during data collection.
     Collection(String),
-    /// Error parsing stored data.
-    Parse(String),
 }
 
 impl std::fmt::Display for ProviderError {
@@ -33,7 +30,6 @@ impl std::fmt::Display for ProviderError {
         match self {
             ProviderError::Io(msg) => write!(f, "I/O error: {}", msg),
             ProviderError::Collection(msg) => write!(f, "Collection error: {}", msg),
-            ProviderError::Parse(msg) => write!(f, "Parse error: {}", msg),
         }
     }
 }
