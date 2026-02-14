@@ -84,35 +84,35 @@ const HELP: &[(&str, &str)] = &[
     // I/O Statistics (pg_statio_user_tables) — displayed as bytes (blocks × 8 KB)
     (
         "heap_blks_read",
-        "Bytes read from disk for the table heap (blocks × 8 KB)",
+        "Heap data read from disk; displayed as bytes (1 block = 8 KB); in table columns shown as bytes/s rate",
     ),
     (
         "heap_blks_hit",
-        "Bytes served from buffer cache for the table heap; high hit ratio means data is cached",
+        "Heap data served from shared_buffers cache; displayed as bytes (1 block = 8 KB); in table columns shown as bytes/s rate",
     ),
     (
         "idx_blks_read",
-        "Bytes read from disk for all indexes on this table",
+        "Index data read from disk for all indexes on this table; displayed as bytes (1 block = 8 KB); in table columns shown as bytes/s rate",
     ),
     (
         "idx_blks_hit",
-        "Bytes served from buffer cache for indexes on this table",
+        "Index data served from shared_buffers cache; displayed as bytes (1 block = 8 KB); in table columns shown as bytes/s rate",
     ),
     (
         "toast_blks_read",
-        "Bytes read from disk for the TOAST table (large values stored out-of-line)",
+        "TOAST data read from disk (large values stored out-of-line); displayed as bytes (1 block = 8 KB)",
     ),
     (
         "toast_blks_hit",
-        "Bytes served from buffer cache for the TOAST table",
+        "TOAST data served from shared_buffers cache; displayed as bytes (1 block = 8 KB)",
     ),
     (
         "tidx_blks_read",
-        "Bytes read from disk for TOAST table indexes",
+        "TOAST index data read from disk; displayed as bytes (1 block = 8 KB)",
     ),
     (
         "tidx_blks_hit",
-        "Bytes served from buffer cache for TOAST table indexes",
+        "TOAST index data served from shared_buffers cache; displayed as bytes (1 block = 8 KB)",
     ),
     (
         "io_hit%",

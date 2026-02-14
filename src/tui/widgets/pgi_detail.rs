@@ -38,11 +38,11 @@ const HELP: &[(&str, &str)] = &[
     // I/O Statistics (pg_statio_user_indexes) — displayed as bytes (blocks × 8 KB)
     (
         "idx_blks_read",
-        "Bytes read from disk for this index (blocks × 8 KB); high values = poor cache efficiency",
+        "Index data read from disk; displayed as bytes (1 block = 8 KB); in table columns shown as bytes/s rate; high values = poor cache efficiency",
     ),
     (
         "idx_blks_hit",
-        "Bytes served from buffer cache for this index; high hit ratio means index data is well-cached",
+        "Index data served from shared_buffers cache; displayed as bytes (1 block = 8 KB); in table columns shown as bytes/s rate",
     ),
     (
         "io_hit%",

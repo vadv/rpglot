@@ -88,7 +88,6 @@ impl PgActivityViewMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PgTablesViewMode {
     /// Reads view: SEQ_RD/s, IDX_FT/s, TOT_RD/s, SEQ/s, IDX/s, SIZE, TABLE
-    #[default]
     Reads,
     /// Writes view: INS/s, UPD/s, DEL/s, HOT/s, LIVE, DEAD, TABLE
     Writes,
@@ -97,6 +96,7 @@ pub enum PgTablesViewMode {
     /// Maintenance view: DEAD, LIVE, DEAD%, VAC/s, AVAC/s, LAST_AVAC, LAST_AANL, TABLE
     Maintenance,
     /// I/O view: HEAP_RD/s, HEAP_HIT/s, IDX_RD/s, IDX_HIT/s, HIT%, MB/s, SIZE, TABLE
+    #[default]
     Io,
 }
 
@@ -128,11 +128,11 @@ impl PgTablesViewMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PgIndexesViewMode {
     /// Usage view: IDX/s, TUP_RD/s, TUP_FT/s, HIT%, MB/s, SIZE, TABLE, INDEX
-    #[default]
     Usage,
     /// Unused/waste view: IDX_SCAN, SIZE, TABLE, INDEX (sorted ascending)
     Unused,
     /// I/O view: IDX_RD/s, IDX_HIT/s, HIT%, MB/s, SIZE, TABLE, INDEX
+    #[default]
     Io,
 }
 
