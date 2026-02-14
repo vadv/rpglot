@@ -1,151 +1,15 @@
 //! PostgreSQL indexes widget for PGI tab.
-//! Displays `pg_stat_user_indexes` data with rate computation.
+//! Thin TUI wrapper over [`crate::view::indexes::build_indexes_view`].
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 
 use crate::storage::StringInterner;
-use crate::storage::model::{DataBlock, PgStatUserIndexesInfo, Snapshot};
-use crate::tui::fmt::{self, FmtStyle, format_blks_rate, format_opt_f64, truncate};
-use crate::tui::state::{AppState, PgIndexesViewMode, SortKey};
+use crate::tui::state::AppState;
 use crate::tui::style::Styles;
-
-const HEADERS_USAGE: &[&str] = &[
-    "IDX/s", "TUP_RD/s", "TUP_FT/s", "HIT%", "DISK/s", "SIZE", "TABLE", "INDEX",
-];
-const HEADERS_UNUSED: &[&str] = &["IDX_SCAN", "SIZE", "TABLE", "INDEX"];
-const HEADERS_IO: &[&str] = &[
-    "IDX_RD/s",
-    "IDX_HIT/s",
-    "HIT%",
-    "DISK/s",
-    "SIZE",
-    "TABLE",
-    "INDEX",
-];
-
-const WIDTHS_USAGE: &[u16] = &[10, 10, 10, 6, 8, 10, 20];
-const WIDTHS_UNUSED: &[u16] = &[12, 10, 20];
-const WIDTHS_IO: &[u16] = &[10, 10, 6, 8, 10, 20];
-
-#[derive(Debug, Clone)]
-struct PgIndexesRowData {
-    indexrelid: u32,
-    schema: String,
-    table_name: String,
-    index_name: String,
-    display_table: String,
-
-    // Current values
-    idx_scan: i64,
-    size_bytes: i64,
-
-    // Rates
-    idx_scan_s: Option<f64>,
-    idx_tup_read_s: Option<f64>,
-    idx_tup_fetch_s: Option<f64>,
-
-    // I/O rates
-    idx_blks_read_s: Option<f64>,
-    idx_blks_hit_s: Option<f64>,
-
-    // Computed I/O
-    hit_pct: Option<f64>,
-    disk_read_blks_s: Option<f64>,
-}
-
-impl PgIndexesRowData {
-    fn from_index(i: &PgStatUserIndexesInfo, interner: Option<&StringInterner>) -> Self {
-        let schema = resolve_hash(interner, i.schemaname_hash);
-        let table_name = resolve_hash(interner, i.relname_hash);
-        let index_name = resolve_hash(interner, i.indexrelname_hash);
-        let display_table = if schema.is_empty() || schema == "public" {
-            table_name.clone()
-        } else {
-            format!("{}.{}", schema, table_name)
-        };
-
-        Self {
-            indexrelid: i.indexrelid,
-            schema,
-            table_name,
-            index_name,
-            display_table,
-            idx_scan: i.idx_scan,
-            size_bytes: i.size_bytes,
-            idx_scan_s: None,
-            idx_tup_read_s: None,
-            idx_tup_fetch_s: None,
-            idx_blks_read_s: None,
-            idx_blks_hit_s: None,
-            hit_pct: None,
-            disk_read_blks_s: None,
-        }
-    }
-
-    fn sort_key(&self, mode: PgIndexesViewMode, col: usize) -> SortKey {
-        match mode {
-            PgIndexesViewMode::Usage => match col {
-                0 => SortKey::Float(self.idx_scan_s.unwrap_or(0.0)),
-                1 => SortKey::Float(self.idx_tup_read_s.unwrap_or(0.0)),
-                2 => SortKey::Float(self.idx_tup_fetch_s.unwrap_or(0.0)),
-                3 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
-                4 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
-                5 => SortKey::Integer(self.size_bytes),
-                6 => SortKey::String(self.display_table.clone()),
-                7 => SortKey::String(self.index_name.clone()),
-                _ => SortKey::Integer(0),
-            },
-            PgIndexesViewMode::Unused => match col {
-                0 => SortKey::Integer(self.idx_scan),
-                1 => SortKey::Integer(self.size_bytes),
-                2 => SortKey::String(self.display_table.clone()),
-                3 => SortKey::String(self.index_name.clone()),
-                _ => SortKey::Integer(0),
-            },
-            PgIndexesViewMode::Io => match col {
-                0 => SortKey::Float(self.idx_blks_read_s.unwrap_or(0.0)),
-                1 => SortKey::Float(self.idx_blks_hit_s.unwrap_or(0.0)),
-                2 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
-                3 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
-                4 => SortKey::Integer(self.size_bytes),
-                5 => SortKey::String(self.display_table.clone()),
-                6 => SortKey::String(self.index_name.clone()),
-                _ => SortKey::Integer(0),
-            },
-        }
-    }
-
-    fn row_style(&self, mode: PgIndexesViewMode) -> Style {
-        match mode {
-            PgIndexesViewMode::Usage | PgIndexesViewMode::Unused => {
-                if self.idx_scan == 0 {
-                    Styles::modified_item() // yellow for unused indexes
-                } else {
-                    Styles::default()
-                }
-            }
-            PgIndexesViewMode::Io => {
-                if let Some(hit) = self.hit_pct {
-                    if hit < 70.0 {
-                        Styles::critical()
-                    } else if hit < 90.0 {
-                        Styles::modified_item()
-                    } else {
-                        Styles::default()
-                    }
-                } else if self.idx_scan == 0 {
-                    Styles::modified_item()
-                } else {
-                    Styles::default()
-                }
-            }
-        }
-    }
-}
+use crate::view::indexes::build_indexes_view;
 
 pub fn render_pg_indexes(
     frame: &mut Frame,
@@ -165,93 +29,35 @@ pub fn render_pg_indexes(
         }
     };
 
-    let indexes = extract_pg_indexes(snapshot);
-    if indexes.is_empty() {
-        let block = Block::default()
-            .title(" PostgreSQL Indexes (PGI) ")
-            .borders(Borders::ALL)
-            .style(Styles::default());
-        let message = state
-            .pga
-            .last_error
-            .as_deref()
-            .unwrap_or("pg_stat_user_indexes is not available");
-        frame.render_widget(Paragraph::new(message).block(block), area);
-        return;
-    }
-
-    let mode = state.pgi.view_mode;
-    let mut rows_data: Vec<PgIndexesRowData> = indexes
-        .iter()
-        .filter(|i| {
-            // Apply drill-down filter (from PGT)
-            if let Some(filter_relid) = state.pgi.filter_relid {
-                i.relid == filter_relid
-            } else {
-                true
-            }
-        })
-        .map(|i| {
-            let mut row = PgIndexesRowData::from_index(i, interner);
-            if let Some(r) = state.pgi.rates.get(&i.indexrelid) {
-                row.idx_scan_s = r.idx_scan_s;
-                row.idx_tup_read_s = r.idx_tup_read_s;
-                row.idx_tup_fetch_s = r.idx_tup_fetch_s;
-                row.idx_blks_read_s = r.idx_blks_read_s;
-                row.idx_blks_hit_s = r.idx_blks_hit_s;
-
-                // Computed I/O fields
-                if let (Some(ir), Some(ih)) = (r.idx_blks_read_s, r.idx_blks_hit_s) {
-                    let total = ir + ih;
-                    if total > 0.0 {
-                        row.hit_pct = Some(ih / total * 100.0);
-                    }
-                    row.disk_read_blks_s = Some(ir);
-                }
-            }
-            row
-        })
-        .collect();
-
-    // Text filter
-    if let Some(filter) = &state.pgi.filter {
-        let f = filter.to_lowercase();
-        rows_data.retain(|r| {
-            r.schema.to_lowercase().contains(&f)
-                || r.table_name.to_lowercase().contains(&f)
-                || r.index_name.to_lowercase().contains(&f)
-                || r.display_table.to_lowercase().contains(&f)
-        });
-    }
-
-    // Sort
-    let sort_col = state.pgi.sort_column;
-    let sort_asc = state.pgi.sort_ascending;
-    rows_data.sort_by(|a, b| {
-        let cmp = a
-            .sort_key(mode, sort_col)
-            .partial_cmp(&b.sort_key(mode, sort_col))
-            .unwrap_or(std::cmp::Ordering::Equal);
-        if sort_asc { cmp } else { cmp.reverse() }
-    });
-
-    // Resolve selection
-    let row_indexrelids: Vec<u32> = rows_data.iter().map(|r| r.indexrelid).collect();
-    state.pgi.resolve_selection(&row_indexrelids);
-
-    let (headers, widths, title_mode) = match mode {
-        PgIndexesViewMode::Usage => (HEADERS_USAGE, WIDTHS_USAGE, "u:usage"),
-        PgIndexesViewMode::Unused => (HEADERS_UNUSED, WIDTHS_UNUSED, "w:unused"),
-        PgIndexesViewMode::Io => (HEADERS_IO, WIDTHS_IO, "i:io"),
+    let vm = match build_indexes_view(snapshot, &state.pgi, interner) {
+        Some(vm) => vm,
+        None => {
+            let block = Block::default()
+                .title(" PostgreSQL Indexes (PGI) ")
+                .borders(Borders::ALL)
+                .style(Styles::default());
+            let message = state
+                .pga
+                .last_error
+                .as_deref()
+                .unwrap_or("pg_stat_user_indexes is not available");
+            frame.render_widget(Paragraph::new(message).block(block), area);
+            return;
+        }
     };
 
+    // Resolve selection
+    let row_indexrelids: Vec<u32> = vm.rows.iter().map(|r| r.id).collect();
+    state.pgi.resolve_selection(&row_indexrelids);
+
     // Header with sort indicator
-    let headers: Vec<Span> = headers
+    let headers: Vec<Span> = vm
+        .headers
         .iter()
         .enumerate()
         .map(|(i, h)| {
-            let indicator = if i == sort_col {
-                if sort_asc { "▲" } else { "▼" }
+            let indicator = if i == vm.sort_column {
+                if vm.sort_ascending { "▲" } else { "▼" }
             } else {
                 ""
             };
@@ -260,88 +66,29 @@ pub fn render_pg_indexes(
         .collect();
     let header = Row::new(headers).style(Styles::table_header()).height(1);
 
-    let rows: Vec<Row> = rows_data
+    // Rows
+    let rows: Vec<Row> = vm
+        .rows
         .iter()
         .enumerate()
-        .map(|(idx, r)| {
+        .map(|(idx, vr)| {
             let is_selected = idx == state.pgi.selected;
             let base_style = if is_selected {
                 Styles::selected()
             } else {
-                r.row_style(mode)
+                Styles::from_class(vr.style)
             };
 
-            let cells: Vec<Span> = match mode {
-                PgIndexesViewMode::Usage => vec![
-                    Span::raw(format_opt_f64(r.idx_scan_s, 9, 1)),
-                    Span::raw(format_opt_f64(r.idx_tup_read_s, 9, 1)),
-                    Span::raw(format_opt_f64(r.idx_tup_fetch_s, 9, 1)),
-                    Span::raw(format_opt_f64(r.hit_pct, 5, 1)),
-                    Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
-                    Span::raw(format!(
-                        "{:>9}",
-                        fmt::format_bytes(r.size_bytes as u64, FmtStyle::Detail)
-                    )),
-                    Span::raw(truncate(&r.display_table, 20)),
-                    Span::raw(r.index_name.clone()),
-                ],
-                PgIndexesViewMode::Unused => vec![
-                    Span::raw(format!("{:>11}", r.idx_scan)),
-                    Span::raw(format!(
-                        "{:>9}",
-                        fmt::format_bytes(r.size_bytes as u64, FmtStyle::Detail)
-                    )),
-                    Span::raw(truncate(&r.display_table, 20)),
-                    Span::raw(r.index_name.clone()),
-                ],
-                PgIndexesViewMode::Io => vec![
-                    Span::raw(format_blks_rate(r.idx_blks_read_s, 9)),
-                    Span::raw(format_blks_rate(r.idx_blks_hit_s, 9)),
-                    Span::raw(format_opt_f64(r.hit_pct, 5, 1)),
-                    Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
-                    Span::raw(format!(
-                        "{:>9}",
-                        fmt::format_bytes(r.size_bytes as u64, FmtStyle::Detail)
-                    )),
-                    Span::raw(truncate(&r.display_table, 20)),
-                    Span::raw(r.index_name.clone()),
-                ],
-            };
-
+            let cells = vr.cells.iter().map(|c| match c.style {
+                Some(s) => Span::styled(c.text.clone(), Styles::from_class(s)),
+                None => Span::raw(c.text.clone()),
+            });
             Row::new(cells).style(base_style).height(1)
         })
         .collect();
 
-    // Sample info
-    let sample_info = match state.pgi.dt_secs {
-        Some(dt) => format!("[dt={:.0}s]", dt),
-        None => String::new(),
-    };
-
-    let filter_info = if let Some(filter_relid) = state.pgi.filter_relid {
-        // Find the table name for the filter
-        let table_name = rows_data
-            .first()
-            .map(|r| r.display_table.as_str())
-            .unwrap_or("?");
-        format!(" (table: {}, oid={})", table_name, filter_relid)
-    } else {
-        String::new()
-    };
-
-    let title = if let Some(filter) = &state.pgi.filter {
-        format!(
-            " PostgreSQL Indexes (PGI) [{title_mode}] {sample_info}{filter_info} (filter: {filter}) [{} rows] ",
-            rows_data.len()
-        )
-    } else {
-        format!(
-            " PostgreSQL Indexes (PGI) [{title_mode}] {sample_info}{filter_info} [{} rows] ",
-            rows_data.len()
-        )
-    };
-
-    let mut constraints: Vec<ratatui::layout::Constraint> = widths
+    let mut constraints: Vec<ratatui::layout::Constraint> = vm
+        .widths
         .iter()
         .map(|&w| ratatui::layout::Constraint::Length(w))
         .collect();
@@ -351,7 +98,7 @@ pub fn render_pg_indexes(
         .header(header)
         .block(
             Block::default()
-                .title(title)
+                .title(vm.title)
                 .borders(Borders::ALL)
                 .style(Styles::default()),
         )
@@ -360,25 +107,4 @@ pub fn render_pg_indexes(
 
     frame.render_widget(Clear, area);
     frame.render_stateful_widget(table, area, &mut state.pgi.ratatui_state);
-}
-
-fn extract_pg_indexes(snapshot: &Snapshot) -> Vec<&PgStatUserIndexesInfo> {
-    snapshot
-        .blocks
-        .iter()
-        .find_map(|b| {
-            if let DataBlock::PgStatUserIndexes(v) = b {
-                Some(v.iter().collect())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default()
-}
-
-fn resolve_hash(interner: Option<&StringInterner>, hash: u64) -> String {
-    interner
-        .and_then(|i| i.resolve(hash))
-        .unwrap_or("")
-        .to_string()
 }

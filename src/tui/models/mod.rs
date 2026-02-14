@@ -89,9 +89,9 @@ impl PgActivityViewMode {
 pub enum PgTablesViewMode {
     /// Reads view: SEQ_RD/s, IDX_FT/s, TOT_RD/s, SEQ/s, IDX/s, SIZE, TABLE
     Reads,
-    /// Writes view: INS/s, UPD/s, DEL/s, HOT/s, LIVE, DEAD, TABLE
+    /// Writes view: INS/s, UPD/s, DEL/s, HOT/s, LIVE, DEAD, HIT%, DISK/s, SIZE, TABLE
     Writes,
-    /// Scans view: SEQ/s, SEQ_TUP/s, IDX/s, IDX_TUP/s, SEQ%, TABLE
+    /// Scans view: SEQ/s, SEQ_TUP/s, IDX/s, IDX_TUP/s, SEQ%, HIT%, DISK/s, SIZE, TABLE
     Scans,
     /// Maintenance view: DEAD, LIVE, DEAD%, VAC/s, AVAC/s, LAST_AVAC, LAST_AANL, TABLE
     Maintenance,
@@ -115,11 +115,11 @@ impl PgTablesViewMode {
     /// Number of columns in this view mode.
     pub fn column_count(&self) -> usize {
         match self {
-            Self::Reads => 9,  // SEQ_RD/s IDX_FT/s TOT_RD/s SEQ/s IDX/s HIT% MB/s SIZE TABLE
-            Self::Writes => 7, // INS/s UPD/s DEL/s HOT/s LIVE DEAD TABLE
-            Self::Scans => 6,  // SEQ/s SEQ_TUP/s IDX/s IDX_TUP/s SEQ% TABLE
+            Self::Reads => 9,   // SEQ_RD/s IDX_FT/s TOT_RD/s SEQ/s IDX/s HIT% MB/s SIZE TABLE
+            Self::Writes => 10, // INS/s UPD/s DEL/s HOT/s LIVE DEAD HIT% DISK/s SIZE TABLE
+            Self::Scans => 9,   // SEQ/s SEQ_TUP/s IDX/s IDX_TUP/s SEQ% HIT% DISK/s SIZE TABLE
             Self::Maintenance => 8, // DEAD LIVE DEAD% VAC/s AVAC/s LAST_AVAC LAST_AANL TABLE
-            Self::Io => 8,     // HEAP_RD/s HEAP_HIT/s IDX_RD/s IDX_HIT/s HIT% MB/s SIZE TABLE
+            Self::Io => 8,      // HEAP_RD/s HEAP_HIT/s IDX_RD/s IDX_HIT/s HIT% MB/s SIZE TABLE
         }
     }
 }

@@ -147,4 +147,20 @@ impl Styles {
     pub fn help_key() -> Style {
         Style::default().fg(Theme::FG).add_modifier(Modifier::BOLD)
     }
+
+    /// Maps a UI-agnostic [`RowStyleClass`] to a ratatui [`Style`].
+    pub fn from_class(class: crate::view::common::RowStyleClass) -> Style {
+        use crate::view::common::RowStyleClass;
+        match class {
+            RowStyleClass::Normal => Self::default(),
+            RowStyleClass::Warning => Self::modified_item(),
+            RowStyleClass::Critical => Self::critical(),
+            RowStyleClass::CriticalBold => {
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+            }
+            RowStyleClass::Active => Style::default().fg(Color::Green),
+            RowStyleClass::Dimmed => Style::default().fg(Color::DarkGray),
+            RowStyleClass::Accent => Style::default().fg(Color::Cyan),
+        }
+    }
 }

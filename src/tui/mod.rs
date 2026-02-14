@@ -7,10 +7,10 @@ mod app;
 mod event;
 pub mod fmt;
 mod input;
-mod models;
+pub(crate) mod models;
 mod render;
-mod state;
-mod style;
+pub(crate) mod state;
+pub(crate) mod style;
 mod table;
 mod widgets;
 

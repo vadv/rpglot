@@ -665,6 +665,9 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
                 Line::from("HOT/s  - HOT updates per second (no index update needed)"),
                 Line::from("LIVE   - estimated live rows"),
                 Line::from("DEAD   - estimated dead rows (bloat)"),
+                Line::from("HIT%   - buffer cache hit ratio (heap+idx, from pg_statio)"),
+                Line::from("DISK/s - bytes/s read from disk (1 block = 8 KB)"),
+                Line::from("SIZE   - table size on disk"),
                 Line::from("TABLE  - schema.table"),
             ]);
             lines.push(Line::from(""));
@@ -701,6 +704,9 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
                 Line::from("IDX_TUP/s - rows from index scans per second"),
                 Line::from("SEQ%      - percentage of scans that are sequential"),
                 Line::from("            high SEQ% on large table = missing or wrong index"),
+                Line::from("HIT%      - buffer cache hit ratio (heap+idx, from pg_statio)"),
+                Line::from("DISK/s    - bytes/s read from disk (1 block = 8 KB)"),
+                Line::from("SIZE      - table size on disk"),
                 Line::from("TABLE     - schema.table"),
             ]);
             lines.push(Line::from(""));

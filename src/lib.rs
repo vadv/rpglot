@@ -9,3 +9,4 @@ pub mod provider;
 pub mod storage;
 pub mod tui;
 pub mod util;
+pub mod view;
