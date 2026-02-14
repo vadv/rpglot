@@ -20,7 +20,7 @@ use super::event::{Event, EventHandler};
 use super::input::{KeyAction, handle_key};
 use super::render::render;
 use super::state::{AppState, InputMode, PopupState, Tab};
-use super::widgets::processes::{
+use super::widgets::prc::{
     calculate_cached_widths, extract_processes, get_total_cpu_time, get_total_memory,
     update_prev_cpu, update_prev_dsk, update_prev_mem,
 };

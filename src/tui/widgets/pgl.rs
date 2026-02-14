@@ -1,5 +1,5 @@
 //! PostgreSQL lock tree (PGL) tab widget.
-//! Thin TUI wrapper over [`crate::view::locks::build_locks_view`].
+//! Thin TUI wrapper over [`crate::view::pgl::build_locks_view`].
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 use crate::storage::StringInterner;
 use crate::tui::state::AppState;
 use crate::tui::style::Styles;
-use crate::view::locks::build_locks_view;
+use crate::view::pgl::build_locks_view;
 
 pub fn render_pg_locks(
     frame: &mut Frame,

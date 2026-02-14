@@ -1,5 +1,5 @@
 //! PostgreSQL tables widget for PGT tab.
-//! Thin TUI wrapper over [`crate::view::tables::build_tables_view`].
+//! Thin TUI wrapper over [`crate::view::pgt::build_tables_view`].
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 use crate::storage::StringInterner;
 use crate::tui::state::AppState;
 use crate::tui::style::Styles;
-use crate::view::tables::build_tables_view;
+use crate::view::pgt::build_tables_view;
 
 pub fn render_pg_tables(
     frame: &mut Frame,

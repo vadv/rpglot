@@ -1,5 +1,5 @@
 //! PostgreSQL statements table widget for PGS tab.
-//! Thin TUI wrapper over [`crate::view::statements::build_statements_view`].
+//! Thin TUI wrapper over [`crate::view::pgs::build_statements_view`].
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -9,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 use crate::storage::StringInterner;
 use crate::tui::state::AppState;
 use crate::tui::style::Styles;
-use crate::view::statements::build_statements_view;
+use crate::view::pgs::build_statements_view;
 
 pub fn render_pg_statements(
     frame: &mut Frame,
