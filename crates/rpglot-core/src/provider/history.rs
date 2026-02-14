@@ -1,76 +1,31 @@
 //! History data provider with lazy snapshot loading.
 //!
 //! Only chunk metadata (timestamps, counts, file paths) is kept in RAM permanently.
-//! Snapshot data and per-chunk StringInterners are loaded on demand from disk.
-//! A single-chunk cache avoids repeated decompression when multiple snapshots
-//! are requested from the same chunk (common during reconvert_current).
-//! The cache is explicitly dropped after each batch via `drop_cache()`.
+//! Snapshot data is loaded on demand from disk via ChunkReader (per-snapshot zstd frames).
+//! Per-chunk StringInterners are cached (one at a time, ~50 KB) since multiple
+//! snapshots from the same chunk share the same interner.
 
 use std::any::Any;
 use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
+use crate::storage::chunk_v2::ChunkReader;
 use crate::storage::model::Snapshot;
-use crate::storage::{Chunk, ChunkMetadata, StorageManager, StringInterner};
+use crate::storage::{ChunkMetadata, StorageManager, StringInterner};
 
 use super::{ProviderError, SnapshotProvider};
 
 // ============================================================
-// SingleChunkCache — cache for one decompressed chunk
+// CachedInterner — lightweight cache for one chunk's interner
 // ============================================================
 
-/// Cache holding a single decompressed chunk to avoid repeated decompression
-/// when multiple snapshots are requested from the same chunk (e.g. during
-/// `reconvert_current` which reads current + prev + PGS lookback).
-struct SingleChunkCache {
+/// Cache holding a single chunk's StringInterner (~50 KB) to avoid
+/// re-reading the interner frame when multiple snapshots are requested
+/// from the same chunk (e.g. during reconvert_current).
+struct CachedInterner {
     chunk_idx: usize,
-    chunk: Chunk,
-}
-
-impl SingleChunkCache {
-    /// Get or load the chunk at `chunk_idx`. Returns a reference to the cached Chunk.
-    /// If a different chunk was cached, it is dropped first.
-    fn get_or_load(
-        cache: &mut Option<Self>,
-        chunk_idx: usize,
-        meta: &ChunkMeta,
-    ) -> Result<(), ProviderError> {
-        if let Some(c) = cache.as_ref()
-            && c.chunk_idx == chunk_idx
-        {
-            return Ok(());
-        }
-        // Drop old cache entry (if any) before loading new one
-        *cache = None;
-
-        if !meta.available {
-            return Err(ProviderError::Io(format!(
-                "Chunk file no longer available: {}",
-                meta.path.display()
-            )));
-        }
-
-        let data = std::fs::read(&meta.path).map_err(|e| {
-            ProviderError::Io(format!(
-                "Failed to read chunk {}: {}",
-                meta.path.display(),
-                e
-            ))
-        })?;
-
-        let chunk = Chunk::decompress(&data).map_err(|e| {
-            ProviderError::Io(format!(
-                "Failed to decompress chunk {}: {}",
-                meta.path.display(),
-                e
-            ))
-        })?;
-        // `data` (compressed bytes) dropped here
-
-        *cache = Some(Self { chunk_idx, chunk });
-        Ok(())
-    }
+    interner: StringInterner,
 }
 
 // ============================================================
@@ -156,8 +111,8 @@ impl WalIndex {
 /// Provider for historical data from storage files.
 ///
 /// Only metadata (timestamps, chunk paths) is kept in RAM permanently.
-/// Snapshot data and per-chunk interners are loaded on demand from disk —
-/// no cache, minimal memory footprint.
+/// Snapshot data is loaded on demand via ChunkReader (per-snapshot zstd frames).
+/// Per-chunk interners (~50 KB) are cached one at a time.
 pub struct HistoryProvider {
     /// Metadata for each chunk file, sorted by timestamp.
     chunks: Vec<ChunkMeta>,
@@ -173,9 +128,9 @@ pub struct HistoryProvider {
     current_buffer: Option<Snapshot>,
     /// Per-chunk/WAL interner for the currently buffered snapshot.
     current_interner: Option<StringInterner>,
-    /// Single-chunk cache: keeps last decompressed chunk to avoid repeated
-    /// decompression when multiple snapshots are requested from the same chunk.
-    chunk_cache: Option<SingleChunkCache>,
+    /// Cached interner for one chunk (~50 KB) — avoids re-reading when
+    /// multiple snapshots are requested from the same chunk.
+    interner_cache: Option<CachedInterner>,
 
     last_error: Option<ProviderError>,
 }
@@ -202,7 +157,7 @@ impl HistoryProvider {
             timestamps,
             current_buffer: None,
             current_interner: None,
-            chunk_cache: None,
+            interner_cache: None,
             last_error: None,
         };
 
@@ -259,7 +214,7 @@ impl HistoryProvider {
             timestamps,
             current_buffer: Some(first_snapshot),
             current_interner: Some(StringInterner::new()),
-            chunk_cache: None,
+            interner_cache: None,
             last_error: None,
         })
     }
@@ -296,7 +251,7 @@ impl HistoryProvider {
         let mut all_timestamps: Vec<i64> = Vec::new();
         let mut global_offset: usize = 0;
 
-        // Scan each chunk file: prefer .meta sidecar, fallback to decompression
+        // Scan each chunk file: prefer .meta sidecar, fallback to ChunkReader
         for path in chunk_paths {
             let meta_path = ChunkMetadata::meta_path(&path);
             let (snapshot_count, chunk_timestamps) =
@@ -304,19 +259,23 @@ impl HistoryProvider {
                     // Fast path: read compact .meta file (tens of bytes)
                     (meta.snapshot_count, meta.timestamps)
                 } else {
-                    // Fallback: decompress .zst (for old files without .meta)
-                    let data = std::fs::read(&path).map_err(|e| {
-                        ProviderError::Io(format!("Failed to read chunk {}: {}", path.display(), e))
+                    // Fallback: open ChunkReader and extract timestamps
+                    let reader = ChunkReader::open(&path).map_err(|e| {
+                        ProviderError::Io(format!("Failed to open chunk {}: {}", path.display(), e))
                     })?;
-                    let chunk = Chunk::decompress(&data).map_err(|e| {
-                        ProviderError::Io(format!(
-                            "Failed to decompress chunk {}: {}",
-                            path.display(),
-                            e
-                        ))
-                    })?;
-                    let ts: Vec<i64> = chunk.deltas.iter().map(|d| d.timestamp()).collect();
-                    let count = ts.len();
+                    let count = reader.snapshot_count();
+                    let mut ts = Vec::with_capacity(count);
+                    for i in 0..count {
+                        let snap = reader.read_snapshot(i).map_err(|e| {
+                            ProviderError::Io(format!(
+                                "Failed to read snapshot {} from {}: {}",
+                                i,
+                                path.display(),
+                                e
+                            ))
+                        })?;
+                        ts.push(snap.timestamp);
+                    }
                     // Write .meta for future starts
                     let meta = ChunkMetadata {
                         snapshot_count: count,
@@ -324,7 +283,6 @@ impl HistoryProvider {
                     };
                     let _ = meta.save(&meta_path);
                     (count, ts)
-                    // chunk dropped here — RAM freed
                 };
 
             if snapshot_count == 0 {
@@ -421,29 +379,61 @@ impl HistoryProvider {
         None
     }
 
-    /// Load a single snapshot + interner from a chunk, using the single-chunk cache.
-    /// If the requested chunk is already cached, no disk I/O or decompression occurs.
-    fn load_from_chunk_cached(
-        chunk_cache: &mut Option<SingleChunkCache>,
-        chunks: &mut [ChunkMeta],
+    /// Load a single snapshot + interner from a chunk file.
+    /// Uses ChunkReader for O(1) random access (per-snapshot zstd frame).
+    /// The interner is cached per-chunk (~50 KB) to avoid re-reading when
+    /// multiple snapshots from the same chunk are requested.
+    fn load_from_chunk(
+        interner_cache: &mut Option<CachedInterner>,
+        chunks: &[ChunkMeta],
         chunk_idx: usize,
         offset_in_chunk: usize,
     ) -> Result<(Snapshot, StringInterner), ProviderError> {
-        SingleChunkCache::get_or_load(chunk_cache, chunk_idx, &chunks[chunk_idx])?;
+        let meta = &chunks[chunk_idx];
 
-        let cached = chunk_cache.as_ref().unwrap();
+        if !meta.available {
+            return Err(ProviderError::Io(format!(
+                "Chunk file no longer available: {}",
+                meta.path.display()
+            )));
+        }
 
-        let snapshot = StorageManager::reconstruct_snapshot_at(&cached.chunk, offset_in_chunk)
-            .map_err(|e| {
+        let reader = ChunkReader::open(&meta.path).map_err(|e| {
+            ProviderError::Io(format!(
+                "Failed to open chunk {}: {}",
+                meta.path.display(),
+                e
+            ))
+        })?;
+
+        let snapshot = reader.read_snapshot(offset_in_chunk).map_err(|e| {
+            ProviderError::Io(format!(
+                "Failed to read snapshot at offset {} in {}: {}",
+                offset_in_chunk,
+                meta.path.display(),
+                e
+            ))
+        })?;
+
+        // Use cached interner if available for this chunk, otherwise read from file
+        let interner = if let Some(ci) = interner_cache.as_ref()
+            && ci.chunk_idx == chunk_idx
+        {
+            ci.interner.clone()
+        } else {
+            let i = reader.read_interner().map_err(|e| {
                 ProviderError::Io(format!(
-                    "Failed to reconstruct snapshot at offset {} in {}: {}",
-                    offset_in_chunk,
-                    chunks[chunk_idx].path.display(),
+                    "Failed to read interner from {}: {}",
+                    meta.path.display(),
                     e
                 ))
             })?;
-
-        let interner = cached.chunk.interner.clone();
+            *interner_cache = Some(CachedInterner {
+                chunk_idx,
+                interner: i.clone(),
+            });
+            i
+        };
 
         Ok((snapshot, interner))
     }
@@ -466,9 +456,9 @@ impl HistoryProvider {
                 chunk_idx,
                 offset_in_chunk,
             }) => {
-                match Self::load_from_chunk_cached(
-                    &mut self.chunk_cache,
-                    &mut self.chunks,
+                match Self::load_from_chunk(
+                    &mut self.interner_cache,
+                    &self.chunks,
                     chunk_idx,
                     offset_in_chunk,
                 ) {
@@ -488,7 +478,6 @@ impl HistoryProvider {
     }
 
     /// Get a cloned snapshot at the given position (for external use).
-    /// Uses single-chunk cache to avoid repeated decompression.
     fn snapshot_cloned(&mut self, position: usize) -> Option<Snapshot> {
         match self.resolve_position(position) {
             Some(SnapshotLocation::Wal(wal_idx)) => {
@@ -498,9 +487,9 @@ impl HistoryProvider {
                 chunk_idx,
                 offset_in_chunk,
             }) => {
-                match Self::load_from_chunk_cached(
-                    &mut self.chunk_cache,
-                    &mut self.chunks,
+                match Self::load_from_chunk(
+                    &mut self.interner_cache,
+                    &self.chunks,
                     chunk_idx,
                     offset_in_chunk,
                 ) {
@@ -526,13 +515,6 @@ impl HistoryProvider {
     /// Returns true if there are no snapshots.
     pub fn is_empty(&self) -> bool {
         self.total_snapshots == 0
-    }
-
-    /// Drops the cached decompressed chunk, freeing its memory.
-    /// Call this after a batch of snapshot reads (e.g. after reconvert_current)
-    /// to release RAM back to the allocator.
-    pub fn drop_cache(&mut self) {
-        self.chunk_cache = None;
     }
 
     /// Returns the current cursor position (0-indexed).
@@ -611,22 +593,29 @@ impl HistoryProvider {
             {
                 (meta.snapshot_count, meta.timestamps)
             } else {
-                let data = match std::fs::read(path) {
-                    Ok(d) => d,
+                let reader = match ChunkReader::open(path) {
+                    Ok(r) => r,
                     Err(e) => {
-                        warn!(path = %path.display(), error = %e, "failed to read new chunk");
+                        warn!(path = %path.display(), error = %e, "failed to open new chunk");
                         continue;
                     }
                 };
-                let chunk = match Chunk::decompress(&data) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        warn!(path = %path.display(), error = %e, "failed to decompress new chunk");
-                        continue;
+                let count = reader.snapshot_count();
+                let mut ts = Vec::with_capacity(count);
+                let mut failed = false;
+                for i in 0..count {
+                    match reader.read_snapshot(i) {
+                        Ok(snap) => ts.push(snap.timestamp),
+                        Err(e) => {
+                            warn!(path = %path.display(), index = i, error = %e, "failed to read snapshot from new chunk");
+                            failed = true;
+                            break;
+                        }
                     }
-                };
-                let ts: Vec<i64> = chunk.deltas.iter().map(|d| d.timestamp()).collect();
-                let count = ts.len();
+                }
+                if failed {
+                    continue;
+                }
                 let meta = ChunkMetadata {
                     snapshot_count: count,
                     timestamps: ts.clone(),

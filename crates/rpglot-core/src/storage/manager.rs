@@ -1,15 +1,7 @@
-use crate::storage::chunk::Chunk;
 use crate::storage::interner::StringInterner;
-#[allow(unused_imports)]
-use crate::storage::model::{
-    DataBlock, DataBlockDiff, Delta, PgLockTreeNode, PgStatActivityInfo, PgStatDatabaseInfo,
-    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, ProcessInfo, Snapshot,
-    SystemCpuInfo, SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo,
-    SystemMemInfo, SystemNetInfo, SystemNetSnmpInfo, SystemPsiInfo, SystemSoftirqInfo,
-    SystemStatInfo, SystemVmstatInfo,
-};
+use crate::storage::model::{DataBlock, Snapshot};
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -148,7 +140,7 @@ impl StorageManager {
     }
 
     /// Scans existing .zst files and creates missing .meta sidecar files.
-    /// Handles cases where daemon was killed (-9) or disk was full during previous write.
+    /// Handles both v2 (per-snapshot frames) and legacy (monolithic zstd) formats.
     fn ensure_metadata_files(&self) {
         let Ok(entries) = std::fs::read_dir(&self.base_path) else {
             return;
@@ -157,15 +149,28 @@ impl StorageManager {
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "zst") {
                 let meta_path = crate::storage::ChunkMetadata::meta_path(&path);
-                if !meta_path.exists()
-                    && let Ok(data) = std::fs::read(&path)
-                    && let Ok(chunk) = Chunk::decompress(&data)
-                {
-                    let meta = crate::storage::ChunkMetadata::from_chunk(&chunk);
+                if meta_path.exists() {
+                    continue;
+                }
+                // Try v2 format first (header has snapshot count and per-frame offsets)
+                if let Ok(reader) = crate::storage::chunk_v2::ChunkReader::open(&path) {
+                    let count = reader.snapshot_count();
+                    let mut timestamps = Vec::with_capacity(count);
+                    for i in 0..count {
+                        if let Ok(snap) = reader.read_snapshot(i) {
+                            timestamps.push(snap.timestamp);
+                        }
+                    }
+                    let meta = crate::storage::ChunkMetadata {
+                        snapshot_count: count,
+                        timestamps,
+                    };
                     if let Err(e) = meta.save(&meta_path) {
                         warn!("failed to create metadata for {}: {}", path.display(), e);
                     }
                 }
+                // Legacy format files without .meta are silently skipped
+                // (they can't be read by the new history provider anyway)
             }
         }
     }
@@ -349,644 +354,6 @@ impl StorageManager {
         flushed
     }
 
-    fn compute_delta(&self, last: &Snapshot, current: &Snapshot) -> Delta {
-        let mut diff_blocks = Vec::new();
-
-        for curr_block in &current.blocks {
-            match curr_block {
-                DataBlock::Processes(curr_procs) => {
-                    let last_procs = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::Processes(p) = b {
-                            Some(p)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_procs) = last_procs {
-                        diff_blocks.push(self.compute_processes_diff(last_procs, curr_procs));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::Processes {
-                            updates: curr_procs.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgStatActivity(curr_activity) => {
-                    let last_activity = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::PgStatActivity(a) = b {
-                            Some(a)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_activity) = last_activity {
-                        diff_blocks
-                            .push(self.compute_pg_activity_diff(last_activity, curr_activity));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::PgStatActivity {
-                            updates: curr_activity.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgStatStatements(curr_stats) => {
-                    let last_stats = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::PgStatStatements(s) = b {
-                            Some(s)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_stats) = last_stats {
-                        diff_blocks.push(self.compute_pg_statements_diff(last_stats, curr_stats));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::PgStatStatements {
-                            updates: curr_stats.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgStatDatabase(curr_db) => {
-                    let last_db = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::PgStatDatabase(d) = b {
-                            Some(d)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_db) = last_db {
-                        diff_blocks.push(self.compute_pg_database_diff(last_db, curr_db));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::PgStatDatabase {
-                            updates: curr_db.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgStatUserTables(curr_tables) => {
-                    let last_tables = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::PgStatUserTables(t) = b {
-                            Some(t)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_tables) = last_tables {
-                        diff_blocks.push(self.compute_pg_tables_diff(last_tables, curr_tables));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::PgStatUserTables {
-                            updates: curr_tables.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgStatUserIndexes(curr_indexes) => {
-                    let last_indexes = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::PgStatUserIndexes(i) = b {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_indexes) = last_indexes {
-                        diff_blocks.push(self.compute_pg_indexes_diff(last_indexes, curr_indexes));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::PgStatUserIndexes {
-                            updates: curr_indexes.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgLockTree(curr_locks) => {
-                    let last_locks = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::PgLockTree(l) = b {
-                            Some(l)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_locks) = last_locks {
-                        diff_blocks.push(self.compute_pg_lock_tree_diff(last_locks, curr_locks));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::PgLockTree {
-                            updates: curr_locks.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::PgStatBgwriter(curr_bgw) => {
-                    diff_blocks.push(DataBlockDiff::PgStatBgwriter(curr_bgw.clone()));
-                }
-                DataBlock::SystemCpu(curr_cpu) => {
-                    let last_cpu = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::SystemCpu(c) = b {
-                            Some(c)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_cpu) = last_cpu {
-                        diff_blocks.push(self.compute_system_cpu_diff(last_cpu, curr_cpu));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::SystemCpu {
-                            updates: curr_cpu.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::SystemLoad(curr_load) => {
-                    diff_blocks.push(DataBlockDiff::SystemLoad(curr_load.clone()));
-                }
-                DataBlock::SystemMem(curr_mem) => {
-                    diff_blocks.push(DataBlockDiff::SystemMem(curr_mem.clone()));
-                }
-                DataBlock::SystemNet(curr_net) => {
-                    let last_net = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::SystemNet(n) = b {
-                            Some(n)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_net) = last_net {
-                        diff_blocks.push(self.compute_system_net_diff(last_net, curr_net));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::SystemNet {
-                            updates: curr_net.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::SystemDisk(curr_disk) => {
-                    let last_disk = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::SystemDisk(d) = b {
-                            Some(d)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_disk) = last_disk {
-                        diff_blocks.push(self.compute_system_disk_diff(last_disk, curr_disk));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::SystemDisk {
-                            updates: curr_disk.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::SystemPsi(curr_psi) => {
-                    diff_blocks.push(DataBlockDiff::SystemPsi(curr_psi.clone()));
-                }
-                DataBlock::SystemVmstat(curr_vmstat) => {
-                    diff_blocks.push(DataBlockDiff::SystemVmstat(curr_vmstat.clone()));
-                }
-                DataBlock::SystemFile(curr_file) => {
-                    diff_blocks.push(DataBlockDiff::SystemFile(curr_file.clone()));
-                }
-                DataBlock::SystemInterrupts(curr_irq) => {
-                    let last_irq = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::SystemInterrupts(i) = b {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_irq) = last_irq {
-                        diff_blocks.push(self.compute_system_interrupts_diff(last_irq, curr_irq));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::SystemInterrupts {
-                            updates: curr_irq.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::SystemSoftirqs(curr_softirq) => {
-                    let last_softirq = last.blocks.iter().find_map(|b| {
-                        if let DataBlock::SystemSoftirqs(s) = b {
-                            Some(s)
-                        } else {
-                            None
-                        }
-                    });
-
-                    if let Some(last_softirq) = last_softirq {
-                        diff_blocks
-                            .push(self.compute_system_softirqs_diff(last_softirq, curr_softirq));
-                    } else {
-                        diff_blocks.push(DataBlockDiff::SystemSoftirqs {
-                            updates: curr_softirq.clone(),
-                            removals: Vec::new(),
-                        });
-                    }
-                }
-                DataBlock::SystemStat(curr_stat) => {
-                    diff_blocks.push(DataBlockDiff::SystemStat(curr_stat.clone()));
-                }
-                DataBlock::SystemNetSnmp(curr_snmp) => {
-                    diff_blocks.push(DataBlockDiff::SystemNetSnmp(curr_snmp.clone()));
-                }
-                DataBlock::Cgroup(curr_cgroup) => {
-                    diff_blocks.push(DataBlockDiff::Cgroup(curr_cgroup.clone()));
-                }
-            }
-        }
-
-        Delta::Diff {
-            timestamp: current.timestamp,
-            blocks: diff_blocks,
-        }
-    }
-
-    fn compute_processes_diff(
-        &self,
-        last: &[ProcessInfo],
-        current: &[ProcessInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u32, &ProcessInfo> = last.iter().map(|p| (p.pid, p)).collect();
-        let current_map: HashMap<u32, &ProcessInfo> = current.iter().map(|p| (p.pid, p)).collect();
-
-        for (pid, proc) in &current_map {
-            if let Some(last_proc) = last_map.get(pid) {
-                if *last_proc != *proc {
-                    updates.push((*proc).clone());
-                }
-            } else {
-                updates.push((*proc).clone());
-            }
-        }
-
-        for pid in last_map.keys() {
-            if !current_map.contains_key(pid) {
-                removals.push(*pid);
-            }
-        }
-
-        DataBlockDiff::Processes { updates, removals }
-    }
-
-    fn compute_pg_activity_diff(
-        &self,
-        last: &[PgStatActivityInfo],
-        current: &[PgStatActivityInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<i32, &PgStatActivityInfo> = last.iter().map(|p| (p.pid, p)).collect();
-        let current_map: HashMap<i32, &PgStatActivityInfo> =
-            current.iter().map(|p| (p.pid, p)).collect();
-
-        for (pid, proc) in &current_map {
-            if let Some(last_proc) = last_map.get(pid) {
-                if *last_proc != *proc {
-                    updates.push((*proc).clone());
-                }
-            } else {
-                updates.push((*proc).clone());
-            }
-        }
-
-        for pid in last_map.keys() {
-            if !current_map.contains_key(pid) {
-                removals.push(*pid);
-            }
-        }
-
-        DataBlockDiff::PgStatActivity { updates, removals }
-    }
-
-    fn compute_pg_statements_diff(
-        &self,
-        last: &[PgStatStatementsInfo],
-        current: &[PgStatStatementsInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<i64, &PgStatStatementsInfo> =
-            last.iter().map(|p| (p.queryid, p)).collect();
-        let current_map: HashMap<i64, &PgStatStatementsInfo> =
-            current.iter().map(|p| (p.queryid, p)).collect();
-
-        for (id, proc) in &current_map {
-            if let Some(last_proc) = last_map.get(id) {
-                if *last_proc != *proc {
-                    updates.push((*proc).clone());
-                }
-            } else {
-                updates.push((*proc).clone());
-            }
-        }
-
-        for id in last_map.keys() {
-            if !current_map.contains_key(id) {
-                removals.push(*id);
-            }
-        }
-
-        DataBlockDiff::PgStatStatements { updates, removals }
-    }
-
-    fn compute_pg_database_diff(
-        &self,
-        last: &[PgStatDatabaseInfo],
-        current: &[PgStatDatabaseInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u32, &PgStatDatabaseInfo> =
-            last.iter().map(|d| (d.datid, d)).collect();
-        let current_map: HashMap<u32, &PgStatDatabaseInfo> =
-            current.iter().map(|d| (d.datid, d)).collect();
-
-        for (id, db) in &current_map {
-            if let Some(last_db) = last_map.get(id) {
-                if *last_db != *db {
-                    updates.push((*db).clone());
-                }
-            } else {
-                updates.push((*db).clone());
-            }
-        }
-
-        for id in last_map.keys() {
-            if !current_map.contains_key(id) {
-                removals.push(*id);
-            }
-        }
-
-        DataBlockDiff::PgStatDatabase { updates, removals }
-    }
-
-    fn compute_pg_tables_diff(
-        &self,
-        last: &[PgStatUserTablesInfo],
-        current: &[PgStatUserTablesInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u32, &PgStatUserTablesInfo> =
-            last.iter().map(|t| (t.relid, t)).collect();
-        let current_map: HashMap<u32, &PgStatUserTablesInfo> =
-            current.iter().map(|t| (t.relid, t)).collect();
-
-        for (id, table) in &current_map {
-            if let Some(last_table) = last_map.get(id) {
-                if *last_table != *table {
-                    updates.push((*table).clone());
-                }
-            } else {
-                updates.push((*table).clone());
-            }
-        }
-
-        for id in last_map.keys() {
-            if !current_map.contains_key(id) {
-                removals.push(*id);
-            }
-        }
-
-        DataBlockDiff::PgStatUserTables { updates, removals }
-    }
-
-    fn compute_pg_indexes_diff(
-        &self,
-        last: &[PgStatUserIndexesInfo],
-        current: &[PgStatUserIndexesInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u32, &PgStatUserIndexesInfo> =
-            last.iter().map(|i| (i.indexrelid, i)).collect();
-        let current_map: HashMap<u32, &PgStatUserIndexesInfo> =
-            current.iter().map(|i| (i.indexrelid, i)).collect();
-
-        for (id, index) in &current_map {
-            if let Some(last_index) = last_map.get(id) {
-                if *last_index != *index {
-                    updates.push((*index).clone());
-                }
-            } else {
-                updates.push((*index).clone());
-            }
-        }
-
-        for id in last_map.keys() {
-            if !current_map.contains_key(id) {
-                removals.push(*id);
-            }
-        }
-
-        DataBlockDiff::PgStatUserIndexes { updates, removals }
-    }
-
-    fn compute_pg_lock_tree_diff(
-        &self,
-        last: &[PgLockTreeNode],
-        current: &[PgLockTreeNode],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<i32, &PgLockTreeNode> = last.iter().map(|n| (n.pid, n)).collect();
-        let current_map: HashMap<i32, &PgLockTreeNode> =
-            current.iter().map(|n| (n.pid, n)).collect();
-
-        for (pid, node) in &current_map {
-            if let Some(last_node) = last_map.get(pid) {
-                if *last_node != *node {
-                    updates.push((*node).clone());
-                }
-            } else {
-                updates.push((*node).clone());
-            }
-        }
-
-        for pid in last_map.keys() {
-            if !current_map.contains_key(pid) {
-                removals.push(*pid);
-            }
-        }
-
-        DataBlockDiff::PgLockTree { updates, removals }
-    }
-
-    fn compute_system_cpu_diff(
-        &self,
-        last: &[SystemCpuInfo],
-        current: &[SystemCpuInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<i16, &SystemCpuInfo> = last.iter().map(|c| (c.cpu_id, c)).collect();
-        let current_map: HashMap<i16, &SystemCpuInfo> =
-            current.iter().map(|c| (c.cpu_id, c)).collect();
-
-        for (id, cpu) in &current_map {
-            if let Some(last_cpu) = last_map.get(id) {
-                if *last_cpu != *cpu {
-                    updates.push((*cpu).clone());
-                }
-            } else {
-                updates.push((*cpu).clone());
-            }
-        }
-
-        for id in last_map.keys() {
-            if !current_map.contains_key(id) {
-                removals.push(*id);
-            }
-        }
-
-        DataBlockDiff::SystemCpu { updates, removals }
-    }
-
-    fn compute_system_net_diff(
-        &self,
-        last: &[SystemNetInfo],
-        current: &[SystemNetInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u64, &SystemNetInfo> =
-            last.iter().map(|n| (n.name_hash, n)).collect();
-        let current_map: HashMap<u64, &SystemNetInfo> =
-            current.iter().map(|n| (n.name_hash, n)).collect();
-
-        for (hash, net) in &current_map {
-            if let Some(last_net) = last_map.get(hash) {
-                if *last_net != *net {
-                    updates.push((*net).clone());
-                }
-            } else {
-                updates.push((*net).clone());
-            }
-        }
-
-        for hash in last_map.keys() {
-            if !current_map.contains_key(hash) {
-                removals.push(*hash);
-            }
-        }
-
-        DataBlockDiff::SystemNet { updates, removals }
-    }
-
-    fn compute_system_disk_diff(
-        &self,
-        last: &[SystemDiskInfo],
-        current: &[SystemDiskInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u64, &SystemDiskInfo> =
-            last.iter().map(|d| (d.device_hash, d)).collect();
-        let current_map: HashMap<u64, &SystemDiskInfo> =
-            current.iter().map(|d| (d.device_hash, d)).collect();
-
-        for (hash, disk) in &current_map {
-            if let Some(last_disk) = last_map.get(hash) {
-                if *last_disk != *disk {
-                    updates.push((*disk).clone());
-                }
-            } else {
-                updates.push((*disk).clone());
-            }
-        }
-
-        for hash in last_map.keys() {
-            if !current_map.contains_key(hash) {
-                removals.push(*hash);
-            }
-        }
-
-        DataBlockDiff::SystemDisk { updates, removals }
-    }
-
-    fn compute_system_interrupts_diff(
-        &self,
-        last: &[SystemInterruptInfo],
-        current: &[SystemInterruptInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u64, &SystemInterruptInfo> =
-            last.iter().map(|i| (i.irq_hash, i)).collect();
-        let current_map: HashMap<u64, &SystemInterruptInfo> =
-            current.iter().map(|i| (i.irq_hash, i)).collect();
-
-        for (hash, irq) in &current_map {
-            if let Some(last_irq) = last_map.get(hash) {
-                if *last_irq != *irq {
-                    updates.push((*irq).clone());
-                }
-            } else {
-                updates.push((*irq).clone());
-            }
-        }
-
-        for hash in last_map.keys() {
-            if !current_map.contains_key(hash) {
-                removals.push(*hash);
-            }
-        }
-
-        DataBlockDiff::SystemInterrupts { updates, removals }
-    }
-
-    fn compute_system_softirqs_diff(
-        &self,
-        last: &[SystemSoftirqInfo],
-        current: &[SystemSoftirqInfo],
-    ) -> DataBlockDiff {
-        let mut updates = Vec::new();
-        let mut removals = Vec::new();
-
-        let last_map: HashMap<u64, &SystemSoftirqInfo> =
-            last.iter().map(|s| (s.name_hash, s)).collect();
-        let current_map: HashMap<u64, &SystemSoftirqInfo> =
-            current.iter().map(|s| (s.name_hash, s)).collect();
-
-        for (hash, softirq) in &current_map {
-            if let Some(last_softirq) = last_map.get(hash) {
-                if *last_softirq != *softirq {
-                    updates.push((*softirq).clone());
-                }
-            } else {
-                updates.push((*softirq).clone());
-            }
-        }
-
-        for hash in last_map.keys() {
-            if !current_map.contains_key(hash) {
-                removals.push(*hash);
-            }
-        }
-
-        DataBlockDiff::SystemSoftirqs { updates, removals }
-    }
-
     /// Flushes the current chunk using current time for filename.
     pub fn flush_chunk(&mut self) -> std::io::Result<()> {
         let now = Utc::now();
@@ -995,39 +362,28 @@ impl StorageManager {
         self.flush_chunk_with_time(date, hour)
     }
 
-    /// Flushes WAL to a compressed chunk file.
-    /// Reads all snapshots from WAL, computes deltas on-the-fly, and writes compressed chunk.
+    /// Flushes WAL to a compressed chunk file in the new per-snapshot zstd frame format.
+    /// Each snapshot is stored as an independent zstd frame for O(1) random access.
     /// File naming format: rpglot_YYYY-MM-DD_HH.zst
     fn flush_chunk_with_time(&mut self, date: NaiveDate, hour: u32) -> std::io::Result<()> {
         if self.wal_entries_count == 0 {
             return Err(std::io::Error::other("Empty WAL"));
         }
 
-        // Read all snapshots from WAL and build chunk
+        // Read all snapshots from WAL
         let (snapshots, interner) = self.load_wal_snapshots_with_interner()?;
         if snapshots.is_empty() {
             return Err(std::io::Error::other("No snapshots in WAL"));
         }
 
-        // Build chunk with deltas computed on-the-fly
-        let mut chunk = Chunk::new();
-        let mut last_snapshot: Option<&Snapshot> = None;
-
+        // Build optimized interner with only hashes used across all snapshots
+        let mut used_hashes = HashSet::new();
         for snapshot in &snapshots {
-            let delta = if let Some(last) = last_snapshot {
-                self.compute_delta(last, snapshot)
-            } else {
-                Delta::Full(snapshot.clone())
-            };
-            chunk.deltas.push(delta);
-            last_snapshot = Some(snapshot);
+            let h = Self::collect_snapshot_hashes(snapshot);
+            used_hashes.extend(h);
         }
+        let filtered_interner = interner.filter(&used_hashes);
 
-        // Build optimized interner with only used hashes
-        let used_hashes = chunk.collect_used_hashes();
-        chunk.interner = interner.filter(&used_hashes);
-
-        let compressed = chunk.compress()?;
         let filename = format!("rpglot_{}_{:02}.zst", date.format("%Y-%m-%d"), hour);
         let final_path = self.base_path.join(&filename);
 
@@ -1044,18 +400,15 @@ impl StorageManager {
             final_path
         };
 
-        let tmp_path = final_path.with_extension("tmp");
-
-        {
-            let mut f = File::create(&tmp_path)?;
-            f.write_all(&compressed)?;
-            f.sync_all()?;
-        }
-
-        std::fs::rename(tmp_path, &final_path)?;
+        // Write chunk in new format (atomic via .tmp rename)
+        crate::storage::chunk_v2::write_chunk(&final_path, &snapshots, &filtered_interner)?;
 
         // Write .meta sidecar file for fast startup indexing
-        let meta = crate::storage::ChunkMetadata::from_chunk(&chunk);
+        let timestamps: Vec<i64> = snapshots.iter().map(|s| s.timestamp).collect();
+        let meta = crate::storage::ChunkMetadata {
+            snapshot_count: snapshots.len(),
+            timestamps,
+        };
         let meta_path = crate::storage::ChunkMetadata::meta_path(&final_path);
         if let Err(e) = meta.save(&meta_path) {
             warn!(
@@ -1171,23 +524,31 @@ impl StorageManager {
     ///
     /// Also loads unflushed snapshots from WAL and their interners.
     /// Snapshots are returned in chronological order (oldest first).
+    ///
+    /// Reads v2 format (per-snapshot zstd frames). Legacy format files are skipped.
     pub fn load_all_snapshots_with_interner(
         &self,
     ) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
-        let mut chunks = self.load_chunks()?;
-
-        // Sort by first timestamp in each chunk
-        chunks.sort_by_key(|c| c.deltas.first().map(|d| d.timestamp()).unwrap_or(0));
+        let mut chunk_paths: Vec<PathBuf> = Vec::new();
+        for entry in std::fs::read_dir(&self.base_path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "zst") {
+                chunk_paths.push(path);
+            }
+        }
+        chunk_paths.sort();
 
         let mut snapshots = Vec::new();
         let mut merged_interner = StringInterner::new();
 
-        for chunk in chunks {
-            // Merge chunk's interner into the merged one
-            merged_interner.merge(&chunk.interner);
-
-            let chunk_snapshots = Self::reconstruct_snapshots_from_chunk(&chunk)?;
-            snapshots.extend(chunk_snapshots);
+        for path in &chunk_paths {
+            let reader = crate::storage::chunk_v2::ChunkReader::open(path)?;
+            let interner = reader.read_interner()?;
+            merged_interner.merge(&interner);
+            for i in 0..reader.snapshot_count() {
+                snapshots.push(reader.read_snapshot(i)?);
+            }
         }
 
         // Load unflushed snapshots and interners from WAL
@@ -1200,368 +561,6 @@ impl StorageManager {
         snapshots.dedup_by_key(|s| s.timestamp);
 
         Ok((snapshots, merged_interner))
-    }
-
-    /// Loads all chunk files from the storage directory.
-    fn load_chunks(&self) -> std::io::Result<Vec<Chunk>> {
-        let mut chunks = Vec::new();
-
-        for entry in std::fs::read_dir(&self.base_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "zst") {
-                let data = std::fs::read(&path)?;
-                let chunk = Chunk::decompress(&data)?;
-                chunks.push(chunk);
-            }
-        }
-
-        Ok(chunks)
-    }
-
-    /// Reconstructs a single snapshot at the given offset within a chunk.
-    /// Only applies deltas up to and including the target offset,
-    /// keeping at most 2 snapshots in memory (base + result).
-    pub fn reconstruct_snapshot_at(chunk: &Chunk, offset: usize) -> std::io::Result<Snapshot> {
-        let mut last_snapshot: Option<Snapshot> = None;
-
-        for (i, delta) in chunk.deltas.iter().enumerate() {
-            match delta {
-                Delta::Full(snapshot) => {
-                    last_snapshot = Some(snapshot.clone());
-                }
-                Delta::Diff { timestamp, blocks } => {
-                    let base = last_snapshot.as_ref().ok_or_else(|| {
-                        std::io::Error::other("Diff without preceding Full snapshot")
-                    })?;
-                    last_snapshot = Some(Self::apply_diff(base, *timestamp, blocks));
-                }
-            }
-            if i == offset {
-                return last_snapshot.ok_or_else(|| std::io::Error::other("No snapshot at offset"));
-            }
-        }
-
-        Err(std::io::Error::other(format!(
-            "Offset {} out of range (chunk has {} deltas)",
-            offset,
-            chunk.deltas.len()
-        )))
-    }
-
-    /// Reconstructs full snapshots from a chunk's deltas.
-    pub fn reconstruct_snapshots_from_chunk(chunk: &Chunk) -> std::io::Result<Vec<Snapshot>> {
-        let mut snapshots = Vec::new();
-        let mut last_snapshot: Option<Snapshot> = None;
-
-        for delta in &chunk.deltas {
-            match delta {
-                Delta::Full(snapshot) => {
-                    snapshots.push(snapshot.clone());
-                    last_snapshot = Some(snapshot.clone());
-                }
-                Delta::Diff { timestamp, blocks } => {
-                    let base = last_snapshot.as_ref().ok_or_else(|| {
-                        std::io::Error::other("Diff without preceding Full snapshot")
-                    })?;
-                    let snapshot = Self::apply_diff(base, *timestamp, blocks);
-                    snapshots.push(snapshot.clone());
-                    last_snapshot = Some(snapshot);
-                }
-            }
-        }
-
-        Ok(snapshots)
-    }
-
-    /// Applies a diff to a base snapshot to produce a new snapshot.
-    fn apply_diff(base: &Snapshot, timestamp: i64, diff_blocks: &[DataBlockDiff]) -> Snapshot {
-        let mut new_blocks = base.blocks.clone();
-
-        for diff in diff_blocks {
-            match diff {
-                DataBlockDiff::Processes { updates, removals } => {
-                    if let Some(DataBlock::Processes(procs)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::Processes(_)))
-                    {
-                        procs.retain(|p| !removals.contains(&p.pid));
-                        for update in updates {
-                            if let Some(existing) = procs.iter_mut().find(|p| p.pid == update.pid) {
-                                *existing = update.clone();
-                            } else {
-                                procs.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::SystemLoad(load) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemLoad(_)))
-                    {
-                        *block = DataBlock::SystemLoad(load.clone());
-                    }
-                }
-                DataBlockDiff::SystemMem(mem) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemMem(_)))
-                    {
-                        *block = DataBlock::SystemMem(mem.clone());
-                    }
-                }
-                DataBlockDiff::SystemCpu { updates, removals } => {
-                    if let Some(DataBlock::SystemCpu(cpus)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemCpu(_)))
-                    {
-                        cpus.retain(|c| !removals.contains(&c.cpu_id));
-                        for update in updates {
-                            if let Some(existing) =
-                                cpus.iter_mut().find(|c| c.cpu_id == update.cpu_id)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                cpus.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::SystemNet { updates, removals } => {
-                    if let Some(DataBlock::SystemNet(nets)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemNet(_)))
-                    {
-                        nets.retain(|n| !removals.contains(&n.name_hash));
-                        for update in updates {
-                            if let Some(existing) =
-                                nets.iter_mut().find(|n| n.name_hash == update.name_hash)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                nets.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::SystemDisk { updates, removals } => {
-                    if let Some(DataBlock::SystemDisk(disks)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemDisk(_)))
-                    {
-                        disks.retain(|d| !removals.contains(&d.device_hash));
-                        for update in updates {
-                            if let Some(existing) = disks
-                                .iter_mut()
-                                .find(|d| d.device_hash == update.device_hash)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                disks.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::SystemInterrupts { updates, removals } => {
-                    if let Some(DataBlock::SystemInterrupts(irqs)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemInterrupts(_)))
-                    {
-                        irqs.retain(|i| !removals.contains(&i.irq_hash));
-                        for update in updates {
-                            if let Some(existing) =
-                                irqs.iter_mut().find(|i| i.irq_hash == update.irq_hash)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                irqs.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::SystemSoftirqs { updates, removals } => {
-                    if let Some(DataBlock::SystemSoftirqs(sirqs)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemSoftirqs(_)))
-                    {
-                        sirqs.retain(|s| !removals.contains(&s.name_hash));
-                        for update in updates {
-                            if let Some(existing) =
-                                sirqs.iter_mut().find(|s| s.name_hash == update.name_hash)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                sirqs.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::PgStatActivity { updates, removals } => {
-                    if let Some(DataBlock::PgStatActivity(activities)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgStatActivity(_)))
-                    {
-                        activities.retain(|a| !removals.contains(&a.pid));
-                        for update in updates {
-                            if let Some(existing) =
-                                activities.iter_mut().find(|a| a.pid == update.pid)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                activities.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::PgStatStatements { updates, removals } => {
-                    if let Some(DataBlock::PgStatStatements(stmts)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgStatStatements(_)))
-                    {
-                        stmts.retain(|s| !removals.contains(&s.queryid));
-                        for update in updates {
-                            if let Some(existing) =
-                                stmts.iter_mut().find(|s| s.queryid == update.queryid)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                stmts.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::PgStatDatabase { updates, removals } => {
-                    if let Some(DataBlock::PgStatDatabase(dbs)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgStatDatabase(_)))
-                    {
-                        dbs.retain(|d| !removals.contains(&d.datid));
-                        for update in updates {
-                            if let Some(existing) = dbs.iter_mut().find(|d| d.datid == update.datid)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                dbs.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::PgStatUserTables { updates, removals } => {
-                    if let Some(DataBlock::PgStatUserTables(tables)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgStatUserTables(_)))
-                    {
-                        tables.retain(|t| !removals.contains(&t.relid));
-                        for update in updates {
-                            if let Some(existing) =
-                                tables.iter_mut().find(|t| t.relid == update.relid)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                tables.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::PgStatUserIndexes { updates, removals } => {
-                    if let Some(DataBlock::PgStatUserIndexes(indexes)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgStatUserIndexes(_)))
-                    {
-                        indexes.retain(|i| !removals.contains(&i.indexrelid));
-                        for update in updates {
-                            if let Some(existing) = indexes
-                                .iter_mut()
-                                .find(|i| i.indexrelid == update.indexrelid)
-                            {
-                                *existing = update.clone();
-                            } else {
-                                indexes.push(update.clone());
-                            }
-                        }
-                    }
-                }
-                DataBlockDiff::PgLockTree { updates, removals } => {
-                    if let Some(DataBlock::PgLockTree(nodes)) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgLockTree(_)))
-                    {
-                        nodes.retain(|n| !removals.contains(&n.pid));
-                        for update in updates {
-                            if let Some(existing) = nodes.iter_mut().find(|n| n.pid == update.pid) {
-                                *existing = update.clone();
-                            } else {
-                                nodes.push(update.clone());
-                            }
-                        }
-                    } else if !updates.is_empty() {
-                        new_blocks.push(DataBlock::PgLockTree(updates.clone()));
-                    }
-                }
-                DataBlockDiff::SystemPsi(psi) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemPsi(_)))
-                    {
-                        *block = DataBlock::SystemPsi(psi.clone());
-                    }
-                }
-                DataBlockDiff::SystemVmstat(vmstat) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemVmstat(_)))
-                    {
-                        *block = DataBlock::SystemVmstat(vmstat.clone());
-                    }
-                }
-                DataBlockDiff::PgStatBgwriter(bgw) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::PgStatBgwriter(_)))
-                    {
-                        *block = DataBlock::PgStatBgwriter(bgw.clone());
-                    }
-                }
-                DataBlockDiff::SystemFile(file) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemFile(_)))
-                    {
-                        *block = DataBlock::SystemFile(file.clone());
-                    }
-                }
-                DataBlockDiff::SystemStat(stat) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemStat(_)))
-                    {
-                        *block = DataBlock::SystemStat(stat.clone());
-                    }
-                }
-                DataBlockDiff::SystemNetSnmp(snmp) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::SystemNetSnmp(_)))
-                    {
-                        *block = DataBlock::SystemNetSnmp(snmp.clone());
-                    }
-                }
-                DataBlockDiff::Cgroup(cgroup) => {
-                    if let Some(block) = new_blocks
-                        .iter_mut()
-                        .find(|b| matches!(b, DataBlock::Cgroup(_)))
-                    {
-                        *block = DataBlock::Cgroup(cgroup.clone());
-                    }
-                }
-            }
-        }
-
-        Snapshot {
-            timestamp,
-            blocks: new_blocks,
-        }
     }
 
     /// Returns the number of snapshots in the WAL (unflushed).
@@ -1610,6 +609,8 @@ impl StorageManager {
                 && file_date < retention_limit
             {
                 std::fs::remove_file(&file.path)?;
+                // Also remove .meta sidecar if it exists
+                let _ = std::fs::remove_file(crate::storage::ChunkMetadata::meta_path(&file.path));
                 result.files_removed_by_age += 1;
                 result.bytes_freed += file.size;
                 continue;
@@ -1624,6 +625,8 @@ impl StorageManager {
         while total_size > config.max_total_size && !remaining_files.is_empty() {
             let file = remaining_files.remove(0);
             std::fs::remove_file(&file.path)?;
+            // Also remove .meta sidecar if it exists
+            let _ = std::fs::remove_file(crate::storage::ChunkMetadata::meta_path(&file.path));
             result.files_removed_by_size += 1;
             result.bytes_freed += file.size;
             total_size -= file.size;
@@ -1686,11 +689,12 @@ pub struct RotationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::chunk_v2::ChunkReader;
     use crate::storage::model::ProcessInfo;
     use tempfile::tempdir;
 
     #[test]
-    fn test_storage_manager_delta_efficiency() {
+    fn test_storage_manager_v2_round_trip() {
         let dir = tempdir().unwrap();
         let mut manager = StorageManager::new(dir.path());
         manager.chunk_size_limit = 2;
@@ -1705,7 +709,6 @@ mod tests {
             }])],
         };
 
-        // Same snapshot, should result in a small Delta::Diff
         let s2 = Snapshot {
             timestamp: 110,
             blocks: s1.blocks.clone(),
@@ -1714,7 +717,7 @@ mod tests {
         manager.add_snapshot(s1, &StringInterner::new());
         manager.add_snapshot(s2, &StringInterner::new());
 
-        // At this point it should have flushed
+        // At this point it should have flushed to a v2 chunk file
         let entries: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
@@ -1722,23 +725,22 @@ mod tests {
             .collect();
         assert!(!entries.is_empty());
 
-        // Check content of the chunk
+        // Read back via ChunkReader (v2 format)
         let chunk_path = entries[0].path();
-        let data = std::fs::read(chunk_path).unwrap();
-        let chunk = Chunk::decompress(&data).unwrap();
+        let reader = ChunkReader::open(&chunk_path).unwrap();
+        assert_eq!(reader.snapshot_count(), 2);
 
-        assert_eq!(chunk.deltas.len(), 2);
-        assert!(matches!(chunk.deltas[0], Delta::Full(_)));
-        assert!(matches!(chunk.deltas[1], Delta::Diff { .. }));
-
-        if let Delta::Diff { blocks, .. } = &chunk.deltas[1] {
-            if let DataBlockDiff::Processes { updates, removals } = &blocks[0] {
-                assert!(updates.is_empty());
-                assert!(removals.is_empty());
-            } else {
-                panic!("Expected DataBlockDiff::Processes");
-            }
+        let loaded_s1 = reader.read_snapshot(0).unwrap();
+        assert_eq!(loaded_s1.timestamp, 100);
+        if let DataBlock::Processes(procs) = &loaded_s1.blocks[0] {
+            assert_eq!(procs.len(), 1);
+            assert_eq!(procs[0].pid, 1);
+        } else {
+            panic!("Expected DataBlock::Processes");
         }
+
+        let loaded_s2 = reader.read_snapshot(1).unwrap();
+        assert_eq!(loaded_s2.timestamp, 110);
     }
 
     #[test]
@@ -1771,7 +773,9 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_manager_pg_delta_efficiency() {
+    fn test_storage_manager_v2_pg_round_trip() {
+        use crate::storage::model::PgStatActivityInfo;
+
         let dir = tempdir().unwrap();
         let mut manager = StorageManager::new(dir.path());
         manager.chunk_size_limit = 2;
@@ -1785,7 +789,6 @@ mod tests {
             }])],
         };
 
-        // Snapshot with query changed
         let s2 = Snapshot {
             timestamp: 110,
             blocks: vec![DataBlock::PgStatActivity(vec![PgStatActivityInfo {
@@ -1805,25 +808,30 @@ mod tests {
             .collect();
         assert!(!entries.is_empty());
 
-        let data = std::fs::read(entries[0].path()).unwrap();
-        let chunk = Chunk::decompress(&data).unwrap();
+        let reader = ChunkReader::open(&entries[0].path()).unwrap();
+        assert_eq!(reader.snapshot_count(), 2);
 
-        assert_eq!(chunk.deltas.len(), 2);
-        if let Delta::Diff { blocks, .. } = &chunk.deltas[1] {
-            if let DataBlockDiff::PgStatActivity { updates, removals } = &blocks[0] {
-                assert_eq!(updates.len(), 1);
-                assert_eq!(updates[0].query_hash, 666);
-                assert!(removals.is_empty());
-            } else {
-                panic!("Expected DataBlockDiff::PgStatActivity");
-            }
+        // First snapshot has query_hash=555
+        let loaded_s1 = reader.read_snapshot(0).unwrap();
+        if let DataBlock::PgStatActivity(acts) = &loaded_s1.blocks[0] {
+            assert_eq!(acts[0].query_hash, 555);
         } else {
-            panic!("Expected Delta::Diff");
+            panic!("Expected PgStatActivity");
+        }
+
+        // Second snapshot has query_hash=666
+        let loaded_s2 = reader.read_snapshot(1).unwrap();
+        if let DataBlock::PgStatActivity(acts) = &loaded_s2.blocks[0] {
+            assert_eq!(acts[0].query_hash, 666);
+        } else {
+            panic!("Expected PgStatActivity");
         }
     }
 
     #[test]
-    fn test_storage_manager_system_delta_efficiency() {
+    fn test_storage_manager_v2_system_round_trip() {
+        use crate::storage::model::{SystemCpuInfo, SystemLoadInfo};
+
         let dir = tempdir().unwrap();
         let mut manager = StorageManager::new(dir.path());
         manager.chunk_size_limit = 2;
@@ -1848,11 +856,11 @@ mod tests {
             blocks: vec![
                 DataBlock::SystemCpu(vec![SystemCpuInfo {
                     cpu_id: -1,
-                    user: 110, // changed
+                    user: 110,
                     ..SystemCpuInfo::default()
                 }]),
                 DataBlock::SystemLoad(SystemLoadInfo {
-                    lavg1: 0.2, // changed
+                    lavg1: 0.2,
                     ..SystemLoadInfo::default()
                 }),
             ],
@@ -1866,25 +874,22 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "zst"))
             .collect();
-        let data = std::fs::read(entries[0].path()).unwrap();
-        let chunk = Chunk::decompress(&data).unwrap();
+        assert!(!entries.is_empty());
 
-        assert_eq!(chunk.deltas.len(), 2);
-        if let Delta::Diff { blocks, .. } = &chunk.deltas[1] {
-            assert_eq!(blocks.len(), 2);
-            if let DataBlockDiff::SystemCpu { updates, .. } = &blocks[0] {
-                assert_eq!(updates.len(), 1);
-                assert_eq!(updates[0].user, 110);
-            } else {
-                panic!("Expected SystemCpu diff");
-            }
-            if let DataBlockDiff::SystemLoad(load) = &blocks[1] {
-                assert_eq!(load.lavg1, 0.2);
-            } else {
-                panic!("Expected SystemLoad diff");
-            }
+        let reader = ChunkReader::open(&entries[0].path()).unwrap();
+        assert_eq!(reader.snapshot_count(), 2);
+
+        // Second snapshot has updated values
+        let loaded_s2 = reader.read_snapshot(1).unwrap();
+        if let DataBlock::SystemCpu(cpus) = &loaded_s2.blocks[0] {
+            assert_eq!(cpus[0].user, 110);
         } else {
-            panic!("Expected Delta::Diff");
+            panic!("Expected SystemCpu");
+        }
+        if let DataBlock::SystemLoad(load) = &loaded_s2.blocks[1] {
+            assert_eq!(load.lavg1, 0.2);
+        } else {
+            panic!("Expected SystemLoad");
         }
     }
 
@@ -2016,6 +1021,7 @@ mod tests {
 
     #[test]
     fn test_load_all_snapshots_includes_wal() {
+        use crate::storage::model::SystemLoadInfo;
         let dir = tempdir().unwrap();
         let mut manager = StorageManager::new(dir.path());
         manager.chunk_size_limit = 100; // Large limit to prevent auto-flush
@@ -2058,6 +1064,7 @@ mod tests {
 
     #[test]
     fn test_load_all_snapshots_combines_chunks_and_wal() {
+        use crate::storage::model::SystemLoadInfo;
         let dir = tempdir().unwrap();
         let mut manager = StorageManager::new(dir.path());
         manager.chunk_size_limit = 2; // Small limit to trigger flush

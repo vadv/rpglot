@@ -710,17 +710,6 @@ fn reconvert_current(inner: &mut WebAppInner) {
     inner.prev_snapshot = prev_adjacent;
     inner.raw_snapshot = Some(snapshot);
     inner.current_snapshot = Some(Arc::new(api_snapshot));
-
-    // Drop cached chunk before releasing memory — the batch of snapshot reads is done,
-    // chunk data is no longer needed. Then tell jemalloc to return freed pages to OS.
-    if let Some(hp) = inner
-        .provider
-        .as_any_mut()
-        .and_then(|a| a.downcast_mut::<HistoryProvider>())
-    {
-        hp.drop_cache();
-    }
-    release_memory_to_os();
 }
 
 /// Seed PGS prev_sample state from a snapshot (for rate computation after jump).
