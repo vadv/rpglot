@@ -1,20 +1,77 @@
 //! History data provider with lazy snapshot loading.
 //!
-//! Only chunk metadata (timestamps, counts, file paths) and the merged StringInterner
-//! are kept in RAM permanently. Snapshot data is loaded on demand from .zst chunk files
-//! through an LRU cache, keeping memory usage bounded regardless of history size.
+//! Only chunk metadata (timestamps, counts, file paths) is kept in RAM permanently.
+//! Snapshot data and per-chunk StringInterners are loaded on demand from disk.
+//! A single-chunk cache avoids repeated decompression when multiple snapshots
+//! are requested from the same chunk (common during reconvert_current).
+//! The cache is explicitly dropped after each batch via `drop_cache()`.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use tracing::warn;
 
 use crate::storage::model::Snapshot;
-use crate::storage::{Chunk, StorageManager, StringInterner};
+use crate::storage::{Chunk, ChunkMetadata, StorageManager, StringInterner};
 
 use super::{ProviderError, SnapshotProvider};
+
+// ============================================================
+// SingleChunkCache — cache for one decompressed chunk
+// ============================================================
+
+/// Cache holding a single decompressed chunk to avoid repeated decompression
+/// when multiple snapshots are requested from the same chunk (e.g. during
+/// `reconvert_current` which reads current + prev + PGS lookback).
+struct SingleChunkCache {
+    chunk_idx: usize,
+    chunk: Chunk,
+}
+
+impl SingleChunkCache {
+    /// Get or load the chunk at `chunk_idx`. Returns a reference to the cached Chunk.
+    /// If a different chunk was cached, it is dropped first.
+    fn get_or_load(
+        cache: &mut Option<Self>,
+        chunk_idx: usize,
+        meta: &ChunkMeta,
+    ) -> Result<(), ProviderError> {
+        if let Some(c) = cache.as_ref()
+            && c.chunk_idx == chunk_idx
+        {
+            return Ok(());
+        }
+        // Drop old cache entry (if any) before loading new one
+        *cache = None;
+
+        if !meta.available {
+            return Err(ProviderError::Io(format!(
+                "Chunk file no longer available: {}",
+                meta.path.display()
+            )));
+        }
+
+        let data = std::fs::read(&meta.path).map_err(|e| {
+            ProviderError::Io(format!(
+                "Failed to read chunk {}: {}",
+                meta.path.display(),
+                e
+            ))
+        })?;
+
+        let chunk = Chunk::decompress(&data).map_err(|e| {
+            ProviderError::Io(format!(
+                "Failed to decompress chunk {}: {}",
+                meta.path.display(),
+                e
+            ))
+        })?;
+        // `data` (compressed bytes) dropped here
+
+        *cache = Some(Self { chunk_idx, chunk });
+        Ok(())
+    }
+}
 
 // ============================================================
 // ChunkMeta — metadata about one chunk file on disk
@@ -73,126 +130,39 @@ impl WalIndex {
             WalSource::InMemory { snapshots } => snapshots.get(idx).cloned(),
         }
     }
-}
 
-// ============================================================
-// ChunkCache — LRU cache of reconstructed snapshots
-// ============================================================
-
-struct CachedChunk {
-    snapshots: Vec<Snapshot>,
-    last_accessed: Instant,
-}
-
-struct ChunkCache {
-    cache: HashMap<usize, CachedChunk>, // chunk_index → cached data
-    max_chunks: usize,
-}
-
-impl ChunkCache {
-    fn new(max_chunks: usize) -> Self {
-        Self {
-            cache: HashMap::new(),
-            max_chunks,
-        }
-    }
-
-    /// Get a snapshot from the cache, loading the chunk from disk if needed.
-    fn get_snapshot(
-        &mut self,
-        chunk_idx: usize,
-        offset_in_chunk: usize,
-        meta: &ChunkMeta,
-    ) -> Result<&Snapshot, ProviderError> {
-        // Load chunk if not cached
-        if !self.cache.contains_key(&chunk_idx) {
-            if !meta.available {
-                return Err(ProviderError::Io(format!(
-                    "Chunk file no longer available: {}",
-                    meta.path.display()
-                )));
+    fn load_snapshot_with_interner(&self, idx: usize) -> Option<(Snapshot, StringInterner)> {
+        match &self.source {
+            WalSource::File { path, entries } => {
+                let entry = entries.get(idx)?;
+                StorageManager::load_wal_snapshot_with_interner(
+                    path,
+                    entry.byte_offset,
+                    entry.byte_length,
+                )
+                .ok()
             }
-            self.load_chunk(chunk_idx, meta)?;
-        }
-
-        let cached = self.cache.get_mut(&chunk_idx).unwrap();
-        cached.last_accessed = Instant::now();
-
-        cached.snapshots.get(offset_in_chunk).ok_or_else(|| {
-            ProviderError::Io(format!(
-                "Offset {} out of range for chunk {} (has {} snapshots)",
-                offset_in_chunk,
-                meta.path.display(),
-                cached.snapshots.len()
-            ))
-        })
-    }
-
-    fn load_chunk(&mut self, chunk_idx: usize, meta: &ChunkMeta) -> Result<(), ProviderError> {
-        // Evict if at capacity
-        while self.cache.len() >= self.max_chunks {
-            self.evict_oldest();
-        }
-
-        let data = std::fs::read(&meta.path).map_err(|e| {
-            ProviderError::Io(format!(
-                "Failed to read chunk {}: {}",
-                meta.path.display(),
-                e
-            ))
-        })?;
-
-        let chunk = Chunk::decompress(&data).map_err(|e| {
-            ProviderError::Io(format!(
-                "Failed to decompress chunk {}: {}",
-                meta.path.display(),
-                e
-            ))
-        })?;
-
-        let snapshots = StorageManager::reconstruct_snapshots_from_chunk(&chunk).map_err(|e| {
-            ProviderError::Io(format!(
-                "Failed to reconstruct chunk {}: {}",
-                meta.path.display(),
-                e
-            ))
-        })?;
-
-        self.cache.insert(
-            chunk_idx,
-            CachedChunk {
-                snapshots,
-                last_accessed: Instant::now(),
-            },
-        );
-
-        Ok(())
-    }
-
-    fn evict_oldest(&mut self) {
-        if let Some((&oldest_key, _)) = self.cache.iter().min_by_key(|(_, v)| v.last_accessed) {
-            self.cache.remove(&oldest_key);
+            WalSource::InMemory { snapshots } => snapshots
+                .get(idx)
+                .map(|s| (s.clone(), StringInterner::new())),
         }
     }
 }
 
 // ============================================================
-// HistoryProvider — lazy loading with LRU chunk cache
+// HistoryProvider — lazy loading, no cache
 // ============================================================
 
 /// Provider for historical data from storage files.
 ///
-/// Only metadata and the merged StringInterner are kept in RAM permanently.
-/// Snapshot data is loaded on demand from .zst chunk files through an LRU cache.
+/// Only metadata (timestamps, chunk paths) is kept in RAM permanently.
+/// Snapshot data and per-chunk interners are loaded on demand from disk —
+/// no cache, minimal memory footprint.
 pub struct HistoryProvider {
     /// Metadata for each chunk file, sorted by timestamp.
     chunks: Vec<ChunkMeta>,
     /// WAL (unflushed) snapshots — lazy loaded from file.
     wal: Option<WalIndex>,
-    /// Merged interner from all chunks + WAL.
-    interner: StringInterner,
-    /// LRU cache of reconstructed chunk snapshots.
-    cache: ChunkCache,
     /// Current cursor position (global, 0-based).
     cursor: usize,
     /// Total number of snapshots across all chunks + WAL.
@@ -201,6 +171,11 @@ pub struct HistoryProvider {
     timestamps: Vec<i64>,
     /// Internal snapshot buffer (for SnapshotProvider::current() → &Snapshot).
     current_buffer: Option<Snapshot>,
+    /// Per-chunk/WAL interner for the currently buffered snapshot.
+    current_interner: Option<StringInterner>,
+    /// Single-chunk cache: keeps last decompressed chunk to avoid repeated
+    /// decompression when multiple snapshots are requested from the same chunk.
+    chunk_cache: Option<SingleChunkCache>,
 
     last_error: Option<ProviderError>,
 }
@@ -208,10 +183,10 @@ pub struct HistoryProvider {
 impl HistoryProvider {
     /// Creates a new history provider by scanning chunk files at the given path.
     ///
-    /// Only metadata and the merged interner are loaded into RAM.
-    /// Snapshot data is loaded lazily on demand.
+    /// Only metadata (timestamps, chunk paths) is loaded into RAM.
+    /// Snapshot data and interners are loaded lazily on demand.
     pub fn from_path(storage_path: impl AsRef<Path>) -> Result<Self, ProviderError> {
-        let (chunks, wal, interner, total, timestamps) = Self::build_index(storage_path.as_ref())?;
+        let (chunks, wal, total, timestamps) = Self::build_index(storage_path.as_ref())?;
 
         if total == 0 {
             return Err(ProviderError::Io(
@@ -222,12 +197,12 @@ impl HistoryProvider {
         let mut provider = Self {
             chunks,
             wal,
-            interner,
-            cache: ChunkCache::new(2),
             cursor: 0,
             total_snapshots: total,
             timestamps,
             current_buffer: None,
+            current_interner: None,
+            chunk_cache: None,
             last_error: None,
         };
 
@@ -279,12 +254,12 @@ impl HistoryProvider {
         Ok(Self {
             chunks: Vec::new(),
             wal: Some(wal),
-            interner: StringInterner::new(),
-            cache: ChunkCache::new(2),
             cursor: 0,
             total_snapshots: total,
             timestamps,
             current_buffer: Some(first_snapshot),
+            current_interner: Some(StringInterner::new()),
+            chunk_cache: None,
             last_error: None,
         })
     }
@@ -292,19 +267,13 @@ impl HistoryProvider {
     /// Build the chunk index by scanning .zst files and WAL.
     ///
     /// For each chunk file: decompress, extract metadata (timestamps, count),
-    /// merge interner, then drop the chunk data. Peak RAM = one chunk at a time.
+    /// then drop the chunk data. Interners are NOT merged — each chunk's interner
+    /// is loaded on demand together with its snapshots via the LRU cache.
+    /// Peak RAM = one chunk at a time.
+    #[allow(clippy::type_complexity)]
     fn build_index(
         storage_path: &Path,
-    ) -> Result<
-        (
-            Vec<ChunkMeta>,
-            Option<WalIndex>,
-            StringInterner,
-            usize,
-            Vec<i64>,
-        ),
-        ProviderError,
-    > {
+    ) -> Result<(Vec<ChunkMeta>, Option<WalIndex>, usize, Vec<i64>), ProviderError> {
         let mut chunk_paths: Vec<PathBuf> = Vec::new();
 
         // Collect .zst file paths
@@ -324,37 +293,45 @@ impl HistoryProvider {
         chunk_paths.sort();
 
         let mut chunks: Vec<ChunkMeta> = Vec::with_capacity(chunk_paths.len());
-        let mut merged_interner = StringInterner::new();
         let mut all_timestamps: Vec<i64> = Vec::new();
         let mut global_offset: usize = 0;
 
-        // Scan each chunk file: load → extract metadata → merge interner → drop
+        // Scan each chunk file: prefer .meta sidecar, fallback to decompression
         for path in chunk_paths {
-            let data = std::fs::read(&path).map_err(|e| {
-                ProviderError::Io(format!("Failed to read chunk {}: {}", path.display(), e))
-            })?;
+            let meta_path = ChunkMetadata::meta_path(&path);
+            let (snapshot_count, chunk_timestamps) =
+                if let Ok(meta) = ChunkMetadata::load(&meta_path) {
+                    // Fast path: read compact .meta file (tens of bytes)
+                    (meta.snapshot_count, meta.timestamps)
+                } else {
+                    // Fallback: decompress .zst (for old files without .meta)
+                    let data = std::fs::read(&path).map_err(|e| {
+                        ProviderError::Io(format!("Failed to read chunk {}: {}", path.display(), e))
+                    })?;
+                    let chunk = Chunk::decompress(&data).map_err(|e| {
+                        ProviderError::Io(format!(
+                            "Failed to decompress chunk {}: {}",
+                            path.display(),
+                            e
+                        ))
+                    })?;
+                    let ts: Vec<i64> = chunk.deltas.iter().map(|d| d.timestamp()).collect();
+                    let count = ts.len();
+                    // Write .meta for future starts
+                    let meta = ChunkMetadata {
+                        snapshot_count: count,
+                        timestamps: ts.clone(),
+                    };
+                    let _ = meta.save(&meta_path);
+                    (count, ts)
+                    // chunk dropped here — RAM freed
+                };
 
-            let chunk = Chunk::decompress(&data).map_err(|e| {
-                ProviderError::Io(format!(
-                    "Failed to decompress chunk {}: {}",
-                    path.display(),
-                    e
-                ))
-            })?;
-
-            // Extract metadata from deltas without reconstructing snapshots
-            let snapshot_count = chunk.deltas.len();
             if snapshot_count == 0 {
                 continue;
             }
 
-            // Collect all timestamps from this chunk
-            for delta in &chunk.deltas {
-                all_timestamps.push(delta.timestamp());
-            }
-
-            // Merge interner
-            merged_interner.merge(&chunk.interner);
+            all_timestamps.extend_from_slice(&chunk_timestamps);
 
             chunks.push(ChunkMeta {
                 path,
@@ -364,16 +341,13 @@ impl HistoryProvider {
             });
 
             global_offset += snapshot_count;
-            // chunk is dropped here — only metadata + interner strings survive
         }
 
-        // Scan WAL metadata lazily — snapshots are NOT kept in memory
+        // Scan WAL metadata lazily — snapshots and interners are NOT kept in memory
         let wal = {
             let wal_path = storage_path.join("wal.log");
-            let (wal_entries, wal_interner) = StorageManager::scan_wal_metadata(&wal_path)
+            let wal_entries = StorageManager::scan_wal_metadata(&wal_path)
                 .map_err(|e| ProviderError::Io(format!("Failed to scan WAL: {}", e)))?;
-
-            merged_interner.merge(&wal_interner);
 
             if wal_entries.is_empty() {
                 None
@@ -407,7 +381,7 @@ impl HistoryProvider {
         all_timestamps.sort();
         all_timestamps.dedup();
 
-        Ok((chunks, wal, merged_interner, total, all_timestamps))
+        Ok((chunks, wal, total, all_timestamps))
     }
 
     /// Resolve a global position to (chunk_index, offset_in_chunk) or WAL index.
@@ -417,14 +391,14 @@ impl HistoryProvider {
         }
 
         // Check WAL first (fast path for latest snapshots)
-        if let Some(ref wal) = self.wal {
-            if position >= wal.global_offset {
-                let wal_idx = position - wal.global_offset;
-                if wal_idx < wal.len() {
-                    return Some(SnapshotLocation::Wal(wal_idx));
-                }
-                return None;
+        if let Some(ref wal) = self.wal
+            && position >= wal.global_offset
+        {
+            let wal_idx = position - wal.global_offset;
+            if wal_idx < wal.len() {
+                return Some(SnapshotLocation::Wal(wal_idx));
             }
+            return None;
         }
 
         // Binary search in chunks by global_offset
@@ -447,35 +421,74 @@ impl HistoryProvider {
         None
     }
 
-    /// Load snapshot at global position into the internal buffer.
+    /// Load a single snapshot + interner from a chunk, using the single-chunk cache.
+    /// If the requested chunk is already cached, no disk I/O or decompression occurs.
+    fn load_from_chunk_cached(
+        chunk_cache: &mut Option<SingleChunkCache>,
+        chunks: &mut [ChunkMeta],
+        chunk_idx: usize,
+        offset_in_chunk: usize,
+    ) -> Result<(Snapshot, StringInterner), ProviderError> {
+        SingleChunkCache::get_or_load(chunk_cache, chunk_idx, &chunks[chunk_idx])?;
+
+        let cached = chunk_cache.as_ref().unwrap();
+
+        let snapshot = StorageManager::reconstruct_snapshot_at(&cached.chunk, offset_in_chunk)
+            .map_err(|e| {
+                ProviderError::Io(format!(
+                    "Failed to reconstruct snapshot at offset {} in {}: {}",
+                    offset_in_chunk,
+                    chunks[chunk_idx].path.display(),
+                    e
+                ))
+            })?;
+
+        let interner = cached.chunk.interner.clone();
+
+        Ok((snapshot, interner))
+    }
+
+    /// Load snapshot at global position into the internal buffer,
+    /// along with the per-chunk/WAL interner for string resolution.
     fn load_into_buffer(&mut self, position: usize) {
-        let snapshot = match self.resolve_position(position) {
+        let (snapshot, interner) = match self.resolve_position(position) {
             Some(SnapshotLocation::Wal(wal_idx)) => {
-                self.wal.as_ref().and_then(|w| w.load_snapshot(wal_idx))
+                match self
+                    .wal
+                    .as_ref()
+                    .and_then(|w| w.load_snapshot_with_interner(wal_idx))
+                {
+                    Some((s, i)) => (Some(s), Some(i)),
+                    None => (None, None),
+                }
             }
             Some(SnapshotLocation::Chunk {
                 chunk_idx,
                 offset_in_chunk,
             }) => {
-                let meta = &self.chunks[chunk_idx];
-                match self.cache.get_snapshot(chunk_idx, offset_in_chunk, meta) {
-                    Ok(s) => Some(s.clone()),
+                match Self::load_from_chunk_cached(
+                    &mut self.chunk_cache,
+                    &mut self.chunks,
+                    chunk_idx,
+                    offset_in_chunk,
+                ) {
+                    Ok((s, i)) => (Some(s), Some(i)),
                     Err(e) => {
-                        // File may have been deleted (rotation)
                         warn!(error = %e, position, "failed to load snapshot");
-                        // Mark chunk as unavailable
                         self.chunks[chunk_idx].available = false;
-                        None
+                        (None, None)
                     }
                 }
             }
-            None => None,
+            None => (None, None),
         };
 
         self.current_buffer = snapshot;
+        self.current_interner = interner;
     }
 
     /// Get a cloned snapshot at the given position (for external use).
+    /// Uses single-chunk cache to avoid repeated decompression.
     fn snapshot_cloned(&mut self, position: usize) -> Option<Snapshot> {
         match self.resolve_position(position) {
             Some(SnapshotLocation::Wal(wal_idx)) => {
@@ -485,9 +498,13 @@ impl HistoryProvider {
                 chunk_idx,
                 offset_in_chunk,
             }) => {
-                let meta = &self.chunks[chunk_idx];
-                match self.cache.get_snapshot(chunk_idx, offset_in_chunk, meta) {
-                    Ok(s) => Some(s.clone()),
+                match Self::load_from_chunk_cached(
+                    &mut self.chunk_cache,
+                    &mut self.chunks,
+                    chunk_idx,
+                    offset_in_chunk,
+                ) {
+                    Ok((s, _interner)) => Some(s),
                     Err(e) => {
                         warn!(error = %e, position, "failed to load snapshot");
                         self.chunks[chunk_idx].available = false;
@@ -509,6 +526,13 @@ impl HistoryProvider {
     /// Returns true if there are no snapshots.
     pub fn is_empty(&self) -> bool {
         self.total_snapshots == 0
+    }
+
+    /// Drops the cached decompressed chunk, freeing its memory.
+    /// Call this after a batch of snapshot reads (e.g. after reconvert_current)
+    /// to release RAM back to the allocator.
+    pub fn drop_cache(&mut self) {
+        self.chunk_cache = None;
     }
 
     /// Returns the current cursor position (0-indexed).
@@ -580,33 +604,42 @@ impl HistoryProvider {
                 continue;
             }
 
-            // New chunk file discovered
-            let data = match std::fs::read(path) {
-                Ok(d) => d,
-                Err(e) => {
-                    warn!(path = %path.display(), error = %e, "failed to read new chunk");
-                    continue;
-                }
+            // New chunk file discovered — prefer .meta sidecar
+            let meta_path = ChunkMetadata::meta_path(path);
+            let (snapshot_count, chunk_timestamps) = if let Ok(meta) =
+                ChunkMetadata::load(&meta_path)
+            {
+                (meta.snapshot_count, meta.timestamps)
+            } else {
+                let data = match std::fs::read(path) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        warn!(path = %path.display(), error = %e, "failed to read new chunk");
+                        continue;
+                    }
+                };
+                let chunk = match Chunk::decompress(&data) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!(path = %path.display(), error = %e, "failed to decompress new chunk");
+                        continue;
+                    }
+                };
+                let ts: Vec<i64> = chunk.deltas.iter().map(|d| d.timestamp()).collect();
+                let count = ts.len();
+                let meta = ChunkMetadata {
+                    snapshot_count: count,
+                    timestamps: ts.clone(),
+                };
+                let _ = meta.save(&meta_path);
+                (count, ts)
             };
 
-            let chunk = match Chunk::decompress(&data) {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!(path = %path.display(), error = %e, "failed to decompress new chunk");
-                    continue;
-                }
-            };
-
-            let snapshot_count = chunk.deltas.len();
             if snapshot_count == 0 {
                 continue;
             }
 
-            for delta in &chunk.deltas {
-                new_timestamps.push(delta.timestamp());
-            }
-
-            self.interner.merge(&chunk.interner);
+            new_timestamps.extend_from_slice(&chunk_timestamps);
 
             self.chunks.push(ChunkMeta {
                 path: path.clone(),
@@ -629,10 +662,8 @@ impl HistoryProvider {
 
         // Reload WAL metadata lazily
         let wal_path = storage_path.join("wal.log");
-        let (wal_entries, wal_interner) = StorageManager::scan_wal_metadata(&wal_path)
+        let wal_entries = StorageManager::scan_wal_metadata(&wal_path)
             .map_err(|e| ProviderError::Io(format!("Failed to scan WAL: {}", e)))?;
-
-        self.interner.merge(&wal_interner);
 
         if wal_entries.is_empty() {
             self.wal = None;
@@ -760,7 +791,7 @@ impl SnapshotProvider for HistoryProvider {
     }
 
     fn interner(&self) -> Option<&StringInterner> {
-        Some(&self.interner)
+        self.current_interner.as_ref()
     }
 }
 

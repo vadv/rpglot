@@ -12,6 +12,13 @@
 //!   rpglot -r -b -1h    # history mode starting from 1 hour ago
 //!   rpglot -r -b 07:00  # history mode starting from today 07:00 UTC
 
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 use std::thread;
 use std::time::Duration;
 

@@ -1,3 +1,28 @@
+#[cfg(not(target_env = "msvc"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+/// Releases unused memory back to the operating system.
+/// Uses jemalloc's arena purge to reduce RSS after memory-intensive operations.
+#[cfg(not(target_env = "msvc"))]
+fn release_memory_to_os() {
+    unsafe {
+        tikv_jemalloc_sys::mallctl(
+            c"arena.0.purge".as_ptr().cast(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
+}
+
+#[cfg(target_env = "msvc")]
+fn release_memory_to_os() {}
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -16,7 +41,7 @@ use std::sync::Mutex;
 use tokio::sync::broadcast;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -84,6 +109,27 @@ struct Args {
     /// Basic Auth password.
     #[arg(long, env = "RPGLOT_AUTH_PASSWORD")]
     auth_password: Option<String>,
+
+    /// SSO proxy URL for token acquisition (enables SSO when set).
+    #[arg(long, env = "RPGLOT_SSO_PROXY_URL")]
+    sso_proxy_url: Option<String>,
+
+    /// Path to PEM file with public key for JWT signature verification.
+    #[arg(long, env = "RPGLOT_SSO_PROXY_KEY_FILE")]
+    sso_proxy_key_file: Option<PathBuf>,
+
+    /// Comma-separated list of accepted JWT audience values.
+    #[arg(long, env = "RPGLOT_SSO_PROXY_AUDIENCE", value_delimiter = ',')]
+    sso_proxy_audience: Vec<String>,
+
+    /// Comma-separated list of allowed usernames, or "*" for any authenticated user.
+    #[arg(
+        long,
+        env = "RPGLOT_SSO_PROXY_ALLOWED_USERS",
+        default_value = "*",
+        value_delimiter = ','
+    )]
+    sso_proxy_allowed_users: Vec<String>,
 }
 
 // ============================================================
@@ -126,6 +172,22 @@ struct WebAppInner {
 type SharedState = Arc<Mutex<WebAppInner>>;
 
 // ============================================================
+// SSO configuration
+// ============================================================
+
+enum AllowedUsers {
+    Any,
+    List(std::collections::HashSet<String>),
+}
+
+struct SsoConfig {
+    proxy_url: String,
+    decoding_key: jsonwebtoken::DecodingKey,
+    validation: jsonwebtoken::Validation,
+    allowed_users: AllowedUsers,
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -135,7 +197,7 @@ fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "rpglot_web=info,tower_http=info".parse().unwrap()),
+                .unwrap_or_else(|_| "rpglot_web=info".parse().unwrap()),
         )
         .init();
 
@@ -147,6 +209,7 @@ fn main() {
 }
 
 async fn async_main(args: Args) {
+    #[allow(clippy::type_complexity)]
     let (provider, mode, total_snapshots, history_start, history_end): (
         Box<dyn SnapshotProvider + Send>,
         Mode,
@@ -154,8 +217,9 @@ async fn async_main(args: Args) {
         Option<i64>,
         Option<i64>,
     ) = if let Some(ref history_path) = args.history {
-        info!(path = %history_path.display(), "starting in history mode");
+        info!(version = env!("CARGO_PKG_VERSION"), path = %history_path.display(), "starting in history mode");
         let hp = HistoryProvider::from_path(history_path).expect("failed to open history data");
+        release_memory_to_os(); // free chunk decompression buffers from build_index
         let total = hp.len();
         let (start, end) = hp.timestamp_range();
         info!(snapshots = total, "loaded history data");
@@ -167,7 +231,7 @@ async fn async_main(args: Args) {
             Some(end),
         )
     } else {
-        info!("starting in live mode");
+        info!(version = env!("CARGO_PKG_VERSION"), "starting in live mode");
         let provider = create_live_provider(&args);
         (provider, Mode::Live, None, None, None)
     };
@@ -232,6 +296,57 @@ async fn async_main(args: Args) {
         _ => None,
     };
 
+    // SSO
+    let sso_config: Option<Arc<SsoConfig>> = if let Some(ref proxy_url) = args.sso_proxy_url {
+        let key_path = args
+            .sso_proxy_key_file
+            .as_ref()
+            .expect("--sso-proxy-key-file required when --sso-proxy-url is set");
+        let pem = std::fs::read(key_path).expect("failed to read SSO public key file");
+        let decoding_key =
+            jsonwebtoken::DecodingKey::from_rsa_pem(&pem).expect("invalid PEM public key");
+
+        assert!(
+            !args.sso_proxy_audience.is_empty(),
+            "--sso-proxy-audience required when --sso-proxy-url is set"
+        );
+
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+        validation.set_audience(&args.sso_proxy_audience);
+        validation.validate_exp = true;
+
+        let allowed_users = if args.sso_proxy_allowed_users == ["*"] {
+            AllowedUsers::Any
+        } else {
+            AllowedUsers::List(args.sso_proxy_allowed_users.iter().cloned().collect())
+        };
+
+        info!(
+            proxy_url,
+            audiences = ?args.sso_proxy_audience,
+            "SSO enabled"
+        );
+        Some(Arc::new(SsoConfig {
+            proxy_url: proxy_url.clone(),
+            decoding_key,
+            validation,
+            allowed_users,
+        }))
+    } else {
+        None
+    };
+
+    // SSO and Basic Auth are mutually exclusive
+    if auth_creds.is_some() && sso_config.is_some() {
+        panic!("--auth-user and --sso-proxy-url are mutually exclusive");
+    }
+
+    // SSO proxy URL and auth user for /api/v1/auth/config (accessible without auth)
+    let sso_proxy_url_for_config: Arc<Option<String>> =
+        Arc::new(sso_config.as_ref().map(|c| c.proxy_url.clone()));
+    let auth_user_for_config: Arc<Option<String>> =
+        Arc::new(auth_creds.as_ref().map(|c| c.0.clone()));
+
     // Router
     let mut app = Router::new()
         .route("/api/v1/health", get(handle_health))
@@ -239,9 +354,21 @@ async fn async_main(args: Args) {
         .route("/api/v1/snapshot", get(handle_snapshot))
         .route("/api/v1/stream", get(handle_stream))
         .route("/api/v1/timeline", get(handle_timeline))
+        .route(
+            "/api/v1/auth/config",
+            get({
+                let url = sso_proxy_url_for_config.clone();
+                let user = auth_user_for_config.clone();
+                move || handle_auth_config(url, user)
+            }),
+        )
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .fallback(get(serve_frontend))
         .with_state((state, tx));
+
+    // AccessLogLayer goes BEFORE auth layers so it wraps them and can read AuthUser extension
+    // (axum layers: last .layer() = outermost; request flows outside-in)
+    app = app.layer(AccessLogLayer);
 
     if let Some(creds) = auth_creds {
         app = app.layer(axum::middleware::from_fn_with_state(
@@ -250,9 +377,17 @@ async fn async_main(args: Args) {
         ));
     }
 
+    if let Some(sso) = sso_config {
+        app = app.layer(SsoLayer {
+            config: sso.clone(),
+        });
+    }
+
     let app = app
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new());
+
+    let app = app.into_make_service_with_connect_info::<SocketAddr>();
 
     let addr: SocketAddr = args.listen.parse().expect("invalid listen address");
     info!(%addr, "listening");
@@ -312,6 +447,7 @@ async fn tick_loop(
 
         // Run blocking provider.advance() off the async runtime
         let state_clone = state.clone();
+        let t0 = std::time::Instant::now();
         let snapshot = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
             advance_and_convert(&mut inner);
@@ -320,6 +456,22 @@ async fn tick_loop(
         .await
         .ok()
         .flatten();
+
+        let elapsed = t0.elapsed();
+        if let Some(ref snap) = snapshot {
+            debug!(
+                duration_ms = elapsed.as_millis() as u64,
+                timestamp = snap.timestamp,
+                "tick completed"
+            );
+        }
+        if elapsed > interval / 2 {
+            warn!(
+                duration_ms = elapsed.as_millis() as u64,
+                interval_ms = interval.as_millis() as u64,
+                "tick exceeded 50% of interval"
+            );
+        }
 
         if let Some(snap) = snapshot {
             let _ = tx.send(snap);
@@ -337,28 +489,47 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
 
         let state_clone = state.clone();
         let path_clone = path.clone();
+        let t0 = std::time::Instant::now();
         let result = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
             let hp = inner
                 .provider
                 .as_any_mut()
                 .and_then(|a| a.downcast_mut::<HistoryProvider>());
-            let Some(hp) = hp else { return Ok(0) };
+            let Some(hp) = hp else {
+                return Ok((0usize, 0usize));
+            };
             let added = hp.refresh(&path_clone)?;
+            let total = hp.len();
             if added > 0 {
-                let total = hp.len();
                 let (start, end) = hp.timestamp_range();
                 inner.total_snapshots = Some(total);
                 inner.history_start = Some(start);
                 inner.history_end = Some(end);
-                info!(added, total, "history refreshed");
             }
-            Ok::<usize, rpglot_core::provider::ProviderError>(added)
+            release_memory_to_os(); // free any chunk decompression buffers
+            Ok::<(usize, usize), rpglot_core::provider::ProviderError>((added, total))
         })
         .await;
 
-        if let Ok(Err(e)) = result {
-            warn!(error = %e, "history refresh failed");
+        let elapsed = t0.elapsed();
+        match result {
+            Ok(Ok((added, total))) if added > 0 => {
+                info!(
+                    added,
+                    total,
+                    duration_ms = elapsed.as_millis() as u64,
+                    "history refreshed"
+                );
+            }
+            Ok(Err(e)) => {
+                warn!(
+                    error = %e,
+                    duration_ms = elapsed.as_millis() as u64,
+                    "history refresh failed"
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -404,12 +575,14 @@ fn history_jump_to(inner: &mut WebAppInner, position: usize) -> bool {
         .provider
         .as_any_mut()
         .and_then(|a| a.downcast_mut::<HistoryProvider>());
-    if let Some(hp) = provider {
-        if hp.jump_to(position).is_some() {
-            reconvert_current(inner);
-            return true;
-        }
+    if let Some(hp) = provider
+        && hp.jump_to(position).is_some()
+    {
+        reconvert_current(inner);
+        info!(position, "history: jumped to position");
+        return true;
     }
+    warn!(position, "history: invalid position");
     false
 }
 
@@ -419,12 +592,14 @@ fn history_jump_to_timestamp(inner: &mut WebAppInner, timestamp: i64) -> bool {
         .provider
         .as_any_mut()
         .and_then(|a| a.downcast_mut::<HistoryProvider>());
-    if let Some(hp) = provider {
-        if hp.jump_to_timestamp_floor(timestamp).is_some() {
-            reconvert_current(inner);
-            return true;
-        }
+    if let Some(hp) = provider
+        && hp.jump_to_timestamp_floor(timestamp).is_some()
+    {
+        reconvert_current(inner);
+        info!(timestamp, "history: jumped to timestamp");
+        return true;
     }
+    warn!(timestamp, "history: invalid timestamp");
     false
 }
 
@@ -451,12 +626,11 @@ fn find_pgs_prev_snapshot(
     let max_lookback = 10;
     let start = pos.saturating_sub(max_lookback);
     for p in (start..pos).rev() {
-        if let Some(snap) = hp.snapshot_at(p) {
-            if let Some(ts) = extract_pgs_collected_at(&snap) {
-                if ts != current_collected_at {
-                    return Some(snap);
-                }
-            }
+        if let Some(snap) = hp.snapshot_at(p)
+            && let Some(ts) = extract_pgs_collected_at(&snap)
+            && ts != current_collected_at
+        {
+            return Some(snap);
         }
     }
     None
@@ -508,14 +682,11 @@ fn reconvert_current(inner: &mut WebAppInner) {
         // Look back further to find a snapshot with a different collected_at.
         let pgs_seed = match extract_pgs_collected_at(&snapshot) {
             Some(curr_ts) => {
-                let lookback = {
-                    let hp = inner
-                        .provider
-                        .as_any_mut()
-                        .and_then(|a| a.downcast_mut::<HistoryProvider>());
-                    hp.and_then(|hp| find_pgs_prev_snapshot(hp, position, curr_ts))
-                };
-                lookback
+                let hp = inner
+                    .provider
+                    .as_any_mut()
+                    .and_then(|a| a.downcast_mut::<HistoryProvider>());
+                hp.and_then(|hp| find_pgs_prev_snapshot(hp, position, curr_ts))
             }
             None => None,
         };
@@ -539,6 +710,17 @@ fn reconvert_current(inner: &mut WebAppInner) {
     inner.prev_snapshot = prev_adjacent;
     inner.raw_snapshot = Some(snapshot);
     inner.current_snapshot = Some(Arc::new(api_snapshot));
+
+    // Drop cached chunk before releasing memory — the batch of snapshot reads is done,
+    // chunk data is no longer needed. Then tell jemalloc to return freed pages to OS.
+    if let Some(hp) = inner
+        .provider
+        .as_any_mut()
+        .and_then(|a| a.downcast_mut::<HistoryProvider>())
+    {
+        hp.drop_cache();
+    }
+    release_memory_to_os();
 }
 
 /// Seed PGS prev_sample state from a snapshot (for rate computation after jump).
@@ -871,10 +1053,10 @@ async fn handle_snapshot(
                 if !history_jump_to(&mut inner, pos) {
                     return Err(StatusCode::BAD_REQUEST);
                 }
-            } else if let Some(ts) = query.timestamp {
-                if !history_jump_to_timestamp(&mut inner, ts) {
-                    return Err(StatusCode::BAD_REQUEST);
-                }
+            } else if let Some(ts) = query.timestamp
+                && !history_jump_to_timestamp(&mut inner, ts)
+            {
+                return Err(StatusCode::BAD_REQUEST);
             }
         }
 
@@ -980,6 +1162,17 @@ fn chrono_free_date(days_since_epoch: i64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
+static SSE_CONNECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct SseGuard;
+
+impl Drop for SseGuard {
+    fn drop(&mut self) {
+        let active = SSE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
+        info!(active_connections = active, "SSE client disconnected");
+    }
+}
+
 async fn handle_stream(
     State(state_tuple): AppState,
 ) -> Result<
@@ -994,9 +1187,13 @@ async fn handle_stream(
         }
     }
 
+    let active = SSE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    info!(active_connections = active, "SSE client connected");
+
     let mut rx = tx.subscribe();
 
     let stream = async_stream::stream! {
+        let _guard = SseGuard;
         loop {
             match rx.recv().await {
                 Ok(snapshot) => {
@@ -1053,14 +1250,259 @@ async fn serve_frontend(uri: Uri) -> axum::response::Response<Body> {
 }
 
 // ============================================================
+// Auth config endpoint (public, no auth required)
+// ============================================================
+
+#[derive(serde::Serialize)]
+struct AuthConfig {
+    sso_proxy_url: Option<String>,
+    auth_user: Option<String>,
+}
+
+async fn handle_auth_config(
+    sso_proxy_url: Arc<Option<String>>,
+    auth_user: Arc<Option<String>>,
+) -> Json<AuthConfig> {
+    Json(AuthConfig {
+        sso_proxy_url: (*sso_proxy_url).clone(),
+        auth_user: (*auth_user).clone(),
+    })
+}
+
+// ============================================================
+// SSO middleware (JWT validation)
+// ============================================================
+
+#[derive(serde::Deserialize)]
+struct SsoClaims {
+    preferred_username: Option<String>,
+    sub: Option<String>,
+}
+
+fn extract_token(req: &Request) -> Option<String> {
+    // 1. Authorization: Bearer <token>
+    if let Some(auth) = req.headers().get(header::AUTHORIZATION)
+        && let Ok(s) = auth.to_str()
+        && let Some(token) = s.strip_prefix("Bearer ")
+    {
+        return Some(token.to_owned());
+    }
+    // 2. Query param ?token=<token>
+    if let Some(query) = req.uri().query() {
+        for pair in query.split('&') {
+            if let Some(val) = pair.strip_prefix("token=") {
+                return Some(val.to_owned());
+            }
+        }
+    }
+    // 3. Cookie sso_access_token=<token>
+    if let Some(cookie_header) = req.headers().get(header::COOKIE)
+        && let Ok(s) = cookie_header.to_str()
+    {
+        for part in s.split(';') {
+            let part = part.trim();
+            if let Some(val) = part.strip_prefix("sso_access_token=") {
+                return Some(val.to_owned());
+            }
+        }
+    }
+    None
+}
+
+fn unauthorized_json() -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"error":"unauthorized"}"#))
+        .unwrap()
+}
+
+fn forbidden_json(username: &str) -> axum::response::Response {
+    let body = serde_json::json!({"error": "forbidden", "username": username}).to_string();
+    axum::response::Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .unwrap()
+}
+
+#[derive(Clone)]
+struct SsoLayer {
+    config: Arc<SsoConfig>,
+}
+
+impl<S> tower::Layer<S> for SsoLayer {
+    type Service = SsoService<S>;
+    fn layer(&self, inner: S) -> Self::Service {
+        SsoService {
+            inner,
+            config: self.config.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SsoService<S> {
+    inner: S,
+    config: Arc<SsoConfig>,
+}
+
+impl<S> tower::Service<Request> for SsoService<S>
+where
+    S: tower::Service<Request, Response = axum::response::Response> + Clone + Send + 'static,
+    S::Future: Send,
+{
+    type Response = axum::response::Response;
+    type Error = S::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: Request) -> Self::Future {
+        // Skip auth for public endpoints
+        let path = req.uri().path();
+        if path == "/api/v1/auth/config" || path == "/api/v1/health" {
+            let mut inner = self.inner.clone();
+            return Box::pin(async move { inner.call(req).await });
+        }
+        // Skip for non-API paths: static assets, index.html, favicon, etc.
+        // Frontend handles auth in JS (fetches /api/v1/auth/config, then redirects to SSO).
+        if !path.starts_with("/api/") {
+            let mut inner = self.inner.clone();
+            return Box::pin(async move { inner.call(req).await });
+        }
+
+        let config = self.config.clone();
+        let mut inner = self.inner.clone();
+        let req_path = path.to_owned();
+
+        Box::pin(async move {
+            let token = match extract_token(&req) {
+                Some(t) => t,
+                None => {
+                    warn!(path = %req_path, "SSO: no token");
+                    return Ok(unauthorized_json());
+                }
+            };
+
+            let claims = match jsonwebtoken::decode::<SsoClaims>(
+                &token,
+                &config.decoding_key,
+                &config.validation,
+            ) {
+                Ok(data) => data.claims,
+                Err(e) => {
+                    warn!(error = %e, path = %req_path, "SSO: invalid token");
+                    return Ok(unauthorized_json());
+                }
+            };
+
+            let username = claims.preferred_username.or(claims.sub).unwrap_or_default();
+
+            match &config.allowed_users {
+                AllowedUsers::Any => {}
+                AllowedUsers::List(set) => {
+                    if !set.contains(&username) {
+                        warn!(user = %username, path = %req_path, "SSO: user not allowed");
+                        return Ok(forbidden_json(&username));
+                    }
+                }
+            }
+
+            debug!(user = %username, path = %req_path, "SSO: authenticated");
+            req.extensions_mut().insert(AuthUser(username));
+            inner.call(req).await
+        })
+    }
+}
+
+// ============================================================
+// Access log layer (tower Layer + Service)
+// ============================================================
+
+#[derive(Clone)]
+struct AccessLogLayer;
+
+impl<S> tower::Layer<S> for AccessLogLayer {
+    type Service = AccessLogService<S>;
+    fn layer(&self, inner: S) -> Self::Service {
+        AccessLogService { inner }
+    }
+}
+
+/// Authenticated username, inserted into request extensions by auth middleware.
+#[derive(Clone)]
+struct AuthUser(String);
+
+#[derive(Clone)]
+struct AccessLogService<S> {
+    inner: S,
+}
+
+impl<S> tower::Service<Request> for AccessLogService<S>
+where
+    S: tower::Service<Request, Response = axum::response::Response> + Clone + Send + 'static,
+    S::Future: Send,
+{
+    type Response = axum::response::Response;
+    type Error = S::Error;
+    type Future = std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
+    >;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request) -> Self::Future {
+        let method = req.method().clone();
+        let path = req.uri().path().to_owned();
+        let client = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|ci| ci.0.ip().to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        let user = req
+            .extensions()
+            .get::<AuthUser>()
+            .map(|u| u.0.clone())
+            .unwrap_or_else(|| "-".to_owned());
+        let t0 = std::time::Instant::now();
+
+        let mut inner = self.inner.clone();
+        Box::pin(async move {
+            let response = inner.call(req).await?;
+            let latency_ms = t0.elapsed().as_millis() as u64;
+            let status = response.status().as_u16();
+            if !path.starts_with("/assets/") && path != "/favicon.ico" {
+                info!(client, user, status, latency_ms, "{method} {path}");
+            }
+            Ok(response)
+        })
+    }
+}
+
+// ============================================================
 // Basic Auth middleware
 // ============================================================
 
 async fn basic_auth_middleware(
     State(creds): State<Arc<(String, String)>>,
-    req: Request,
+    mut req: Request,
     next: Next,
 ) -> axum::response::Response {
+    let path = req.uri().path().to_owned();
+
     let unauthorized = || {
         axum::response::Response::builder()
             .status(StatusCode::UNAUTHORIZED)
@@ -1071,38 +1513,57 @@ async fn basic_auth_middleware(
 
     let auth_header = match req.headers().get(header::AUTHORIZATION) {
         Some(v) => v,
-        None => return unauthorized(),
+        None => {
+            warn!(path = %path, "auth failed: no authorization header");
+            return unauthorized();
+        }
     };
 
     let auth_str = match auth_header.to_str() {
         Ok(s) => s,
-        Err(_) => return unauthorized(),
+        Err(_) => {
+            warn!(path = %path, "auth failed: invalid header encoding");
+            return unauthorized();
+        }
     };
 
     if !auth_str.starts_with("Basic ") {
+        warn!(path = %path, "auth failed: not basic auth");
         return unauthorized();
     }
 
     use base64::Engine;
     let decoded = match base64::engine::general_purpose::STANDARD.decode(&auth_str[6..]) {
         Ok(d) => d,
-        Err(_) => return unauthorized(),
+        Err(_) => {
+            warn!(path = %path, "auth failed: invalid base64");
+            return unauthorized();
+        }
     };
 
     let decoded_str = match String::from_utf8(decoded) {
         Ok(s) => s,
-        Err(_) => return unauthorized(),
+        Err(_) => {
+            warn!(path = %path, "auth failed: invalid utf8");
+            return unauthorized();
+        }
     };
 
     let (user, pass) = match decoded_str.split_once(':') {
         Some(pair) => pair,
-        None => return unauthorized(),
+        None => {
+            warn!(path = %path, "auth failed: malformed credentials");
+            return unauthorized();
+        }
     };
 
     if user != creds.0 || pass != creds.1 {
+        warn!(user = %user, path = %path, "auth failed: invalid credentials");
         return unauthorized();
     }
 
+    debug!(user = %user, path = %path, "authenticated");
+    req.extensions_mut().insert(AuthUser(user.to_owned()));
     next.run(req).await
 }
 

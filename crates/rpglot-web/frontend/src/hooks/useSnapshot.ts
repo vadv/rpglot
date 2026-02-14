@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchSnapshot, subscribeSSE } from "../api/client";
+import { getToken, getSsoProxyUrl, redirectToSso } from "../auth";
 import type { ApiSnapshot } from "../api/types";
 
 export function useLiveSnapshot() {
@@ -9,11 +10,24 @@ export function useLiveSnapshot() {
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    const es = subscribeSSE((snap) => {
-      if (!pausedRef.current) {
-        setSnapshot(snap);
-      }
-    });
+    const es = subscribeSSE(
+      (snap) => {
+        if (!pausedRef.current) {
+          setSnapshot(snap);
+        }
+      },
+      () => {
+        // SSE error — may be auth failure (401).
+        // EventSource doesn't expose status codes, so check token validity.
+        const token = getToken();
+        const proxyUrl = getSsoProxyUrl();
+        if (!token && proxyUrl) {
+          es.close();
+          redirectToSso(proxyUrl);
+        }
+        // Otherwise: network error — EventSource auto-reconnects.
+      },
+    );
     esRef.current = es;
     return () => {
       es.close();

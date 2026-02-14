@@ -2,6 +2,43 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::{DataBlock, DataBlockDiff, Delta, Snapshot};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+/// Compact metadata sidecar for a chunk file.
+/// Stored as `.meta` alongside `.zst` to avoid decompressing chunks at startup.
+#[derive(Serialize, Deserialize)]
+pub struct ChunkMetadata {
+    pub snapshot_count: usize,
+    pub timestamps: Vec<i64>,
+}
+
+impl ChunkMetadata {
+    /// Build metadata from a chunk's deltas.
+    pub fn from_chunk(chunk: &Chunk) -> Self {
+        let timestamps: Vec<i64> = chunk.deltas.iter().map(|d| d.timestamp()).collect();
+        Self {
+            snapshot_count: timestamps.len(),
+            timestamps,
+        }
+    }
+
+    /// Save metadata to a binary file.
+    pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let data = bincode::serialize(self).map_err(std::io::Error::other)?;
+        std::fs::write(path, data)
+    }
+
+    /// Load metadata from a binary file.
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let data = std::fs::read(path)?;
+        bincode::deserialize(&data).map_err(std::io::Error::other)
+    }
+
+    /// Derive `.meta` path from `.zst` path: `foo.zst` → `foo.meta`.
+    pub fn meta_path(chunk_path: &Path) -> PathBuf {
+        chunk_path.with_extension("meta")
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Chunk {

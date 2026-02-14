@@ -353,7 +353,7 @@ pub fn format_blks_rate(blks_per_sec: Option<f64>, width: usize) -> String {
 }
 
 /// Format bytes count (from blocks * 8192) to human-readable.
-/// Used by `kv_delta_blks` in `detail_common`.
+#[allow(dead_code)]
 pub(crate) fn format_blks_as_bytes(bytes: f64) -> String {
     let abs = bytes.abs();
     if abs >= 1_099_511_627_776.0 {

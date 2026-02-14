@@ -8,8 +8,9 @@ import {
   Sun,
   Moon,
   Monitor,
+  ShieldX,
 } from "lucide-react";
-import { fetchTimeline } from "./api/client";
+import { fetchTimeline, fetchAuthConfig } from "./api/client";
 import { useSchema } from "./hooks/useSchema";
 import { useLiveSnapshot, useHistorySnapshot } from "./hooks/useSnapshot";
 import { readUrlState, useUrlSync } from "./hooks/useUrlState";
@@ -22,6 +23,14 @@ import { SummaryPanel } from "./components/SummaryPanel";
 import { DataTable } from "./components/DataTable";
 import { DetailPanel } from "./components/DetailPanel";
 import { Timeline, CalendarPopover, TimeInput } from "./components/Timeline";
+import {
+  captureTokenFromUrl,
+  getToken,
+  getTokenUsername,
+  redirectToSso,
+  setSsoProxyUrl,
+  startTokenRefresh,
+} from "./auth";
 import type {
   ApiSnapshot,
   ApiSchema,
@@ -33,8 +42,82 @@ import type {
 
 const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pgl"];
 
+// Global auth username — set once during init, read by AppContent
+let _authUsername: string | null = null;
+
 export default function App() {
-  const { schema, error: schemaError } = useSchema();
+  const [authReady, setAuthReady] = useState(false);
+  const [ssoProxyUrl, setSsoProxyUrlState] = useState<string | null>(null);
+
+  useEffect(() => {
+    captureTokenFromUrl();
+
+    fetchAuthConfig().then((config) => {
+      const proxyUrl = config.sso_proxy_url ?? null;
+      setSsoProxyUrlState(proxyUrl);
+      setSsoProxyUrl(proxyUrl);
+
+      if (proxyUrl) {
+        const token = getToken();
+        if (!token) {
+          redirectToSso(proxyUrl);
+          return;
+        }
+        // SSO: extract username from JWT
+        _authUsername = getTokenUsername();
+      } else if (config.auth_user) {
+        // Basic Auth: username from server config
+        _authUsername = config.auth_user;
+      }
+      setAuthReady(true);
+    });
+  }, []);
+
+  // Periodic token refresh
+  useEffect(() => {
+    if (!ssoProxyUrl) return;
+    return startTokenRefresh(ssoProxyUrl);
+  }, [ssoProxyUrl]);
+
+  if (!authReady) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-[var(--text-tertiary)]">
+        Authenticating...
+      </div>
+    );
+  }
+
+  return <AppContent />;
+}
+
+function AppContent() {
+  const { schema, error: schemaError, forbiddenUser } = useSchema();
+
+  if (forbiddenUser) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center max-w-md px-6">
+          <ShieldX
+            className="mx-auto mb-4 text-[var(--status-critical)]"
+            size={48}
+          />
+          <h1 className="text-xl font-semibold text-[var(--text-primary)] mb-2">
+            Access Denied
+          </h1>
+          <p className="text-[var(--text-secondary)] mb-4">
+            User{" "}
+            <span className="font-mono text-[var(--text-primary)]">
+              {forbiddenUser}
+            </span>{" "}
+            is not authorized to access this instance.
+          </p>
+          <p className="text-sm text-[var(--text-tertiary)]">
+            Contact the administrator to request access.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (schemaError) {
     return (
@@ -591,6 +674,11 @@ function Header({
           /* Live mode or no dates: static timestamp */
           <span className="text-xs text-[var(--text-tertiary)] font-mono tabular-nums">
             {ts > 0 ? formatTimestamp(ts, tz) : "-"}
+          </span>
+        )}
+        {_authUsername && (
+          <span className="text-xs text-[var(--text-tertiary)] font-mono">
+            {_authUsername}
           </span>
         )}
         <button

@@ -95,6 +95,7 @@ impl StorageManager {
         };
 
         manager.recover_from_wal();
+        manager.ensure_metadata_files();
         manager
     }
 
@@ -142,6 +143,29 @@ impl StorageManager {
                 .and_then(|f| f.set_len(valid_end_position))
             {
                 warn!("Failed to truncate WAL: {}", e);
+            }
+        }
+    }
+
+    /// Scans existing .zst files and creates missing .meta sidecar files.
+    /// Handles cases where daemon was killed (-9) or disk was full during previous write.
+    fn ensure_metadata_files(&self) {
+        let Ok(entries) = std::fs::read_dir(&self.base_path) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "zst") {
+                let meta_path = crate::storage::ChunkMetadata::meta_path(&path);
+                if !meta_path.exists()
+                    && let Ok(data) = std::fs::read(&path)
+                    && let Ok(chunk) = Chunk::decompress(&data)
+                {
+                    let meta = crate::storage::ChunkMetadata::from_chunk(&chunk);
+                    if let Err(e) = meta.save(&meta_path) {
+                        warn!("failed to create metadata for {}: {}", path.display(), e);
+                    }
+                }
             }
         }
     }
@@ -1030,6 +1054,17 @@ impl StorageManager {
 
         std::fs::rename(tmp_path, &final_path)?;
 
+        // Write .meta sidecar file for fast startup indexing
+        let meta = crate::storage::ChunkMetadata::from_chunk(&chunk);
+        let meta_path = crate::storage::ChunkMetadata::meta_path(&final_path);
+        if let Err(e) = meta.save(&meta_path) {
+            warn!(
+                "failed to write chunk metadata {}: {}",
+                meta_path.display(),
+                e
+            );
+        }
+
         // Truncate WAL
         self.wal_file.set_len(0)?;
         self.wal_file.sync_all()?;
@@ -1065,39 +1100,40 @@ impl StorageManager {
     }
 
     /// Scans WAL file and returns entry metadata (byte_offset, byte_length, timestamp)
-    /// for each entry, plus a merged interner. Snapshots are deserialized to extract
-    /// timestamps but immediately dropped — peak RAM = one snapshot at a time.
-    pub fn scan_wal_metadata(
-        wal_path: &Path,
-    ) -> std::io::Result<(Vec<(u64, u64, i64)>, StringInterner)> {
-        let data = match std::fs::read(wal_path) {
-            Ok(d) if !d.is_empty() => d,
-            Ok(_) => return Ok((Vec::new(), StringInterner::new())),
+    /// for each entry. Snapshots are deserialized to extract timestamps but immediately
+    /// dropped — peak RAM = one entry at a time. Interners are NOT merged; each WAL
+    /// entry's interner is loaded on demand via `load_wal_snapshot_with_interner`.
+    pub fn scan_wal_metadata(wal_path: &Path) -> std::io::Result<Vec<(u64, u64, i64)>> {
+        use std::io::{BufReader, Seek};
+        let file = match std::fs::File::open(wal_path) {
+            Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok((Vec::new(), StringInterner::new()));
+                return Ok(Vec::new());
             }
             Err(e) => return Err(e),
         };
+        let file_len = file.metadata()?.len();
+        if file_len == 0 {
+            return Ok(Vec::new());
+        }
 
         let mut entries = Vec::new();
-        let mut merged = StringInterner::new();
-        let mut cursor = std::io::Cursor::new(&data);
+        let mut reader = BufReader::new(file);
 
-        while (cursor.position() as usize) < data.len() {
-            let start = cursor.position();
-            match bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
+        while reader.stream_position()? < file_len {
+            let start = reader.stream_position()?;
+            match bincode::deserialize_from::<_, WalEntry>(&mut reader) {
                 Ok(entry) => {
-                    let end = cursor.position();
+                    let end = reader.stream_position()?;
                     let ts = entry.snapshot.timestamp;
-                    merged.merge(&entry.interner);
                     entries.push((start, end - start, ts));
-                    // entry.snapshot dropped here — RAM freed
+                    // entry (snapshot + interner) dropped here — RAM freed
                 }
                 Err(_) => break,
             }
         }
 
-        Ok((entries, merged))
+        Ok(entries)
     }
 
     /// Loads a single snapshot from WAL at the given byte range.
@@ -1107,15 +1143,27 @@ impl StorageManager {
         offset: u64,
         length: u64,
     ) -> std::io::Result<Snapshot> {
-        let data = std::fs::read(wal_path)?;
-        let start = offset as usize;
-        let end = (offset + length) as usize;
-        if end > data.len() {
-            return Err(std::io::Error::other("WAL offset out of bounds"));
-        }
-        let entry: WalEntry =
-            bincode::deserialize(&data[start..end]).map_err(std::io::Error::other)?;
-        Ok(entry.snapshot)
+        let (snapshot, _interner) =
+            Self::load_wal_snapshot_with_interner(wal_path, offset, length)?;
+        Ok(snapshot)
+    }
+
+    /// Loads a single snapshot + its interner from WAL at the given byte range.
+    /// Each WAL entry contains a self-contained interner sufficient to resolve
+    /// all string hashes in that entry's snapshot.
+    /// Uses seek+read to avoid loading the entire WAL file into memory.
+    pub fn load_wal_snapshot_with_interner(
+        wal_path: &Path,
+        offset: u64,
+        length: u64,
+    ) -> std::io::Result<(Snapshot, StringInterner)> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut file = std::fs::File::open(wal_path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut buf = vec![0u8; length as usize];
+        file.read_exact(&mut buf)?;
+        let entry: WalEntry = bincode::deserialize(&buf).map_err(std::io::Error::other)?;
+        Ok((entry.snapshot, entry.interner))
     }
 
     /// Loads all chunks from the storage directory and returns reconstructed snapshots
@@ -1169,6 +1217,36 @@ impl StorageManager {
         }
 
         Ok(chunks)
+    }
+
+    /// Reconstructs a single snapshot at the given offset within a chunk.
+    /// Only applies deltas up to and including the target offset,
+    /// keeping at most 2 snapshots in memory (base + result).
+    pub fn reconstruct_snapshot_at(chunk: &Chunk, offset: usize) -> std::io::Result<Snapshot> {
+        let mut last_snapshot: Option<Snapshot> = None;
+
+        for (i, delta) in chunk.deltas.iter().enumerate() {
+            match delta {
+                Delta::Full(snapshot) => {
+                    last_snapshot = Some(snapshot.clone());
+                }
+                Delta::Diff { timestamp, blocks } => {
+                    let base = last_snapshot.as_ref().ok_or_else(|| {
+                        std::io::Error::other("Diff without preceding Full snapshot")
+                    })?;
+                    last_snapshot = Some(Self::apply_diff(base, *timestamp, blocks));
+                }
+            }
+            if i == offset {
+                return last_snapshot.ok_or_else(|| std::io::Error::other("No snapshot at offset"));
+            }
+        }
+
+        Err(std::io::Error::other(format!(
+            "Offset {} out of range (chunk has {} deltas)",
+            offset,
+            chunk.deltas.len()
+        )))
     }
 
     /// Reconstructs full snapshots from a chunk's deltas.
