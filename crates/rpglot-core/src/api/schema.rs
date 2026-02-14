@@ -119,8 +119,11 @@ pub struct ViewSchema {
 pub struct DrillDown {
     /// Target tab key (e.g. "pgs", "pgi").
     pub target: String,
-    /// Field to match in the target tab.
+    /// Field in the SOURCE tab to get the value from.
     pub via: String,
+    /// Field in the TARGET tab to search by. If absent, uses target's entity_id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_field: Option<String>,
     pub description: String,
 }
 
@@ -943,6 +946,7 @@ fn generate_prc_schema() -> TabSchema {
         drill_down: Some(DrillDown {
             target: "pga".into(),
             via: "pid".into(),
+            target_field: None,
             description: "Navigate to session details for this PID".into(),
         }),
     }
@@ -1182,6 +1186,7 @@ fn generate_pga_schema() -> TabSchema {
         drill_down: Some(DrillDown {
             target: "pgs".into(),
             via: "query_id".into(),
+            target_field: Some("queryid".into()),
             description: "Navigate to statement stats by query_id".into(),
         }),
     }
@@ -1923,6 +1928,7 @@ fn generate_pgt_schema() -> TabSchema {
         drill_down: Some(DrillDown {
             target: "pgi".into(),
             via: "relid".into(),
+            target_field: Some("relid".into()),
             description: "Navigate to indexes for this table".into(),
         }),
     }
@@ -2244,6 +2250,7 @@ fn generate_pgl_schema() -> TabSchema {
         drill_down: Some(DrillDown {
             target: "pga".into(),
             via: "pid".into(),
+            target_field: None,
             description: "Navigate to session details for this PID".into(),
         }),
     }

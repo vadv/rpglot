@@ -1,38 +1,72 @@
-import type { TabKey, TabsSchema } from "../api/types";
+import {
+  Monitor,
+  Activity,
+  BarChart3,
+  Table2,
+  ListTree,
+  Lock,
+} from "lucide-react";
+import { Tooltip } from "./Tooltip";
+import type { TabKey } from "../api/types";
 
 const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pgl"];
 
-const TAB_LABELS: Record<TabKey, string> = {
-  prc: "Processes",
-  pga: "Activity",
-  pgs: "Statements",
-  pgt: "Tables",
-  pgi: "Indexes",
-  pgl: "Locks",
+const TAB_CONFIG: Record<
+  TabKey,
+  { label: string; fullName: string; icon: typeof Monitor }
+> = {
+  prc: { label: "Processes", fullName: "OS Processes", icon: Monitor },
+  pga: {
+    label: "Activity",
+    fullName: "pg_stat_activity",
+    icon: Activity,
+  },
+  pgs: {
+    label: "Statements",
+    fullName: "pg_stat_statements",
+    icon: BarChart3,
+  },
+  pgt: {
+    label: "Tables",
+    fullName: "pg_stat_user_tables",
+    icon: Table2,
+  },
+  pgi: {
+    label: "Indexes",
+    fullName: "pg_stat_user_indexes",
+    icon: ListTree,
+  },
+  pgl: { label: "Locks", fullName: "pg_locks", icon: Lock },
 };
 
 interface TabBarProps {
   activeTab: TabKey;
   onTabChange: (tab: TabKey) => void;
-  tabs?: TabsSchema;
 }
 
 export function TabBar({ activeTab, onTabChange }: TabBarProps) {
   return (
-    <div className="flex border-b border-slate-700 bg-slate-800/50">
-      {TAB_ORDER.map((key) => (
-        <button
-          key={key}
-          onClick={() => onTabChange(key)}
-          className={`px-4 py-2 text-sm font-medium transition-colors ${
-            activeTab === key
-              ? "text-blue-400 border-b-2 border-blue-400 bg-slate-800"
-              : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-          }`}
-        >
-          {TAB_LABELS[key]}
-        </button>
-      ))}
+    <div className="flex border-b border-[var(--border-default)] bg-[var(--bg-surface)]">
+      {TAB_ORDER.map((key) => {
+        const config = TAB_CONFIG[key];
+        const Icon = config.icon;
+        const isActive = activeTab === key;
+        return (
+          <Tooltip key={key} content={config.fullName} side="bottom">
+            <button
+              onClick={() => onTabChange(key)}
+              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors ${
+                isActive
+                  ? "text-[var(--accent-text)] border-b-2 border-[var(--accent)] bg-[var(--accent-subtle)]"
+                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              }`}
+            >
+              <Icon size={14} />
+              {config.label}
+            </button>
+          </Tooltip>
+        );
+      })}
     </div>
   );
 }

@@ -1,13 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
-import { fetchSnapshot, subscribeSSE } from '../api/client';
-import type { ApiSnapshot } from '../api/types';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchSnapshot, subscribeSSE } from "../api/client";
+import type { ApiSnapshot } from "../api/types";
 
 export function useLiveSnapshot() {
   const [snapshot, setSnapshot] = useState<ApiSnapshot | null>(null);
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    const es = subscribeSSE(setSnapshot);
+    const es = subscribeSSE((snap) => {
+      if (!pausedRef.current) {
+        setSnapshot(snap);
+      }
+    });
     esRef.current = es;
     return () => {
       es.close();
@@ -15,7 +21,14 @@ export function useLiveSnapshot() {
     };
   }, []);
 
-  return snapshot;
+  const togglePause = useCallback(() => {
+    setPaused((prev) => {
+      pausedRef.current = !prev;
+      return !prev;
+    });
+  }, []);
+
+  return { snapshot, paused, togglePause };
 }
 
 export function useHistorySnapshot() {
@@ -44,7 +57,9 @@ export function useHistorySnapshot() {
 
   // Load first snapshot on mount
   useEffect(() => {
-    fetchSnapshot().then(setSnapshot).catch(() => {});
+    fetchSnapshot()
+      .then(setSnapshot)
+      .catch(() => {});
   }, []);
 
   return { snapshot, loading, jumpTo, jumpToTimestamp };

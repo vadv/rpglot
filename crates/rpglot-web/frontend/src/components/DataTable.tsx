@@ -9,8 +9,10 @@ import {
   type ColumnDef,
   type ColumnFiltersState,
 } from "@tanstack/react-table";
+import { Search, Inbox, ChevronUp, ChevronDown } from "lucide-react";
 import type { ColumnSchema, ViewSchema } from "../api/types";
 import { formatValue } from "../utils/formatters";
+import { getThresholdClass } from "../utils/thresholds";
 
 interface DataTableProps {
   data: Record<string, unknown>[];
@@ -42,7 +44,6 @@ export function DataTable({
   onFilterChange,
 }: DataTableProps) {
   const [activeView, setActiveView] = useState(() => {
-    // Use URL-provided view if it matches available views
     if (initialView && views.some((v) => v.key === initialView)) {
       return initialView;
     }
@@ -83,7 +84,6 @@ export function DataTable({
       const schema = colMap.get(key);
       if (!schema) continue;
 
-      // PGL lock tree: indent PID column based on depth
       const isPglPid = isLockTree && key === "pid";
 
       defs.push({
@@ -95,9 +95,35 @@ export function DataTable({
               const depth = (info.row.original["depth"] as number) ?? 1;
               const prefix =
                 depth > 1 ? "\u00B7".repeat((depth - 1) * 2) + " " : "";
-              return prefix + String(info.getValue() ?? "-");
+              const text = prefix + String(info.getValue() ?? "-");
+              const colorClass = getThresholdClass(
+                key,
+                info.getValue(),
+                info.row.original,
+              );
+              return colorClass ? (
+                <span className={colorClass}>{text}</span>
+              ) : (
+                text
+              );
             }
-          : (info) => formatValue(info.getValue(), schema.unit, schema.format),
+          : (info) => {
+              const formatted = formatValue(
+                info.getValue(),
+                schema.unit,
+                schema.format,
+              );
+              const colorClass = getThresholdClass(
+                key,
+                info.getValue(),
+                info.row.original,
+              );
+              return colorClass ? (
+                <span className={colorClass}>{formatted}</span>
+              ) : (
+                formatted
+              );
+            },
         enableSorting: isLockTree ? false : schema.sortable,
         sortingFn: schema.type === "string" ? "alphanumeric" : "auto",
         sortUndefined: "last" as const,
@@ -124,7 +150,6 @@ export function DataTable({
   // Keyboard navigation
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      // Don't capture when filter input is focused
       if (document.activeElement === filterRef.current) return;
 
       const currentIndex = rows.findIndex(
@@ -165,9 +190,7 @@ export function DataTable({
           break;
         case "Enter":
           e.preventDefault();
-          if (selectedId != null) {
-            onOpenDetail();
-          } else if (rows.length > 0) {
+          if (selectedId == null && rows.length > 0) {
             onSelectRow(rows[0].original[entityId] as string | number);
           }
           return;
@@ -191,12 +214,12 @@ export function DataTable({
     (row: Record<string, unknown>) => {
       const id = row[entityId] as string | number;
       if (id === selectedId) {
-        onOpenDetail();
+        onSelectRow(null);
       } else {
         onSelectRow(id);
       }
     },
-    [entityId, selectedId, onSelectRow, onOpenDetail],
+    [entityId, selectedId, onSelectRow],
   );
 
   const handleViewSwitch = useCallback(
@@ -205,7 +228,10 @@ export function DataTable({
       onViewChange?.(v.key);
       if (v.default_sort) {
         setSorting([
-          { id: v.default_sort, desc: v.default_sort_desc ?? false },
+          {
+            id: v.default_sort,
+            desc: v.default_sort_desc ?? false,
+          },
         ]);
       } else {
         setSorting([]);
@@ -230,17 +256,17 @@ export function DataTable({
       onKeyDown={handleKeyDown}
     >
       {/* View tabs + filter */}
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/20 border-b border-slate-700/50">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
         {views.length > 1 && (
           <div className="flex gap-1">
             {views.map((v) => (
               <button
                 key={v.key}
                 onClick={() => handleViewSwitch(v)}
-                className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                className={`px-2.5 py-0.5 text-xs rounded font-medium transition-colors ${
                   activeView === v.key
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-700 text-slate-400 hover:text-white"
+                    ? "bg-[var(--accent)] text-[var(--text-inverse)]"
+                    : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                 }`}
               >
                 {v.label}
@@ -248,30 +274,38 @@ export function DataTable({
             ))}
           </div>
         )}
-        <input
-          ref={filterRef}
-          type="text"
-          placeholder="Filter... (/)"
-          value={globalFilter}
-          onChange={(e) => handleFilterInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              handleFilterInput("");
-              containerRef.current?.focus();
-            }
-          }}
-          className="ml-auto px-2 py-0.5 text-xs bg-slate-800 border border-slate-600 rounded text-slate-300 placeholder-slate-500 focus:outline-none focus:border-blue-500 w-48"
-        />
-        <span className="text-xs text-slate-500">
-          {table.getFilteredRowModel().rows.length} rows
-        </span>
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="relative">
+            <Search
+              size={13}
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)] pointer-events-none"
+            />
+            <input
+              ref={filterRef}
+              type="text"
+              placeholder="Filter... (/)"
+              value={globalFilter}
+              onChange={(e) => handleFilterInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.stopPropagation();
+                  handleFilterInput("");
+                  containerRef.current?.focus();
+                }
+              }}
+              className="pl-7 pr-2 py-1 text-xs bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] w-48 transition-colors"
+            />
+          </div>
+          <span className="text-xs text-[var(--text-tertiary)] tabular-nums font-mono">
+            {table.getFilteredRowModel().rows.length} rows
+          </span>
+        </div>
       </div>
 
       {/* Table */}
       <div className="flex-1 overflow-auto">
-        <table className="w-full text-xs">
-          <thead className="sticky top-0 bg-slate-800 z-10">
+        <table className="w-full text-[13px] font-mono">
+          <thead className="sticky top-0 bg-[var(--bg-surface)] z-10">
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
@@ -284,22 +318,28 @@ export function DataTable({
                           ? header.column.getToggleSortingHandler()
                           : undefined
                       }
-                      className={`px-2 py-1.5 text-left font-medium border-b border-slate-700 whitespace-nowrap ${
+                      className={`px-2 py-1.5 text-left text-xs font-medium border-b-2 border-[var(--border-default)] whitespace-nowrap ${
                         header.column.getCanSort()
-                          ? "cursor-pointer select-none hover:text-slate-200"
+                          ? "cursor-pointer select-none hover:text-[var(--text-primary)]"
                           : ""
-                      } ${isSorted ? "text-blue-400" : "text-slate-400"}`}
+                      } ${isSorted ? "text-[var(--accent-text)]" : "text-[var(--text-secondary)]"}`}
                     >
-                      <span className="flex items-center gap-1">
+                      <span className="flex items-center gap-0.5">
                         {flexRender(
                           header.column.columnDef.header,
                           header.getContext(),
                         )}
                         {isSorted === "asc" && (
-                          <span className="text-blue-400">^</span>
+                          <ChevronUp
+                            size={12}
+                            className="text-[var(--accent-text)]"
+                          />
                         )}
                         {isSorted === "desc" && (
-                          <span className="text-blue-400">v</span>
+                          <ChevronDown
+                            size={12}
+                            className="text-[var(--accent-text)]"
+                          />
                         )}
                       </span>
                     </th>
@@ -317,16 +357,16 @@ export function DataTable({
                   key={row.id}
                   id={`row-${rowId}`}
                   onClick={() => handleRowClick(row.original)}
-                  className={`cursor-pointer border-b border-slate-800/30 transition-colors duration-100 ${
+                  className={`cursor-pointer transition-colors duration-100 ${
                     isSelected
-                      ? "bg-blue-900/40 text-white"
-                      : `${idx % 2 === 0 ? "bg-transparent" : "bg-slate-800/15"} hover:bg-slate-700/30 text-slate-300`
+                      ? "bg-[var(--selection-bg)] border-l-2 border-l-[var(--selection-border)]"
+                      : `${idx % 2 === 0 ? "bg-[var(--bg-base)]" : "bg-[var(--bg-overlay)]"} hover:bg-[var(--bg-hover)] border-l-2 border-l-transparent`
                   }`}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
-                      className="px-2 py-1 whitespace-nowrap max-w-md truncate"
+                      className="px-2 py-1 whitespace-nowrap max-w-md truncate tabular-nums"
                     >
                       {flexRender(
                         cell.column.columnDef.cell,
@@ -340,9 +380,13 @@ export function DataTable({
           </tbody>
         </table>
         {rows.length === 0 && (
-          <div className="flex items-center justify-center py-12 text-slate-500 text-sm">
+          <div className="flex items-center justify-center py-16 text-[var(--text-tertiary)]">
             <div className="text-center">
-              <div className="text-lg mb-1">No data</div>
+              <Inbox
+                size={32}
+                className="mx-auto mb-2 text-[var(--text-disabled)]"
+              />
+              <div className="text-sm font-medium mb-0.5">No data</div>
               {globalFilter && (
                 <div className="text-xs">
                   Try adjusting the filter or switching views

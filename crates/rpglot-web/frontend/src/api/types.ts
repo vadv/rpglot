@@ -379,6 +379,7 @@ export interface ViewSchema {
 export interface DrillDown {
   target: string;
   via: string;
+  target_field?: string;
   description: string;
 }
 

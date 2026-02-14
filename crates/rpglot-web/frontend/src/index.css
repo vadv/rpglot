@@ -1,18 +1,114 @@
 @import "tailwindcss";
 
+/* ========== Theme tokens ========== */
 :root {
-    font-family:
-        ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-        "Liberation Mono", monospace;
-    font-size: 13px;
-    line-height: 1.4;
+    /* Typography */
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+    --font-mono:
+        "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo,
+        Consolas, monospace;
+
+    /* Light theme (default) */
+    --bg-base: #ffffff;
+    --bg-surface: #f8fafc;
+    --bg-elevated: #f1f5f9;
+    --bg-overlay: rgba(0, 0, 0, 0.04);
+    --bg-hover: rgba(0, 0, 0, 0.04);
+    --bg-selected: #eff6ff;
+    --bg-selected-hover: #dbeafe;
+
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-tertiary: #94a3b8;
+    --text-disabled: #cbd5e1;
+    --text-inverse: #ffffff;
+
+    --border-default: #e2e8f0;
+    --border-subtle: #f1f5f9;
+    --border-strong: #cbd5e1;
+
+    --accent: #2563eb;
+    --accent-hover: #1d4ed8;
+    --accent-subtle: #eff6ff;
+    --accent-text: #2563eb;
+
+    --status-critical: #dc2626;
+    --status-critical-bg: #fef2f2;
+    --status-warning: #d97706;
+    --status-warning-bg: #fffbeb;
+    --status-success: #059669;
+    --status-success-bg: #ecfdf5;
+    --status-info: #2563eb;
+    --status-inactive: #94a3b8;
+
+    --selection-border: #2563eb;
+    --selection-bg: #eff6ff;
+
+    --scrollbar-thumb: #cbd5e1;
+    --scrollbar-thumb-hover: #94a3b8;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+
+    color-scheme: light;
 }
 
+/* Dark theme */
+.dark {
+    --bg-base: #111318;
+    --bg-surface: #1a1c23;
+    --bg-elevated: #23262f;
+    --bg-overlay: rgba(255, 255, 255, 0.04);
+    --bg-hover: rgba(255, 255, 255, 0.06);
+    --bg-selected: rgba(59, 130, 246, 0.15);
+    --bg-selected-hover: rgba(59, 130, 246, 0.25);
+
+    --text-primary: #e8eaed;
+    --text-secondary: #9aa0a6;
+    --text-tertiary: #5f6368;
+    --text-disabled: #3c4043;
+    --text-inverse: #111318;
+
+    --border-default: #2d3139;
+    --border-subtle: #23262f;
+    --border-strong: #3c4043;
+
+    --accent: #60a5fa;
+    --accent-hover: #93bbfd;
+    --accent-subtle: rgba(96, 165, 250, 0.15);
+    --accent-text: #60a5fa;
+
+    --status-critical: #f87171;
+    --status-critical-bg: rgba(248, 113, 113, 0.1);
+    --status-warning: #fbbf24;
+    --status-warning-bg: rgba(251, 191, 36, 0.1);
+    --status-success: #34d399;
+    --status-success-bg: rgba(52, 211, 153, 0.1);
+    --status-info: #60a5fa;
+    --status-inactive: #5f6368;
+
+    --selection-border: #60a5fa;
+    --selection-bg: rgba(59, 130, 246, 0.15);
+
+    --scrollbar-thumb: #3c4043;
+    --scrollbar-thumb-hover: #5f6368;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+}
+
+/* ========== Base styles ========== */
 body {
     margin: 0;
     min-height: 100vh;
-    background-color: #0f172a;
-    color: #e2e8f0;
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
 }
 
 #root {
@@ -21,7 +117,12 @@ body {
     flex-direction: column;
 }
 
-/* Scrollbar styling */
+/* Monospace for data */
+.font-mono {
+    font-family: var(--font-mono);
+}
+
+/* ========== Scrollbar ========== */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -32,16 +133,16 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #334155;
+    background: var(--scrollbar-thumb);
     border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #475569;
+    background: var(--scrollbar-thumb-hover);
 }
 
 /* Firefox */
 * {
     scrollbar-width: thin;
-    scrollbar-color: #334155 transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
 }

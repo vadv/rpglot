@@ -1,7 +1,18 @@
 import { useState, useEffect, useCallback } from "react";
+import {
+  Database,
+  Radio,
+  History,
+  Pause,
+  Play,
+  Sun,
+  Moon,
+  Monitor,
+} from "lucide-react";
 import { useSchema } from "./hooks/useSchema";
 import { useLiveSnapshot, useHistorySnapshot } from "./hooks/useSnapshot";
 import { readUrlState, useUrlSync } from "./hooks/useUrlState";
+import { useTheme } from "./hooks/useTheme";
 import { TabBar } from "./components/TabBar";
 import { SummaryPanel } from "./components/SummaryPanel";
 import { DataTable } from "./components/DataTable";
@@ -16,7 +27,7 @@ export default function App() {
 
   if (schemaError) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-red-400">
+      <div className="flex items-center justify-center min-h-screen text-[var(--status-critical)]">
         Failed to load schema: {schemaError}
       </div>
     );
@@ -24,7 +35,7 @@ export default function App() {
 
   if (!schema) {
     return (
-      <div className="flex items-center justify-center min-h-screen text-slate-400">
+      <div className="flex items-center justify-center min-h-screen text-[var(--text-tertiary)]">
         Loading...
       </div>
     );
@@ -38,12 +49,43 @@ export default function App() {
 }
 
 function LiveApp({ schema }: { schema: ApiSchema }) {
-  const snapshot = useLiveSnapshot();
+  const { snapshot, paused, togglePause } = useLiveSnapshot();
   const tabState = useTabState(schema, snapshot);
+  const urlSync = useUrlSync();
+  const themeHook = useTheme();
+
+  // Sync pause timestamp to URL
+  useEffect(() => {
+    if (paused && snapshot) {
+      urlSync({ timestamp: snapshot.timestamp });
+    } else {
+      urlSync({ timestamp: null });
+    }
+  }, [paused, snapshot, urlSync]);
+
+  // Global keyboard: Space to toggle pause
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      if (e.key === " ") {
+        e.preventDefault();
+        togglePause();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [togglePause]);
 
   return (
     <div className="flex flex-col h-screen">
-      <Header mode="live" timestamp={snapshot?.timestamp} />
+      <Header
+        mode="live"
+        timestamp={snapshot?.timestamp}
+        paused={paused}
+        onTogglePause={togglePause}
+        themeHook={themeHook}
+      />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
         activeTab={tabState.activeTab}
@@ -53,15 +95,17 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         {snapshot ? (
           <TabContent snapshot={snapshot} schema={schema} tabState={tabState} />
         ) : (
-          <div className="flex items-center justify-center h-full text-slate-500">
+          <div className="flex items-center justify-center h-full text-[var(--text-tertiary)]">
             Waiting for data...
           </div>
         )}
       </div>
       <HintsBar
+        mode="live"
         detailOpen={tabState.detailOpen}
         hasSelection={tabState.selectedId != null}
         hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
+        paused={paused}
       />
     </div>
   );
@@ -72,6 +116,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const urlSync = useUrlSync();
   const urlState = readUrlState();
   const tabState = useTabState(schema, snapshot);
+  const themeHook = useTheme();
   const [position, setPosition] = useState(() => urlState.position ?? 0);
 
   // On mount: jump to URL position
@@ -97,6 +142,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         mode="history"
         timestamp={snapshot?.timestamp}
         loading={loading}
+        themeHook={themeHook}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -107,12 +153,13 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         {snapshot ? (
           <TabContent snapshot={snapshot} schema={schema} tabState={tabState} />
         ) : (
-          <div className="flex items-center justify-center h-full text-slate-500">
+          <div className="flex items-center justify-center h-full text-[var(--text-tertiary)]">
             Loading...
           </div>
         )}
       </div>
       <HintsBar
+        mode="history"
         detailOpen={tabState.detailOpen}
         hasSelection={tabState.selectedId != null}
         hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
@@ -160,7 +207,7 @@ function useTabState(
   const [detailOpen, setDetailOpen] = useState(false);
   const [drillDownTarget, setDrillDownTarget] = useState<{
     tab: TabKey;
-    field: string;
+    targetField?: string;
     value: unknown;
   } | null>(null);
 
@@ -198,8 +245,9 @@ function useTabState(
 
     const data = getTabData(snapshot, drillDownTarget.tab);
     const entityId = schema.tabs[drillDownTarget.tab].entity_id;
+    const searchField = drillDownTarget.targetField ?? entityId;
     const targetRow = data.find(
-      (row) => row[drillDownTarget.field] === drillDownTarget.value,
+      (row) => row[searchField] === drillDownTarget.value,
     );
     if (targetRow) {
       setSelectedId(targetRow[entityId] as string | number);
@@ -210,6 +258,7 @@ function useTabState(
 
   const handleSelectRow = useCallback((id: string | number | null) => {
     setSelectedId(id);
+    setDetailOpen(id != null);
   }, []);
 
   const handleOpenDetail = useCallback(() => {
@@ -223,7 +272,11 @@ function useTabState(
   const handleDrillDown = useCallback(
     (drillDown: DrillDown, value: unknown) => {
       const targetTab = drillDown.target as TabKey;
-      setDrillDownTarget({ tab: targetTab, field: drillDown.via, value });
+      setDrillDownTarget({
+        tab: targetTab,
+        targetField: drillDown.target_field,
+        value,
+      });
       setActiveTab(targetTab);
       setSelectedId(null);
       setDetailOpen(false);
@@ -252,7 +305,7 @@ function useTabState(
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
 
-      // 1-5: switch tabs
+      // 1-6: switch tabs
       const tabIndex = parseInt(e.key) - 1;
       if (tabIndex >= 0 && tabIndex < TAB_ORDER.length) {
         e.preventDefault();
@@ -296,33 +349,85 @@ function useTabState(
 // Components
 // ============================================================
 
+interface ThemeHook {
+  theme: "light" | "dark" | "system";
+  effective: "light" | "dark";
+  cycle: () => void;
+}
+
 function Header({
   mode,
   timestamp,
   loading,
+  paused,
+  onTogglePause,
+  themeHook,
 }: {
   mode: string;
   timestamp?: number;
   loading?: boolean;
+  paused?: boolean;
+  onTogglePause?: () => void;
+  themeHook: ThemeHook;
 }) {
   const ts = timestamp ? new Date(timestamp * 1000).toLocaleString() : "-";
+
+  const ThemeIcon =
+    themeHook.theme === "light"
+      ? Sun
+      : themeHook.theme === "dark"
+        ? Moon
+        : Monitor;
+
   return (
-    <div className="flex items-center justify-between px-4 py-1.5 bg-slate-900 border-b border-slate-700">
+    <div className="flex items-center justify-between px-4 py-2 bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
       <div className="flex items-center gap-3">
-        <span className="text-sm font-bold text-slate-200">rpglot</span>
+        <div className="flex items-center gap-1.5">
+          <Database size={16} className="text-[var(--accent-text)]" />
+          <span className="text-sm font-semibold text-[var(--text-primary)]">
+            rpglot
+          </span>
+        </div>
         <span
-          className={`text-xs px-1.5 py-0.5 rounded ${
+          className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
             mode === "live"
-              ? "bg-green-900/50 text-green-400"
-              : "bg-yellow-900/50 text-yellow-400"
+              ? "bg-[var(--status-success-bg)] text-[var(--status-success)]"
+              : "bg-[var(--status-warning-bg)] text-[var(--status-warning)]"
           }`}
         >
+          {mode === "live" ? <Radio size={10} /> : <History size={10} />}
           {mode}
         </span>
+        {mode === "live" && onTogglePause && (
+          <button
+            onClick={onTogglePause}
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded transition-colors ${
+              paused
+                ? "bg-[var(--status-warning-bg)] text-[var(--status-warning)]"
+                : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+            }`}
+          >
+            {paused ? <Play size={12} /> : <Pause size={12} />}
+            {paused ? "resume" : "pause"}
+          </button>
+        )}
       </div>
-      <div className="flex items-center gap-2 text-xs text-slate-400">
-        {loading && <span className="text-yellow-400">loading...</span>}
-        <span>{ts}</span>
+      <div className="flex items-center gap-3">
+        {loading && (
+          <span className="text-xs text-[var(--status-warning)]">
+            loading...
+          </span>
+        )}
+        <span className="text-xs text-[var(--text-tertiary)] font-mono tabular-nums">
+          {ts}
+        </span>
+        <button
+          onClick={themeHook.cycle}
+          className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          title={`Theme: ${themeHook.theme}`}
+        >
+          <ThemeIcon size={16} />
+        </button>
       </div>
     </div>
   );
@@ -392,32 +497,41 @@ function TabContent({
 }
 
 function HintsBar({
+  mode,
   detailOpen,
   hasSelection,
   hasDrillDown,
+  paused,
 }: {
+  mode: "live" | "history";
   detailOpen: boolean;
   hasSelection: boolean;
   hasDrillDown: boolean;
+  paused?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-4 px-4 py-1 bg-slate-900 border-t border-slate-700 text-[10px] text-slate-500">
+    <div className="flex items-center gap-4 px-4 py-1 bg-[var(--bg-surface)] border-t border-[var(--border-default)] text-[11px] text-[var(--text-tertiary)]">
       <Hint keys="1-6" action="tabs" />
       <Hint keys="j/k" action="navigate" />
-      {hasSelection && <Hint keys="Enter" action="details" />}
       {(detailOpen || hasSelection) && (
         <Hint keys="Esc" action={detailOpen ? "close detail" : "deselect"} />
       )}
       {hasSelection && hasDrillDown && <Hint keys=">" action="drill-down" />}
       <Hint keys="/" action="filter" />
+      {mode === "live" && (
+        <Hint keys="Space" action={paused ? "resume" : "pause"} />
+      )}
     </div>
   );
 }
 
 function Hint({ keys, action }: { keys: string; action: string }) {
   return (
-    <span>
-      <span className="text-slate-400">{keys}</span> <span>{action}</span>
+    <span className="flex items-center gap-1">
+      <kbd className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded text-[10px] font-mono text-[var(--text-secondary)]">
+        {keys}
+      </kbd>
+      <span>{action}</span>
     </span>
   );
 }

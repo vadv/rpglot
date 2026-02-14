@@ -1,4 +1,12 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import {
+  X,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  Check,
+  ExternalLink,
+} from "lucide-react";
 import type { TabKey, ColumnSchema, DrillDown } from "../api/types";
 import { formatValue } from "../utils/formatters";
 
@@ -318,17 +326,17 @@ export function DetailPanel({
     drillDown && drillDownValue != null && drillDownValue !== 0;
 
   return (
-    <div className="w-[480px] min-w-[480px] border-l border-slate-700 bg-slate-900/95 flex flex-col h-full">
+    <div className="w-[480px] min-w-[480px] border-l border-[var(--border-default)] bg-[var(--bg-surface)] flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-800/50">
-        <span className="text-sm font-medium text-slate-200">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border-default)] bg-[var(--bg-elevated)]">
+        <span className="text-sm font-medium text-[var(--text-primary)]">
           {TAB_NAMES[tab]} Detail
         </span>
         <button
           onClick={onClose}
-          className="text-slate-400 hover:text-white text-lg leading-none px-1"
+          className="p-0.5 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
         >
-          x
+          <X size={16} />
         </button>
       </div>
 
@@ -346,12 +354,13 @@ export function DetailPanel({
 
       {/* Drill-down footer */}
       {hasDrillDown && (
-        <div className="px-4 py-2 border-t border-slate-700">
+        <div className="px-4 py-2 border-t border-[var(--border-default)]">
           <button
             onClick={() => onDrillDown(drillDown!, drillDownValue)}
-            className="w-full px-3 py-1.5 text-xs rounded bg-blue-900/40 text-blue-300 hover:bg-blue-800/50 transition-colors"
+            className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 text-xs rounded bg-[var(--accent-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent)] hover:text-[var(--text-inverse)] transition-colors font-medium"
           >
-            {">"} {drillDown!.description}
+            <ExternalLink size={12} />
+            {drillDown!.description}
           </button>
         </div>
       )}
@@ -371,18 +380,22 @@ function DetailSection({
   const [collapsed, setCollapsed] = useState(false);
 
   if (section.type === "query") {
-    const queryText = String(row["query"] ?? "");
+    const fieldKey = section.fields[0] ?? "query";
+    const queryText = String(row[fieldKey] ?? "");
     if (!queryText) return null;
 
     return (
       <div>
-        <SectionHeader
-          title={section.title}
-          collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
-        />
+        <div className="flex items-center justify-between">
+          <SectionHeader
+            title={section.title}
+            collapsed={collapsed}
+            onToggle={() => setCollapsed(!collapsed)}
+          />
+          {!collapsed && <CopyButton text={queryText} />}
+        </div>
         {!collapsed && (
-          <pre className="mt-1.5 p-3 bg-slate-950 rounded text-xs text-slate-300 whitespace-pre-wrap break-all max-h-64 overflow-y-auto border border-slate-800">
+          <pre className="mt-1.5 p-3 bg-[var(--bg-base)] border border-[var(--border-default)] rounded-lg text-[13px] font-mono text-[var(--text-primary)] whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
             {queryText}
           </pre>
         )}
@@ -437,10 +450,40 @@ function SectionHeader({
   return (
     <button
       onClick={onToggle}
-      className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-400 hover:text-blue-300 transition-colors"
+      className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--accent-text)] hover:opacity-80 transition-opacity"
     >
-      <span className="text-[8px]">{collapsed ? ">" : "v"}</span>
+      {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
       {title}
+    </button>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+    >
+      {copied ? (
+        <>
+          <Check size={10} className="text-[var(--status-success)]" />
+          <span className="text-[var(--status-success)]">copied</span>
+        </>
+      ) : (
+        <>
+          <Copy size={10} />
+          <span>copy</span>
+        </>
+      )}
     </button>
   );
 }
@@ -448,10 +491,10 @@ function SectionHeader({
 function KV({ label, value }: { label: string; value: string }) {
   return (
     <>
-      <span className="text-slate-500 whitespace-nowrap leading-[20px]">
+      <span className="text-[var(--text-tertiary)] whitespace-nowrap leading-[20px]">
         {label}
       </span>
-      <span className="text-slate-200 whitespace-nowrap text-right tabular-nums leading-[20px]">
+      <span className="text-[var(--text-primary)] whitespace-nowrap text-right font-mono tabular-nums leading-[20px]">
         {value}
       </span>
     </>

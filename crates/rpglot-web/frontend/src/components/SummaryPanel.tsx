@@ -1,5 +1,28 @@
+import {
+  Cpu,
+  MemoryStick,
+  HardDrive,
+  Network,
+  Database,
+  Server,
+  Gauge,
+  BarChart,
+} from "lucide-react";
 import type { ApiSnapshot, SummarySchema } from "../api/types";
 import { formatValue } from "../utils/formatters";
+
+const SECTION_ICONS: Record<string, typeof Cpu> = {
+  cpu: Cpu,
+  load: Gauge,
+  memory: MemoryStick,
+  swap: MemoryStick,
+  psi: BarChart,
+  vmstat: Server,
+  disk: HardDrive,
+  network: Network,
+  pg: Database,
+  bgwriter: Database,
+};
 
 interface SummaryPanelProps {
   snapshot: ApiSnapshot;
@@ -8,25 +31,31 @@ interface SummaryPanelProps {
 
 export function SummaryPanel({ snapshot, schema }: SummaryPanelProps) {
   const systemSections = schema.system
-    .map((section) => ({ section, data: getSystemData(snapshot, section.key) }))
+    .map((section) => ({
+      section,
+      data: getSystemData(snapshot, section.key),
+    }))
     .filter((s) => s.data !== null);
 
   const pgSections = schema.pg
-    .map((section) => ({ section, data: getPgData(snapshot, section.key) }))
+    .map((section) => ({
+      section,
+      data: getPgData(snapshot, section.key),
+    }))
     .filter((s) => s.data !== null);
 
-  // Disk and network arrays need special handling
   const disks = snapshot.system.disks;
   const networks = snapshot.system.networks;
 
   return (
-    <div className="px-3 py-2 bg-slate-800/30 border-b border-slate-700/50">
+    <div className="px-3 py-2 bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
       <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-4 gap-y-2">
         {systemSections.map(({ section, data }) => {
           if (section.key === "disk" || section.key === "network") return null;
           return (
             <SummaryCard
               key={section.key}
+              sectionKey={section.key}
               label={section.label}
               fields={section.fields}
               data={data!}
@@ -43,6 +72,7 @@ export function SummaryPanel({ snapshot, schema }: SummaryPanelProps) {
         {pgSections.map(({ section, data }) => (
           <SummaryCard
             key={section.key}
+            sectionKey={section.key}
             label={section.label}
             fields={section.fields}
             data={data!}
@@ -55,27 +85,47 @@ export function SummaryPanel({ snapshot, schema }: SummaryPanelProps) {
 }
 
 function SummaryCard({
+  sectionKey,
   label,
   fields,
   data,
   accent,
 }: {
+  sectionKey: string;
   label: string;
-  fields: { key: string; label: string; unit?: string; format?: string }[];
+  fields: {
+    key: string;
+    label: string;
+    unit?: string;
+    format?: string;
+  }[];
   data: Record<string, unknown>;
   accent?: boolean;
 }) {
   const visibleFields = fields.filter((f) => data[f.key] != null);
   if (visibleFields.length === 0) return null;
 
+  const Icon = SECTION_ICONS[sectionKey] ?? Server;
+
   return (
-    <div className="min-w-0">
-      <div
-        className={`text-[10px] font-semibold uppercase tracking-wider mb-0.5 ${
-          accent ? "text-blue-400" : "text-slate-500"
-        }`}
-      >
-        {label}
+    <div
+      className="min-w-0 p-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)]"
+      style={{ boxShadow: "var(--shadow-sm)" }}
+    >
+      <div className="flex items-center gap-1.5 mb-1">
+        <Icon
+          size={12}
+          className={
+            accent ? "text-[var(--accent-text)]" : "text-[var(--text-tertiary)]"
+          }
+        />
+        <span
+          className={`text-[10px] font-semibold uppercase tracking-wider ${
+            accent ? "text-[var(--accent-text)]" : "text-[var(--text-tertiary)]"
+          }`}
+        >
+          {label}
+        </span>
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         {visibleFields.map((f) => (
@@ -92,9 +142,15 @@ function SummaryCard({
 
 function DiskCard({ disk }: { disk: ApiSnapshot["system"]["disks"][number] }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] font-semibold uppercase tracking-wider mb-0.5 text-slate-500">
-        Disk: {disk.name}
+    <div
+      className="min-w-0 p-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)]"
+      style={{ boxShadow: "var(--shadow-sm)" }}
+    >
+      <div className="flex items-center gap-1.5 mb-1">
+        <HardDrive size={12} className="text-[var(--text-tertiary)]" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+          Disk: {disk.name}
+        </span>
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         <KV
@@ -122,9 +178,15 @@ function NetworkCard({
   net: ApiSnapshot["system"]["networks"][number];
 }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] font-semibold uppercase tracking-wider mb-0.5 text-slate-500">
-        Net: {net.name}
+    <div
+      className="min-w-0 p-2 rounded-lg border border-[var(--border-default)] bg-[var(--bg-base)]"
+      style={{ boxShadow: "var(--shadow-sm)" }}
+    >
+      <div className="flex items-center gap-1.5 mb-1">
+        <Network size={12} className="text-[var(--text-tertiary)]" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+          Net: {net.name}
+        </span>
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         <KV
@@ -151,8 +213,10 @@ function NetworkCard({
 function KV({ label, value }: { label: string; value: string }) {
   return (
     <>
-      <span className="text-slate-500 whitespace-nowrap">{label}</span>
-      <span className="text-slate-200 whitespace-nowrap text-right tabular-nums">
+      <span className="text-[var(--text-tertiary)] whitespace-nowrap">
+        {label}
+      </span>
+      <span className="text-[var(--text-primary)] whitespace-nowrap text-right font-mono tabular-nums">
         {value}
       </span>
     </>
