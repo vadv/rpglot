@@ -34,16 +34,33 @@ export function useLiveSnapshot() {
 export function useHistorySnapshot() {
   const [snapshot, setSnapshot] = useState<ApiSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const jumpTo = async (position: number) => {
+  const jumpTo = useCallback((position: number) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
     setLoading(true);
-    try {
-      const snap = await fetchSnapshot({ position });
-      setSnapshot(snap);
-    } finally {
-      setLoading(false);
-    }
-  };
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const snap = await fetchSnapshot({ position });
+        setSnapshot(snap);
+      } finally {
+        setLoading(false);
+      }
+    }, 50);
+  }, []);
+
+  const jumpToTimestamp = useCallback((timestamp: number) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setLoading(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const snap = await fetchSnapshot({ timestamp });
+        setSnapshot(snap);
+      } finally {
+        setLoading(false);
+      }
+    }, 50);
+  }, []);
 
   // Load first snapshot on mount
   useEffect(() => {
@@ -52,5 +69,12 @@ export function useHistorySnapshot() {
       .catch(() => {});
   }, []);
 
-  return { snapshot, loading, jumpTo };
+  // Cleanup debounce timer
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
+  return { snapshot, loading, jumpTo, jumpToTimestamp };
 }

@@ -12,7 +12,7 @@ use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 
 /// Configuration for automatic data rotation.
@@ -46,9 +46,9 @@ impl RotationConfig {
 /// WAL entry containing a snapshot and its string interner.
 /// Each WAL entry is self-contained for recovery purposes.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct WalEntry {
-    snapshot: Snapshot,
-    interner: StringInterner,
+pub(crate) struct WalEntry {
+    pub(crate) snapshot: Snapshot,
+    pub(crate) interner: StringInterner,
 }
 
 pub struct StorageManager {
@@ -1041,6 +1041,11 @@ impl StorageManager {
     }
 
     /// Loads unflushed snapshots and their interners from WAL file.
+    pub fn load_wal_snapshots(&self) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
+        self.load_wal_snapshots_with_interner()
+    }
+
+    /// Loads unflushed snapshots and their interners from WAL file (internal).
     fn load_wal_snapshots_with_interner(&self) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
         let wal_path = self.base_path.join("wal.log");
         let mut snapshots = Vec::new();
@@ -1057,6 +1062,60 @@ impl StorageManager {
         }
 
         Ok((snapshots, merged_interner))
+    }
+
+    /// Scans WAL file and returns entry metadata (byte_offset, byte_length, timestamp)
+    /// for each entry, plus a merged interner. Snapshots are deserialized to extract
+    /// timestamps but immediately dropped — peak RAM = one snapshot at a time.
+    pub fn scan_wal_metadata(
+        wal_path: &Path,
+    ) -> std::io::Result<(Vec<(u64, u64, i64)>, StringInterner)> {
+        let data = match std::fs::read(wal_path) {
+            Ok(d) if !d.is_empty() => d,
+            Ok(_) => return Ok((Vec::new(), StringInterner::new())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Vec::new(), StringInterner::new()));
+            }
+            Err(e) => return Err(e),
+        };
+
+        let mut entries = Vec::new();
+        let mut merged = StringInterner::new();
+        let mut cursor = std::io::Cursor::new(&data);
+
+        while (cursor.position() as usize) < data.len() {
+            let start = cursor.position();
+            match bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
+                Ok(entry) => {
+                    let end = cursor.position();
+                    let ts = entry.snapshot.timestamp;
+                    merged.merge(&entry.interner);
+                    entries.push((start, end - start, ts));
+                    // entry.snapshot dropped here — RAM freed
+                }
+                Err(_) => break,
+            }
+        }
+
+        Ok((entries, merged))
+    }
+
+    /// Loads a single snapshot from WAL at the given byte range.
+    /// Reads the WAL file, extracts the entry at [offset..offset+length], deserializes it.
+    pub fn load_wal_snapshot_at(
+        wal_path: &Path,
+        offset: u64,
+        length: u64,
+    ) -> std::io::Result<Snapshot> {
+        let data = std::fs::read(wal_path)?;
+        let start = offset as usize;
+        let end = (offset + length) as usize;
+        if end > data.len() {
+            return Err(std::io::Error::other("WAL offset out of bounds"));
+        }
+        let entry: WalEntry =
+            bincode::deserialize(&data[start..end]).map_err(std::io::Error::other)?;
+        Ok(entry.snapshot)
     }
 
     /// Loads all chunks from the storage directory and returns reconstructed snapshots
@@ -1113,7 +1172,7 @@ impl StorageManager {
     }
 
     /// Reconstructs full snapshots from a chunk's deltas.
-    fn reconstruct_snapshots_from_chunk(chunk: &Chunk) -> std::io::Result<Vec<Snapshot>> {
+    pub fn reconstruct_snapshots_from_chunk(chunk: &Chunk) -> std::io::Result<Vec<Snapshot>> {
         let mut snapshots = Vec::new();
         let mut last_snapshot: Option<Snapshot> = None;
 

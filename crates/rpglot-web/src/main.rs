@@ -23,7 +23,7 @@ use axum::extract::Request;
 use axum::http::{Uri, header};
 use axum::middleware::Next;
 use rpglot_core::api::convert::{ConvertContext, convert};
-use rpglot_core::api::schema::{ApiMode, ApiSchema, TimelineInfo};
+use rpglot_core::api::schema::{ApiMode, ApiSchema, DateInfo, TimelineInfo};
 use rpglot_core::api::snapshot::ApiSnapshot;
 #[cfg(target_os = "linux")]
 use rpglot_core::collector::RealFs;
@@ -117,7 +117,7 @@ struct WebAppInner {
     // PGI rate tracking
     pgi_prev_sample: HashMap<u32, rpglot_core::storage::model::PgStatUserIndexesInfo>,
     pgi_prev_ts: Option<i64>,
-    // History metadata (cached at startup)
+    // History metadata (updated by refresh task)
     total_snapshots: Option<usize>,
     history_start: Option<i64>,
     history_end: Option<i64>,
@@ -157,13 +157,7 @@ async fn async_main(args: Args) {
         info!(path = %history_path.display(), "starting in history mode");
         let hp = HistoryProvider::from_path(history_path).expect("failed to open history data");
         let total = hp.len();
-        let (start, end) = if total > 0 {
-            let first_ts = hp.snapshot_at(0).map(|s| s.timestamp).unwrap_or(0);
-            let last_ts = hp.snapshot_at(total - 1).map(|s| s.timestamp).unwrap_or(0);
-            (first_ts, last_ts)
-        } else {
-            (0, 0)
-        };
+        let (start, end) = hp.timestamp_range();
         info!(snapshots = total, "loaded history data");
         (
             Box::new(hp),
@@ -212,8 +206,18 @@ async fn async_main(args: Args) {
         });
     } else {
         // History: load first snapshot
-        let mut inner = state.lock().unwrap();
-        advance_and_convert(&mut inner);
+        {
+            let mut inner = state.lock().unwrap();
+            advance_and_convert(&mut inner);
+        }
+        // Start background refresh for history mode
+        if let Some(ref history_path) = args.history {
+            let state_clone = state.clone();
+            let path = history_path.clone();
+            tokio::spawn(async move {
+                history_refresh_loop(state_clone, path).await;
+            });
+        }
     }
 
     // Basic Auth
@@ -323,6 +327,42 @@ async fn tick_loop(
     }
 }
 
+/// Background loop: periodically refresh history snapshots from disk.
+async fn history_refresh_loop(state: SharedState, path: PathBuf) {
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    loop {
+        tick.tick().await;
+
+        let state_clone = state.clone();
+        let path_clone = path.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let mut inner = state_clone.lock().unwrap();
+            let hp = inner
+                .provider
+                .as_any_mut()
+                .and_then(|a| a.downcast_mut::<HistoryProvider>());
+            let Some(hp) = hp else { return Ok(0) };
+            let added = hp.refresh(&path_clone)?;
+            if added > 0 {
+                let total = hp.len();
+                let (start, end) = hp.timestamp_range();
+                inner.total_snapshots = Some(total);
+                inner.history_start = Some(start);
+                inner.history_end = Some(end);
+                info!(added, total, "history refreshed");
+            }
+            Ok::<usize, rpglot_core::provider::ProviderError>(added)
+        })
+        .await;
+
+        if let Ok(Err(e)) = result {
+            warn!(error = %e, "history refresh failed");
+        }
+    }
+}
+
 /// Advance provider, compute rates, convert to ApiSnapshot.
 fn advance_and_convert(inner: &mut WebAppInner) {
     // Advance provider to get next snapshot
@@ -388,14 +428,63 @@ fn history_jump_to_timestamp(inner: &mut WebAppInner, timestamp: i64) -> bool {
     false
 }
 
-/// Reconvert current provider snapshot to ApiSnapshot (after history jump).
-fn reconvert_current(inner: &mut WebAppInner) {
-    let Some(snapshot) = inner.provider.current().cloned() else {
-        return;
-    };
-    let interner = inner.provider.interner();
+/// Extract collected_at timestamp from PgStatStatements block.
+fn extract_pgs_collected_at(snapshot: &Snapshot) -> Option<i64> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatStatements(stmts) = b {
+            stmts.first().map(|s| s.collected_at).filter(|&t| t > 0)
+        } else {
+            None
+        }
+    })
+}
 
-    // Reset rates after jump (previous samples no longer adjacent)
+/// Find the nearest previous snapshot with a DIFFERENT PGS collected_at.
+/// Daemon caches pg_stat_statements for ~30s, so adjacent snapshots often
+/// have the same collected_at. We look further back to find a snapshot
+/// with different data for accurate rate computation.
+fn find_pgs_prev_snapshot(
+    hp: &mut HistoryProvider,
+    pos: usize,
+    current_collected_at: i64,
+) -> Option<Snapshot> {
+    let max_lookback = 10;
+    let start = pos.saturating_sub(max_lookback);
+    for p in (start..pos).rev() {
+        if let Some(snap) = hp.snapshot_at(p) {
+            if let Some(ts) = extract_pgs_collected_at(&snap) {
+                if ts != current_collected_at {
+                    return Some(snap);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Reconvert current provider snapshot to ApiSnapshot (after history jump).
+/// Uses the adjacent previous snapshot (position-1) to compute rates and system deltas.
+fn reconvert_current(inner: &mut WebAppInner) {
+    // Extract snapshots from provider (mutable borrow for lazy loading)
+    let (snapshot, prev_adjacent, position) = {
+        let provider = inner
+            .provider
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<HistoryProvider>());
+        let Some(hp) = provider else { return };
+        let pos = hp.position();
+        let snap = hp.snapshot_at(pos);
+        let prev = if pos > 0 {
+            hp.snapshot_at(pos - 1)
+        } else {
+            None
+        };
+        (snap, prev, pos)
+    };
+
+    let Some(snapshot) = snapshot else { return };
+
+    // Reset rate tracking state
     inner.pgs_rates.clear();
     inner.pgt_rates.clear();
     inner.pgi_rates.clear();
@@ -406,19 +495,97 @@ fn reconvert_current(inner: &mut WebAppInner) {
     inner.pgi_prev_sample.clear();
     inner.pgi_prev_ts = None;
 
+    // Seed prev_samples and compute rates
+    if let Some(ref prev) = prev_adjacent {
+        // PGT/PGI: seed from adjacent (pos-1), they use snapshot.timestamp
+        seed_pgt_prev(inner, prev);
+        seed_pgi_prev(inner, prev);
+        update_pgt_rates(inner, &snapshot);
+        update_pgi_rates(inner, &snapshot);
+
+        // PGS: daemon caches statements for ~30s while writing snapshots every ~10s.
+        // Adjacent snapshot (pos-1) may have the same collected_at → rates would be empty.
+        // Look back further to find a snapshot with a different collected_at.
+        let pgs_seed = match extract_pgs_collected_at(&snapshot) {
+            Some(curr_ts) => {
+                let lookback = {
+                    let hp = inner
+                        .provider
+                        .as_any_mut()
+                        .and_then(|a| a.downcast_mut::<HistoryProvider>());
+                    hp.and_then(|hp| find_pgs_prev_snapshot(hp, position, curr_ts))
+                };
+                lookback
+            }
+            None => None,
+        };
+        let pgs_prev = pgs_seed.as_ref().unwrap_or(prev);
+        seed_pgs_prev(inner, pgs_prev);
+        update_pgs_rates(inner, &snapshot);
+    }
+
+    let interner = inner.provider.interner();
     let ctx = ConvertContext {
         snapshot: &snapshot,
-        prev_snapshot: inner.prev_snapshot.as_ref(),
+        prev_snapshot: prev_adjacent.as_ref(),
         interner,
         pgs_rates: &inner.pgs_rates,
         pgt_rates: &inner.pgt_rates,
         pgi_rates: &inner.pgi_rates,
     };
-    let api_snapshot = convert(&ctx);
+    let mut api_snapshot = convert(&ctx);
+    api_snapshot.position = Some(position);
 
-    inner.prev_snapshot = inner.raw_snapshot.take();
+    inner.prev_snapshot = prev_adjacent;
     inner.raw_snapshot = Some(snapshot);
     inner.current_snapshot = Some(Arc::new(api_snapshot));
+}
+
+/// Seed PGS prev_sample state from a snapshot (for rate computation after jump).
+fn seed_pgs_prev(inner: &mut WebAppInner, prev: &Snapshot) {
+    if let Some(stmts) = prev.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatStatements(v) = b {
+            Some(v)
+        } else {
+            None
+        }
+    }) {
+        let ts = stmts
+            .first()
+            .map(|s| s.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(prev.timestamp);
+        inner.pgs_prev_ts = Some(ts);
+        inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
+    }
+}
+
+/// Seed PGT prev_sample state from a snapshot (for rate computation after jump).
+fn seed_pgt_prev(inner: &mut WebAppInner, prev: &Snapshot) {
+    if let Some(tables) = prev.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatUserTables(v) = b {
+            Some(v)
+        } else {
+            None
+        }
+    }) {
+        inner.pgt_prev_ts = Some(prev.timestamp);
+        inner.pgt_prev_sample = tables.iter().map(|t| (t.relid, t.clone())).collect();
+    }
+}
+
+/// Seed PGI prev_sample state from a snapshot (for rate computation after jump).
+fn seed_pgi_prev(inner: &mut WebAppInner, prev: &Snapshot) {
+    if let Some(indexes) = prev.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatUserIndexes(v) = b {
+            Some(v)
+        } else {
+            None
+        }
+    }) {
+        inner.pgi_prev_ts = Some(prev.timestamp);
+        inner.pgi_prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
+    }
 }
 
 // ============================================================
@@ -663,6 +830,7 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
             start: inner.history_start.unwrap_or(0),
             end: inner.history_end.unwrap_or(0),
             total_snapshots: inner.total_snapshots.unwrap_or(0),
+            dates: None, // lightweight — dates available via /api/v1/timeline
         })
     } else {
         None
@@ -740,11 +908,76 @@ async fn handle_timeline(State(state_tuple): AppState) -> Result<Json<TimelineIn
     if inner.mode != Mode::History {
         return Err(StatusCode::NOT_FOUND);
     }
+    let dates = {
+        let provider = inner
+            .provider
+            .as_any()
+            .and_then(|a| a.downcast_ref::<HistoryProvider>());
+        provider.map(compute_dates_index)
+    };
     Ok(Json(TimelineInfo {
         start: inner.history_start.unwrap_or(0),
         end: inner.history_end.unwrap_or(0),
         total_snapshots: inner.total_snapshots.unwrap_or(0),
+        dates,
     }))
+}
+
+/// Build a per-date index from HistoryProvider timestamps (no snapshot loading).
+fn compute_dates_index(hp: &HistoryProvider) -> Vec<DateInfo> {
+    use std::collections::BTreeMap;
+
+    struct DateAcc {
+        first_position: usize,
+        count: usize,
+        first_timestamp: i64,
+        last_timestamp: i64,
+    }
+
+    let mut map: BTreeMap<String, DateAcc> = BTreeMap::new();
+    for (pos, &ts) in hp.timestamps().iter().enumerate() {
+        let days = ts / 86400;
+        let date_str = {
+            let d = chrono_free_date(days);
+            format!("{:04}-{:02}-{:02}", d.0, d.1, d.2)
+        };
+        map.entry(date_str)
+            .and_modify(|acc| {
+                acc.count += 1;
+                acc.last_timestamp = ts;
+            })
+            .or_insert(DateAcc {
+                first_position: pos,
+                count: 1,
+                first_timestamp: ts,
+                last_timestamp: ts,
+            });
+    }
+    map.into_iter()
+        .map(|(date, acc)| DateInfo {
+            date,
+            first_position: acc.first_position,
+            count: acc.count,
+            first_timestamp: acc.first_timestamp,
+            last_timestamp: acc.last_timestamp,
+        })
+        .collect()
+}
+
+/// Convert days-since-epoch to (year, month, day) without chrono crate.
+fn chrono_free_date(days_since_epoch: i64) -> (i32, u32, u32) {
+    // Algorithm from https://howardhinnant.github.io/date_algorithms.html
+    let z = days_since_epoch + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // year of era [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m, d)
 }
 
 async fn handle_stream(
@@ -884,6 +1117,7 @@ async fn basic_auth_middleware(
         ApiSnapshot,
         ApiSchema,
         TimelineInfo,
+        DateInfo,
         rpglot_core::api::schema::ApiMode,
         rpglot_core::api::schema::SummarySchema,
         rpglot_core::api::schema::SummarySection,

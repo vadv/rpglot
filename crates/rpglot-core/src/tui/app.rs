@@ -352,9 +352,7 @@ impl App {
         let pos = history.position();
 
         let current = history.current().cloned();
-        let prev = pos
-            .checked_sub(1)
-            .and_then(|p| history.snapshot_at(p).cloned());
+        let prev = pos.checked_sub(1).and_then(|p| history.snapshot_at(p));
 
         // Reset the diff baseline to the snapshot before the target (if any).
         self.state.previous_snapshot = prev;

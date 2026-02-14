@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import type { TabKey, ColumnSchema, DrillDown } from "../api/types";
 import { formatValue } from "../utils/formatters";
+import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
+import { Tooltip } from "./Tooltip";
 
 interface DetailPanelProps {
   tab: TabKey;
@@ -17,6 +19,7 @@ interface DetailPanelProps {
   drillDown?: DrillDown;
   onClose: () => void;
   onDrillDown: (drillDown: DrillDown, value: unknown) => void;
+  snapshotTimestamp?: number;
 }
 
 interface Section {
@@ -317,6 +320,7 @@ export function DetailPanel({
   drillDown,
   onClose,
   onDrillDown,
+  snapshotTimestamp,
 }: DetailPanelProps) {
   const sections = TAB_SECTIONS[tab];
   const colMap = new Map(columns.map((c) => [c.key, c]));
@@ -348,6 +352,7 @@ export function DetailPanel({
             section={section}
             row={row}
             colMap={colMap}
+            snapshotTimestamp={snapshotTimestamp}
           />
         ))}
       </div>
@@ -372,10 +377,12 @@ function DetailSection({
   section,
   row,
   colMap,
+  snapshotTimestamp,
 }: {
   section: Section;
   row: Record<string, unknown>;
   colMap: Map<string, ColumnSchema>;
+  snapshotTimestamp?: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -427,10 +434,12 @@ function DetailSection({
               val == null
                 ? "-"
                 : col
-                  ? formatValue(val, col.unit, col.format)
+                  ? formatValue(val, col.unit, col.format, snapshotTimestamp)
                   : String(val);
 
-            return <KV key={key} label={label} value={formatted} />;
+            return (
+              <KV key={key} fieldKey={key} label={label} value={formatted} />
+            );
           })}
         </div>
       )}
@@ -488,11 +497,28 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function KV({ label, value }: { label: string; value: string }) {
+function KV({
+  fieldKey,
+  label,
+  value,
+}: {
+  fieldKey: string;
+  label: string;
+  value: string;
+}) {
+  const desc = COLUMN_DESCRIPTIONS[fieldKey];
   return (
     <>
       <span className="text-[var(--text-tertiary)] whitespace-nowrap leading-[20px]">
-        {label}
+        {desc ? (
+          <Tooltip content={desc} side="top">
+            <span className="cursor-help border-b border-dotted border-[var(--border-subtle)]">
+              {label}
+            </span>
+          </Tooltip>
+        ) : (
+          label
+        )}
       </span>
       <span className="text-[var(--text-primary)] whitespace-nowrap text-right font-mono tabular-nums leading-[20px]">
         {value}

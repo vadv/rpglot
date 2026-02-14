@@ -31,6 +31,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
 
     ApiSnapshot {
         timestamp: snap.timestamp,
+        position: None,
         system: extract_system_summary(snap, ctx.prev_snapshot, delta_time),
         pg: extract_pg_summary(snap, ctx.prev_snapshot, delta_time),
         prc: extract_prc(snap, ctx.prev_snapshot, ctx.interner, delta_time),

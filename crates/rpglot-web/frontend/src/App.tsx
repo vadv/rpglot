@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Database,
   Radio,
@@ -9,16 +9,27 @@ import {
   Moon,
   Monitor,
 } from "lucide-react";
+import { fetchTimeline } from "./api/client";
 import { useSchema } from "./hooks/useSchema";
 import { useLiveSnapshot, useHistorySnapshot } from "./hooks/useSnapshot";
 import { readUrlState, useUrlSync } from "./hooks/useUrlState";
 import { useTheme } from "./hooks/useTheme";
+import { useTimezone } from "./hooks/useTimezone";
+import { formatTimestamp, formatDate } from "./utils/formatters";
+import type { TimezoneMode } from "./utils/formatters";
 import { TabBar } from "./components/TabBar";
 import { SummaryPanel } from "./components/SummaryPanel";
 import { DataTable } from "./components/DataTable";
 import { DetailPanel } from "./components/DetailPanel";
-import { Timeline } from "./components/Timeline";
-import type { ApiSnapshot, ApiSchema, TabKey, DrillDown } from "./api/types";
+import { Timeline, CalendarPopover, TimeInput } from "./components/Timeline";
+import type {
+  ApiSnapshot,
+  ApiSchema,
+  TabKey,
+  DrillDown,
+  TimelineInfo,
+  DateInfo,
+} from "./api/types";
 
 const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pgl"];
 
@@ -53,6 +64,7 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
   const tabState = useTabState(schema, snapshot);
   const urlSync = useUrlSync();
   const themeHook = useTheme();
+  const timezoneHook = useTimezone();
 
   // Sync pause timestamp to URL
   useEffect(() => {
@@ -85,6 +97,7 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         paused={paused}
         onTogglePause={togglePause}
         themeHook={themeHook}
+        timezoneHook={timezoneHook}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -112,12 +125,18 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
 }
 
 function HistoryApp({ schema }: { schema: ApiSchema }) {
-  const { snapshot, loading, jumpTo } = useHistorySnapshot();
+  const { snapshot, loading, jumpTo, jumpToTimestamp } = useHistorySnapshot();
   const urlSync = useUrlSync();
   const urlState = readUrlState();
   const tabState = useTabState(schema, snapshot);
   const themeHook = useTheme();
+  const timezoneHook = useTimezone();
   const [position, setPosition] = useState(() => urlState.position ?? 0);
+  const [timeline, setTimeline] = useState(schema.timeline ?? null);
+  const positionRef = useRef(position);
+  positionRef.current = position;
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
 
   // On mount: jump to URL position
   useEffect(() => {
@@ -126,6 +145,37 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Fetch full timeline (with dates) on mount and periodically
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const tl = await fetchTimeline();
+        if (!cancelled) setTimeline(tl);
+      } catch {
+        // keep schema.timeline as fallback
+      }
+    };
+    load();
+    const interval = setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+
+  // Sync position from snapshot.position (after backend jump)
+  useEffect(() => {
+    if (
+      snapshot?.position != null &&
+      snapshot.position !== positionRef.current
+    ) {
+      setPosition(snapshot.position);
+    }
+  }, [snapshot]);
+
+  const totalSnapshots = timeline?.total_snapshots ?? 0;
 
   const handlePositionChange = useCallback(
     (pos: number) => {
@@ -136,6 +186,51 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     [jumpTo, urlSync],
   );
 
+  const handleTimestampJump = useCallback(
+    (ts: number) => {
+      jumpToTimestamp(ts);
+    },
+    [jumpToTimestamp],
+  );
+
+  // Keyboard: Left/Right to step, Shift+Left/Right to step ±1 hour
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.tagName === "SELECT"
+      )
+        return;
+      // Shift+Arrow: step ±1 hour
+      if (e.shiftKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        const ts = snapshotRef.current?.timestamp;
+        if (ts) handleTimestampJump(ts - 3600);
+        return;
+      }
+      if (e.shiftKey && e.key === "ArrowRight") {
+        e.preventDefault();
+        const ts = snapshotRef.current?.timestamp;
+        if (ts) handleTimestampJump(ts + 3600);
+        return;
+      }
+      // Arrow: step ±1 snapshot
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        const cur = positionRef.current;
+        if (cur > 0) handlePositionChange(cur - 1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        const cur = positionRef.current;
+        if (cur < totalSnapshots - 1) handlePositionChange(cur + 1);
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handlePositionChange, handleTimestampJump, totalSnapshots]);
+
   return (
     <div className="flex flex-col h-screen">
       <Header
@@ -143,6 +238,10 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         timestamp={snapshot?.timestamp}
         loading={loading}
         themeHook={themeHook}
+        timezoneHook={timezoneHook}
+        timeline={timeline ?? undefined}
+        onTimestampJump={handleTimestampJump}
+        onDateSelect={handlePositionChange}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -164,12 +263,14 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         hasSelection={tabState.selectedId != null}
         hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
       />
-      {schema.timeline && (
+      {timeline && (
         <Timeline
-          timeline={schema.timeline}
+          timeline={timeline}
           position={position}
           onPositionChange={handlePositionChange}
+          onTimestampJump={handleTimestampJump}
           timestamp={snapshot?.timestamp}
+          timezone={timezoneHook.timezone}
         />
       )}
     </div>
@@ -355,6 +456,17 @@ interface ThemeHook {
   cycle: () => void;
 }
 
+interface TimezoneHookType {
+  timezone: TimezoneMode;
+  cycle: () => void;
+}
+
+const TZ_DISPLAY: Record<TimezoneMode, string> = {
+  local: "LOCAL",
+  utc: "UTC",
+  moscow: "MSK",
+};
+
 function Header({
   mode,
   timestamp,
@@ -362,6 +474,10 @@ function Header({
   paused,
   onTogglePause,
   themeHook,
+  timezoneHook,
+  timeline,
+  onTimestampJump,
+  onDateSelect,
 }: {
   mode: string;
   timestamp?: number;
@@ -369,8 +485,41 @@ function Header({
   paused?: boolean;
   onTogglePause?: () => void;
   themeHook: ThemeHook;
+  timezoneHook: TimezoneHookType;
+  timeline?: TimelineInfo;
+  onTimestampJump?: (ts: number) => void;
+  onDateSelect?: (position: number) => void;
 }) {
-  const ts = timestamp ? new Date(timestamp * 1000).toLocaleString() : "-";
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
+  const dateButtonRef = useRef<HTMLButtonElement>(null);
+
+  const ts = timestamp ?? 0;
+  const tz = timezoneHook.timezone;
+  const dates = timeline?.dates;
+  const currentDateStr = ts > 0 ? formatDate(ts, tz) : "-";
+
+  const toggleCalendar = useCallback(() => {
+    if (!calendarOpen && dateButtonRef.current) {
+      setAnchorRect(dateButtonRef.current.getBoundingClientRect());
+    }
+    setCalendarOpen((prev) => !prev);
+  }, [calendarOpen]);
+
+  const handleSelectDate = useCallback(
+    (dateInfo: DateInfo) => {
+      onDateSelect?.(dateInfo.first_position);
+      setCalendarOpen(false);
+    },
+    [onDateSelect],
+  );
+
+  const handleTimeSubmit = useCallback(
+    (epoch: number) => {
+      onTimestampJump?.(epoch);
+    },
+    [onTimestampJump],
+  );
 
   const ThemeIcon =
     themeHook.theme === "light"
@@ -378,6 +527,8 @@ function Header({
       : themeHook.theme === "dark"
         ? Moon
         : Monitor;
+
+  const isHistory = mode === "history";
 
   return (
     <div className="flex items-center justify-between px-4 py-2 bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
@@ -418,9 +569,37 @@ function Header({
             loading...
           </span>
         )}
-        <span className="text-xs text-[var(--text-tertiary)] font-mono tabular-nums">
-          {ts}
-        </span>
+        {isHistory && dates && dates.length > 0 ? (
+          /* History mode: clickable date + editable time */
+          <div className="flex items-center gap-1.5">
+            <button
+              ref={dateButtonRef}
+              onClick={toggleCalendar}
+              className="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer transition-colors"
+            >
+              {currentDateStr}
+            </button>
+            {ts > 0 && (
+              <TimeInput
+                timestamp={ts}
+                timezone={tz}
+                onSubmit={handleTimeSubmit}
+              />
+            )}
+          </div>
+        ) : (
+          /* Live mode or no dates: static timestamp */
+          <span className="text-xs text-[var(--text-tertiary)] font-mono tabular-nums">
+            {ts > 0 ? formatTimestamp(ts, tz) : "-"}
+          </span>
+        )}
+        <button
+          onClick={timezoneHook.cycle}
+          className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          title="Cycle timezone: Local → UTC → Moscow"
+        >
+          {TZ_DISPLAY[timezoneHook.timezone]}
+        </button>
         <button
           onClick={themeHook.cycle}
           className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
@@ -429,6 +608,17 @@ function Header({
           <ThemeIcon size={16} />
         </button>
       </div>
+
+      {/* Calendar popover */}
+      {calendarOpen && anchorRect && dates && dates.length > 0 && (
+        <CalendarPopover
+          dates={dates}
+          currentDate={currentDateStr}
+          onSelectDate={handleSelectDate}
+          onClose={() => setCalendarOpen(false)}
+          anchorRect={anchorRect}
+        />
+      )}
     </div>
   );
 }
@@ -480,6 +670,7 @@ function TabContent({
           initialFilter={initialFilter}
           onViewChange={handleViewChange}
           onFilterChange={handleFilterChange}
+          snapshotTimestamp={snapshot.timestamp}
         />
       </div>
       {detailOpen && selectedRow && (
@@ -490,6 +681,7 @@ function TabContent({
           drillDown={tabSchema.drill_down}
           onClose={handleCloseDetail}
           onDrillDown={handleDrillDown}
+          snapshotTimestamp={snapshot.timestamp}
         />
       )}
     </div>
@@ -521,6 +713,8 @@ function HintsBar({
       {mode === "live" && (
         <Hint keys="Space" action={paused ? "resume" : "pause"} />
       )}
+      {mode === "history" && <Hint keys="←/→" action="step" />}
+      {mode === "history" && <Hint keys="Shift+←/→" action="±1h" />}
     </div>
   );
 }

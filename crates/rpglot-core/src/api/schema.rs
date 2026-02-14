@@ -35,6 +35,24 @@ pub struct TimelineInfo {
     pub end: i64,
     /// Total number of snapshots.
     pub total_snapshots: usize,
+    /// Per-date index for efficient navigation. Present in timeline endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dates: Option<Vec<DateInfo>>,
+}
+
+/// Information about snapshots available on a specific date.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DateInfo {
+    /// Date string in "YYYY-MM-DD" format (UTC).
+    pub date: String,
+    /// Position of the first snapshot on this date.
+    pub first_position: usize,
+    /// Number of snapshots on this date.
+    pub count: usize,
+    /// Timestamp of the first snapshot on this date.
+    pub first_timestamp: i64,
+    /// Timestamp of the last snapshot on this date.
+    pub last_timestamp: i64,
 }
 
 // ============================================================

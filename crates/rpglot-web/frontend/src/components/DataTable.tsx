@@ -29,6 +29,7 @@ interface DataTableProps {
   initialFilter?: string | null;
   onViewChange?: (view: string) => void;
   onFilterChange?: (filter: string) => void;
+  snapshotTimestamp?: number;
 }
 
 export function DataTable({
@@ -44,6 +45,7 @@ export function DataTable({
   initialFilter,
   onViewChange,
   onFilterChange,
+  snapshotTimestamp,
 }: DataTableProps) {
   const [activeView, setActiveView] = useState(() => {
     if (initialView && views.some((v) => v.key === initialView)) {
@@ -114,6 +116,7 @@ export function DataTable({
                 info.getValue(),
                 schema.unit,
                 schema.format,
+                snapshotTimestamp,
               );
               const colorClass = getThresholdClass(
                 key,
@@ -132,7 +135,7 @@ export function DataTable({
       });
     }
     return defs;
-  }, [allColumns, visibleKeys, isLockTree]);
+  }, [allColumns, visibleKeys, isLockTree, snapshotTimestamp]);
 
   const table = useReactTable({
     data,

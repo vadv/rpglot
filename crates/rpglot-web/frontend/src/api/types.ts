@@ -6,6 +6,7 @@
 
 export interface ApiSnapshot {
   timestamp: number;
+  position?: number;
   system: SystemSummary;
   pg: PgSummary;
   prc: ApiProcessRow[];
@@ -318,6 +319,15 @@ export interface TimelineInfo {
   start: number;
   end: number;
   total_snapshots: number;
+  dates?: DateInfo[];
+}
+
+export interface DateInfo {
+  date: string;
+  first_position: number;
+  count: number;
+  first_timestamp: number;
+  last_timestamp: number;
 }
 
 export interface SummarySchema {

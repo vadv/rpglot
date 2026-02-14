@@ -11,6 +11,9 @@ use utoipa::ToSchema;
 pub struct ApiSnapshot {
     /// Unix timestamp (seconds since epoch).
     pub timestamp: i64,
+    /// Snapshot position in history (0-indexed). Present only in history mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<usize>,
     /// System-level summary metrics.
     pub system: SystemSummary,
     /// PostgreSQL instance-level summary metrics.
