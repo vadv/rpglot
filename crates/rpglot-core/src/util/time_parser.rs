@@ -40,7 +40,7 @@ impl std::error::Error for TimeParseError {}
 /// # Examples
 ///
 /// ```
-/// use rpglot::util::parse_time;
+/// use rpglot_core::util::parse_time;
 ///
 /// // Relative time
 /// let ts = parse_time("-1h").unwrap();

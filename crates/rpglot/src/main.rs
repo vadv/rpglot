@@ -18,13 +18,13 @@ use std::time::Duration;
 use clap::Parser;
 
 #[cfg(target_os = "linux")]
-use rpglot::collector::RealFs;
+use rpglot_core::collector::RealFs;
 #[cfg(not(target_os = "linux"))]
-use rpglot::collector::mock::MockFs;
-use rpglot::collector::{Collector, PostgresCollector};
-use rpglot::provider::{HistoryProvider, LiveProvider, SnapshotProvider};
-use rpglot::tui::App;
-use rpglot::util::parse_time;
+use rpglot_core::collector::mock::MockFs;
+use rpglot_core::collector::{Collector, PostgresCollector};
+use rpglot_core::provider::{HistoryProvider, LiveProvider, SnapshotProvider};
+use rpglot_core::tui::App;
+use rpglot_core::util::parse_time;
 
 /// Default path for history data.
 const DEFAULT_HISTORY_PATH: &str = "/var/log/rpglot";

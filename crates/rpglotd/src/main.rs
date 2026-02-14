@@ -34,13 +34,13 @@ use tracing::{Level, debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[cfg(target_os = "linux")]
-use rpglot::collector::RealFs;
+use rpglot_core::collector::RealFs;
 #[cfg(not(target_os = "linux"))]
-use rpglot::collector::mock::MockFs;
-use rpglot::collector::{Collector, PostgresCollector};
-use rpglot::storage::model::DataBlock;
-use rpglot::storage::{RotationConfig, StorageManager};
-use rpglot::util::is_container;
+use rpglot_core::collector::mock::MockFs;
+use rpglot_core::collector::{Collector, PostgresCollector};
+use rpglot_core::storage::model::DataBlock;
+use rpglot_core::storage::{RotationConfig, StorageManager};
+use rpglot_core::util::is_container;
 
 /// System metrics collector daemon.
 #[derive(Parser)]
@@ -156,7 +156,7 @@ fn init_logging(verbose: u8, quiet: bool) {
 }
 
 /// Describes the contents of a snapshot for logging.
-fn describe_snapshot(snapshot: &rpglot::storage::Snapshot) -> String {
+fn describe_snapshot(snapshot: &rpglot_core::storage::Snapshot) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     for block in &snapshot.blocks {
@@ -430,8 +430,8 @@ fn print_pg_warning(error: &str) {
 #[cfg(test)]
 mod tests {
     use super::describe_snapshot;
-    use rpglot::storage::Snapshot;
-    use rpglot::storage::model::{DataBlock, PgStatActivityInfo, PgStatStatementsInfo};
+    use rpglot_core::storage::Snapshot;
+    use rpglot_core::storage::model::{DataBlock, PgStatActivityInfo, PgStatStatementsInfo};
 
     #[test]
     fn describe_snapshot_lists_all_blocks() {

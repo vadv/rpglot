@@ -34,7 +34,7 @@
 //! ## Production (Linux)
 //!
 //! ```ignore
-//! use rpglot::collector::{Collector, RealFs};
+//! use rpglot_core::collector::{Collector, RealFs};
 //!
 //! let fs = RealFs::new();
 //! let mut collector = Collector::new(fs, "/proc");
@@ -44,7 +44,7 @@
 //! ## Testing (with MockFs)
 //!
 //! ```
-//! use rpglot::collector::{Collector, MockFs};
+//! use rpglot_core::collector::{Collector, MockFs};
 //!
 //! let fs = MockFs::typical_system();
 //! let mut collector = Collector::new(fs, "/proc");
