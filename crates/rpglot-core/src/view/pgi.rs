@@ -1,9 +1,9 @@
 //! PGI (pg_stat_user_indexes) view model.
 
+use crate::fmt::{self, FmtStyle, format_blks_rate, format_opt_f64, truncate};
+use crate::models::PgIndexesViewMode;
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserIndexesInfo, Snapshot};
-use crate::tui::fmt::{self, FmtStyle, format_blks_rate, format_opt_f64, truncate};
-use crate::tui::models::PgIndexesViewMode;
 use crate::tui::state::{PgIndexesTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 

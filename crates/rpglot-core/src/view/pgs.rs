@@ -2,10 +2,10 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::fmt::{format_opt_f64, normalize_query, truncate};
+use crate::models::PgStatementsViewMode;
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatStatementsInfo, Snapshot};
-use crate::tui::fmt::{format_opt_f64, normalize_query, truncate};
-use crate::tui::models::PgStatementsViewMode;
 use crate::tui::state::{PgStatementsTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 

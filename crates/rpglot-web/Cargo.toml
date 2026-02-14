@@ -1,0 +1,27 @@
+[package]
+name = "rpglot-web"
+version = "0.1.6"
+edition = "2024"
+
+[[bin]]
+name = "rpglot-web"
+path = "src/main.rs"
+
+[dependencies]
+rpglot-core = { path = "../rpglot-core", default-features = false, features = ["api"] }
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "compression-gzip"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-core = "0.3"
+async-stream = "0.3"
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+rust-embed = "8"
+mime_guess = "2"
+base64 = "0.22"

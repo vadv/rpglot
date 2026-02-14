@@ -1,8 +1,8 @@
 //! PGL (pg_locks tree) view model.
 
+use crate::fmt::{format_epoch_age, normalize_query};
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgLockTreeNode, Snapshot};
-use crate::tui::fmt::{format_epoch_age, normalize_query};
 use crate::tui::state::PgLocksTabState;
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 
@@ -15,7 +15,7 @@ const HEADERS: &[&str] = &[
     "TARGET",
     "QUERY",
 ];
-const WIDTHS: &[u16] = &[10, 12, 14, 10, 12, 18];
+const WIDTHS: &[u16] = &[12, 20, 20, 10, 12, 24];
 
 /// Shortens PostgreSQL lock mode names for table display.
 fn short_lock_mode(mode: &str) -> &str {

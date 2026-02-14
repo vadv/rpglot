@@ -566,19 +566,21 @@ pub(super) mod metric_widths {
     pub const NET_DRP: usize = IO_STAT;
 
     // PG line: tps:   1234  hit:  99.2%  tup:   5.6K/s  tmp:   0 B/s  dlock:     0
-    pub const PG_TPS: usize = 12; // "tps:" + value
-    pub const PG_HIT: usize = 12; // "hit:" + value
-    pub const PG_TUP: usize = 14; // "tup:" + value
-    pub const PG_TMP: usize = 14; // "tmp:" + value
-    pub const PG_DLOCK: usize = 11; // "dlock:" + value
+    // Aligned with DSK/NET: 1-space separators, wider fields for stable layout
+    pub const PG_TPS: usize = 13; // "tps:" (4) + value (9) — fits "12.5K/s"
+    pub const PG_HIT: usize = 12; // "hit:" (4) + value (8) — fits "99.3%"
+    pub const PG_TUP: usize = 15; // "tup:" (4) + value (11) — fits "410.4K/s"
+    pub const PG_TMP: usize = 16; // "tmp:" (4) + value (12) — fits "100.0M/s"
+    pub const PG_DLOCK: usize = 11; // "dlock:" (6) + value (5)
 
-    // BGW line: ckpt: 0.1/m  wr: 125ms  be:  45/s  cln: 1.2K/s  mxw:     0  alloc: 5.6K/s
-    pub const BGW_CKPT: usize = 12; // "ckpt:" + value
-    pub const BGW_WR: usize = 11; // "wr:" + value
-    pub const BGW_BE: usize = 11; // "be:" + value
-    pub const BGW_CLN: usize = 13; // "cln:" + value
-    pub const BGW_MXW: usize = 10; // "mxw:" + value
-    pub const BGW_ALLOC: usize = 15; // "alloc:" + value
+    // BGW line: ckpt: 0.0/m  wr:    0ms  be:      0  cln:  224/s  mxw:     0  alloc:  770/s
+    // Aligned with PG: 1-space separators, wider fields for stable layout
+    pub const BGW_CKPT: usize = 13; // "ckpt:" (5) + value (8) — fits "12.3/m"
+    pub const BGW_WR: usize = 13; // "wr:" (3) + value (10) — fits "125.0s"
+    pub const BGW_BE: usize = 12; // "be:" (3) + value (9) — fits "12.5K/s"
+    pub const BGW_CLN: usize = 13; // "cln:" (4) + value (9) — fits "1.2K/s"
+    pub const BGW_MXW: usize = 11; // "mxw:" (4) + value (7) — fits "12345"
+    pub const BGW_ALLOC: usize = 15; // "alloc:" (6) + value (9) — fits "5.6K/s"
 }
 
 use metric_widths::*;

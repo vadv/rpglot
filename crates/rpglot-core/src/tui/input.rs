@@ -615,6 +615,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
             } else if state.current_tab == Tab::Processes
                 || state.current_tab == Tab::PostgresActive
                 || state.current_tab == Tab::PgTables
+                || state.current_tab == Tab::PgLocks
             {
                 state.drill_down_requested = true;
             }

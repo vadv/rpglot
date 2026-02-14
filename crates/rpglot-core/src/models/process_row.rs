@@ -2,7 +2,7 @@
 
 use super::ProcessViewMode;
 use super::formatting::*;
-use crate::tui::table::{ColumnType, SortKey, TableRow};
+use crate::table::{ColumnType, SortKey, TableRow};
 
 /// Process row for the process table.
 /// Contains all fields needed for different view modes (Generic/Command/Memory).
@@ -496,7 +496,7 @@ impl TableRow for ProcessRow {
 #[cfg(test)]
 mod filter_tests {
     use super::*;
-    use crate::tui::table::TableState;
+    use crate::table::TableState;
 
     #[test]
     fn test_process_filter_substring() {

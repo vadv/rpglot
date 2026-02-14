@@ -1,9 +1,9 @@
 //! PGT (pg_stat_user_tables) view model.
 
+use crate::fmt::{format_age, format_blks_rate, format_i64, format_opt_f64, format_size};
+use crate::models::PgTablesViewMode;
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserTablesInfo, Snapshot};
-use crate::tui::fmt::{format_age, format_blks_rate, format_i64, format_opt_f64, format_size};
-use crate::tui::models::PgTablesViewMode;
 use crate::tui::state::{PgTablesTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 

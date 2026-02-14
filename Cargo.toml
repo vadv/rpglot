@@ -3,6 +3,7 @@ members = [
     "crates/rpglot-core",
     "crates/rpglot",
     "crates/rpglotd",
+    "crates/rpglot-web",
 ]
 resolver = "3"
 

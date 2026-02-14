@@ -1,11 +1,11 @@
 //! PGA (pg_stat_activity) view model.
 
+use crate::fmt::{self, FmtStyle};
+use crate::models::PgActivityViewMode;
 use crate::storage::StringInterner;
 use crate::storage::model::{
     DataBlock, PgStatActivityInfo, PgStatStatementsInfo, ProcessInfo, Snapshot,
 };
-use crate::tui::fmt::{self, FmtStyle};
-use crate::tui::models::PgActivityViewMode;
 use crate::tui::state::{PgActivityTabState, PgStatementsRates, PgStatementsTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 

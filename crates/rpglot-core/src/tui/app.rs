@@ -494,7 +494,23 @@ impl App {
                 // No further drill-down from PGI
             }
             Tab::PgLocks => {
-                // No drill-down from PGL
+                // PGL -> PGA: Navigate to PostgreSQL session by selected lock's PID
+                let Some(pid) = self.state.pgl.tracked_pid else {
+                    return;
+                };
+
+                let pg_backend_exists = snapshot.blocks.iter().any(|block| {
+                    if let DataBlock::PgStatActivity(activities) = block {
+                        activities.iter().any(|a| a.pid == pid)
+                    } else {
+                        false
+                    }
+                });
+
+                if pg_backend_exists {
+                    self.state.current_tab = Tab::PostgresActive;
+                    self.state.pga.navigate_to_pid = Some(pid);
+                }
             }
         }
     }

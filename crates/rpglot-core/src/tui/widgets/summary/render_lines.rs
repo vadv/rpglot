@@ -240,13 +240,13 @@ pub(super) fn render_cgroup_cpu_line(metrics: &SummaryMetrics, width: usize) -> 
 }
 
 /// Renders PSI (Pressure Stall Information) line.
-/// Format: PSI │ CPU:  1.2%  MEM:  0.5%  I/O:  2.1%
+/// Format: PSI │ CPU:   5.1% MEM:   0.0% I/O:   0.1%
 pub(super) fn render_psi_line(psi: &[PsiSummary], width: usize) -> Line<'static> {
     let mut spans = vec![Span::styled("PSI", Styles::dim()), Span::raw(" │ ")];
 
     for (i, p) in psi.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw("  "));
+            spans.push(Span::raw(" "));
         }
 
         // Color based on some_avg10 value
@@ -258,14 +258,14 @@ pub(super) fn render_psi_line(psi: &[PsiSummary], width: usize) -> Line<'static>
             Styles::default()
         };
 
-        spans.extend(metric_spans(p.name, &format!("{:.1}%", p.some), 10, style));
+        spans.extend(metric_spans(p.name, &format!("{:.1}%", p.some), 12, style));
     }
 
     line_with_padding(spans, width)
 }
 
 /// Renders vmstat rates line.
-/// Format: VMS │ pgin:  123/s  pgout:  456/s  swin:    0/s  swout:    0/s  flt:  1.2K/s  ctx:  5.6K/s
+/// Format: VMS │ pgin:  3.4K/s pgout:  5.9K/s swin:        0 swout:        0 flt: 36.1K/s ctx: 11.9K/s
 pub(super) fn render_vmstat_line(rates: &VmstatRates, width: usize) -> Line<'static> {
     let mut spans = vec![Span::styled("VMS", Styles::dim()), Span::raw(" │ ")];
 
@@ -284,46 +284,46 @@ pub(super) fn render_vmstat_line(rates: &VmstatRates, width: usize) -> Line<'sta
     spans.extend(metric_spans_default(
         "pgin",
         &fmt::format_rate(rates.pgpgin_s, FmtStyle::Compact),
-        12,
+        13,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans_default(
         "pgout",
         &fmt::format_rate(rates.pgpgout_s, FmtStyle::Compact),
-        13,
+        14,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans(
         "swin",
         &fmt::format_rate(rates.pswpin_s, FmtStyle::Compact),
-        11,
+        13,
         swin_style,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans(
         "swout",
         &fmt::format_rate(rates.pswpout_s, FmtStyle::Compact),
-        12,
+        14,
         swout_style,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans_default(
         "flt",
         &fmt::format_rate(rates.pgfault_s, FmtStyle::Compact),
-        11,
+        13,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans_default(
         "ctx",
         &fmt::format_rate(rates.ctxt_s, FmtStyle::Compact),
-        11,
+        13,
     ));
 
     line_with_padding(spans, width)
 }
 
 /// Renders PostgreSQL summary line from pg_stat_database.
-/// Format: PG  │ tps:   1234  hit:  99.2%  tup:   5.6K/s  tmp:   0 B/s  dlock:     0
+/// Format: PG  │ tps:    750/s  hit:  99.3%  tup: 410.4K/s  tmp:          0  dlock:     0
 pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
     let mut spans = vec![Span::styled(" PG", Styles::cpu()), Span::raw(" │ ")];
 
@@ -332,7 +332,7 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
         &fmt::format_rate(pg.tps, FmtStyle::Compact),
         PG_TPS,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     let hit_style = if pg.hit_ratio < 90.0 {
         Styles::critical()
@@ -347,14 +347,14 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
         PG_HIT,
         hit_style,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     spans.extend(metric_spans_default(
         "tup",
         &fmt::format_rate(pg.tup_s, FmtStyle::Compact),
         PG_TUP,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     let tmp_style = if pg.tmp_bytes_s > 100.0 * 1024.0 * 1024.0 {
         Styles::critical()
@@ -369,7 +369,7 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
         PG_TMP,
         tmp_style,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     let dlock_style = if pg.deadlocks > 0 {
         Styles::critical()
@@ -387,7 +387,7 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
 }
 
 /// Renders PostgreSQL bgwriter summary line.
-/// Format: BGW │ ckpt: 0.1/m  wr: 125ms  be:  45/s  cln: 1.2K/s  mxw:     0  alloc: 5.6K/s
+/// Format: BGW │ ckpt:  0.0/m  wr:      0ms  be:        0  cln:    224/s  mxw:       0  alloc:    770/s
 pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
     let mut spans = vec![Span::styled("BGW", Styles::cpu()), Span::raw(" │ ")];
 
@@ -404,7 +404,7 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
         BGW_CKPT,
         ckpt_style,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     let wr_style = if bgw.ckpt_write_time_ms >= 30_000.0 {
         Styles::critical()
@@ -419,7 +419,7 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
         BGW_WR,
         wr_style,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     let be_style = if bgw.buffers_backend_s > 100.0 {
         Styles::critical()
@@ -434,14 +434,14 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
         BGW_BE,
         be_style,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     spans.extend(metric_spans_default(
         "cln",
         &fmt::format_rate(bgw.buffers_clean_s, FmtStyle::Compact),
         BGW_CLN,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     let mxw_style = if bgw.maxwritten_clean > 10 {
         Styles::critical()
@@ -456,7 +456,7 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
         BGW_MXW,
         mxw_style,
     ));
-    spans.push(Span::raw("  "));
+    spans.push(Span::raw(" "));
 
     spans.extend(metric_spans_default(
         "alloc",
@@ -830,7 +830,10 @@ pub(super) fn render_help_line(width: usize, tab: Tab) -> Line<'static> {
             spans.push(Span::styled("u/w/i", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));
         }
-        Tab::PgLocks => {}
+        Tab::PgLocks => {
+            spans.push(Span::styled(">", Styles::help_key()));
+            spans.push(Span::styled(":drill ", Styles::help()));
+        }
     }
 
     spans.push(Span::styled("?", Styles::help_key()));

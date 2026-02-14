@@ -64,14 +64,12 @@ pub fn render_pg_locks(
     let header = Row::new(header_cells).style(Styles::table_header());
 
     // Widths
-    let widths: Vec<ratatui::layout::Constraint> = vm
+    let mut widths: Vec<ratatui::layout::Constraint> = vm
         .widths
         .iter()
-        .map(|&w| ratatui::layout::Constraint::Min(w))
-        .chain(std::iter::once(ratatui::layout::Constraint::Percentage(
-            100,
-        )))
+        .map(|&w| ratatui::layout::Constraint::Length(w))
         .collect();
+    widths.push(ratatui::layout::Constraint::Fill(1));
 
     // Rows
     let rows: Vec<Row> = vm

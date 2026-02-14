@@ -968,6 +968,7 @@ fn get_pgl_help() -> Vec<Line<'static>> {
             Style::default().fg(Color::Yellow),
         )),
         Line::from("Enter  - open detail popup for selected row"),
+        Line::from("> or J - drill-down to PGA for selected PID"),
         Line::from("/      - filter by PID, query, target, or state"),
         Line::from("?      - toggle this help"),
         Line::from(""),
