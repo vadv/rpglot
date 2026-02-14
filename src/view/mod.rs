@@ -4,12 +4,12 @@
 //! The TUI (or a future web frontend) then maps the view model to framework-specific
 //! widgets for rendering.
 
-pub mod activity;
 pub mod common;
-pub mod indexes;
-pub mod locks;
-pub mod statements;
-pub mod tables;
+pub mod pga;
+pub mod pgi;
+pub mod pgl;
+pub mod pgs;
+pub mod pgt;
 
 // PRC (processes) is not included here because `ProcessRow` already provides
 // a UI-agnostic API via `cells_for_mode()`, `headers_for_mode()`, etc.
