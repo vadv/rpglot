@@ -17,23 +17,12 @@ use super::{
 // ===========================================================================
 
 /// State for the PostgreSQL Locks (PGL) tab.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PgLocksTabState {
     pub selected: usize,
     pub filter: Option<String>,
     pub tracked_pid: Option<i32>,
     pub ratatui_state: RatatuiTableState,
-}
-
-impl Default for PgLocksTabState {
-    fn default() -> Self {
-        Self {
-            selected: 0,
-            filter: None,
-            tracked_pid: None,
-            ratatui_state: RatatuiTableState::default(),
-        }
-    }
 }
 
 impl PgLocksTabState {

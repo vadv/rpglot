@@ -11,6 +11,7 @@ use crate::tui::state::{
 };
 
 /// Renders the help popup centered on screen with scroll support.
+#[allow(clippy::too_many_arguments)]
 pub fn render_help(
     frame: &mut Frame,
     area: Rect,

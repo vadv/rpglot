@@ -3,33 +3,16 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
+use crate::tui::fmt::{self, FmtStyle};
+
 /// Format bytes to human-readable (K/M/G).
 pub(super) fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1024 * 1024 * 1024 {
-        format!("{:.1}G", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1}M", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("{:.1}K", bytes as f64 / 1024.0)
-    } else {
-        format!("{}B", bytes)
-    }
+    fmt::format_bytes(bytes, FmtStyle::Compact)
 }
 
 /// Format duration in human-readable format.
 fn format_duration(secs: i64) -> String {
-    if secs < 0 {
-        return "-".to_string();
-    }
-    if secs < 60 {
-        format!("{}s", secs)
-    } else if secs < 3600 {
-        format!("{}m{}s", secs / 60, secs % 60)
-    } else if secs < 86400 {
-        format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
-    } else {
-        format!("{}d{}h", secs / 86400, (secs % 86400) / 3600)
-    }
+    fmt::format_duration(secs, FmtStyle::Compact)
 }
 
 /// Format duration or "-" if no timestamp (None).
@@ -53,7 +36,7 @@ pub(super) fn truncate(s: &str, max_len: usize) -> String {
 /// Normalize query text for single-line display.
 /// Replaces newlines, carriage returns, and tabs with spaces.
 pub(super) fn normalize_query(s: &str) -> String {
-    s.replace('\n', " ").replace('\r', "").replace('\t', " ")
+    fmt::normalize_query(s)
 }
 
 /// Style CPU% with color coding.
@@ -231,11 +214,5 @@ pub(super) fn styled_hit_pct(hit_pct: Option<f64>) -> Span<'static> {
 
 /// Format milliseconds to human-readable.
 fn format_ms(ms: f64) -> String {
-    if ms >= 1000.0 {
-        format!("{:.1}s", ms / 1000.0)
-    } else if ms >= 1.0 {
-        format!("{:.0}ms", ms)
-    } else {
-        format!("{:.1}ms", ms)
-    }
+    fmt::format_ms(ms, FmtStyle::Compact)
 }

@@ -12,7 +12,7 @@ use crate::storage::model::{DataBlock, PgLockTreeNode};
 use crate::tui::state::AppState;
 use crate::tui::style::Styles;
 
-use super::detail_common::format_epoch_age;
+use crate::tui::fmt::{format_epoch_age, normalize_query};
 
 /// Shortens PostgreSQL lock mode names for table display.
 fn short_lock_mode(mode: &str) -> &str {
@@ -28,11 +28,6 @@ fn short_lock_mode(mode: &str) -> &str {
         "" => "-",
         other => other,
     }
-}
-
-/// Normalizes query text for single-line display.
-fn normalize_query(s: &str) -> String {
-    s.replace('\n', " ").replace('\r', "").replace('\t', " ")
 }
 
 /// Formats PID with depth-based dot indentation.
@@ -188,7 +183,7 @@ pub fn render_pg_locks(
     state.pgl.resolve_selection(&row_pids);
 
     // Headers
-    let headers = vec![
+    let headers = [
         "PID",
         "STATE",
         "WAIT",

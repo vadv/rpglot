@@ -96,9 +96,10 @@ pub enum InputMode {
 }
 
 /// Active popup state. Only one popup can be open at a time.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum PopupState {
     /// No popup is open.
+    #[default]
     None,
     /// Help popup with scroll offset.
     Help { scroll: usize },
@@ -142,12 +143,6 @@ pub enum PopupState {
         scroll: usize,
         show_help: bool,
     },
-}
-
-impl Default for PopupState {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl PopupState {

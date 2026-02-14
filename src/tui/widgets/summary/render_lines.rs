@@ -3,6 +3,7 @@
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use crate::tui::fmt::{self, FmtStyle};
 use crate::tui::state::Tab;
 use crate::tui::style::Styles;
 
@@ -282,37 +283,41 @@ pub(super) fn render_vmstat_line(rates: &VmstatRates, width: usize) -> Line<'sta
 
     spans.extend(metric_spans_default(
         "pgin",
-        &format_rate(rates.pgpgin_s),
+        &fmt::format_rate(rates.pgpgin_s, FmtStyle::Compact),
         12,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans_default(
         "pgout",
-        &format_rate(rates.pgpgout_s),
+        &fmt::format_rate(rates.pgpgout_s, FmtStyle::Compact),
         13,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans(
         "swin",
-        &format_rate(rates.pswpin_s),
+        &fmt::format_rate(rates.pswpin_s, FmtStyle::Compact),
         11,
         swin_style,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans(
         "swout",
-        &format_rate(rates.pswpout_s),
+        &fmt::format_rate(rates.pswpout_s, FmtStyle::Compact),
         12,
         swout_style,
     ));
     spans.push(Span::raw(" "));
     spans.extend(metric_spans_default(
         "flt",
-        &format_rate(rates.pgfault_s),
+        &fmt::format_rate(rates.pgfault_s, FmtStyle::Compact),
         11,
     ));
     spans.push(Span::raw(" "));
-    spans.extend(metric_spans_default("ctx", &format_rate(rates.ctxt_s), 11));
+    spans.extend(metric_spans_default(
+        "ctx",
+        &fmt::format_rate(rates.ctxt_s, FmtStyle::Compact),
+        11,
+    ));
 
     line_with_padding(spans, width)
 }
@@ -322,7 +327,11 @@ pub(super) fn render_vmstat_line(rates: &VmstatRates, width: usize) -> Line<'sta
 pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
     let mut spans = vec![Span::styled(" PG", Styles::cpu()), Span::raw(" │ ")];
 
-    spans.extend(metric_spans_default("tps", &format_rate(pg.tps), PG_TPS));
+    spans.extend(metric_spans_default(
+        "tps",
+        &fmt::format_rate(pg.tps, FmtStyle::Compact),
+        PG_TPS,
+    ));
     spans.push(Span::raw("  "));
 
     let hit_style = if pg.hit_ratio < 90.0 {
@@ -340,7 +349,11 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
     ));
     spans.push(Span::raw("  "));
 
-    spans.extend(metric_spans_default("tup", &format_rate(pg.tup_s), PG_TUP));
+    spans.extend(metric_spans_default(
+        "tup",
+        &fmt::format_rate(pg.tup_s, FmtStyle::Compact),
+        PG_TUP,
+    ));
     spans.push(Span::raw("  "));
 
     let tmp_style = if pg.tmp_bytes_s > 100.0 * 1024.0 * 1024.0 {
@@ -352,7 +365,7 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
     };
     spans.extend(metric_spans(
         "tmp",
-        &format_bytes_rate(pg.tmp_bytes_s),
+        &fmt::format_bytes_rate(pg.tmp_bytes_s, FmtStyle::Compact),
         PG_TMP,
         tmp_style,
     ));
@@ -402,7 +415,7 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
     };
     spans.extend(metric_spans(
         "wr",
-        &format_ms(bgw.ckpt_write_time_ms),
+        &fmt::format_ms(bgw.ckpt_write_time_ms, FmtStyle::Compact),
         BGW_WR,
         wr_style,
     ));
@@ -417,7 +430,7 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
     };
     spans.extend(metric_spans(
         "be",
-        &format_rate(bgw.buffers_backend_s),
+        &fmt::format_rate(bgw.buffers_backend_s, FmtStyle::Compact),
         BGW_BE,
         be_style,
     ));
@@ -425,7 +438,7 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
 
     spans.extend(metric_spans_default(
         "cln",
-        &format_rate(bgw.buffers_clean_s),
+        &fmt::format_rate(bgw.buffers_clean_s, FmtStyle::Compact),
         BGW_CLN,
     ));
     spans.push(Span::raw("  "));
@@ -447,46 +460,11 @@ pub(super) fn render_bgw_line(bgw: &BgwSummary, width: usize) -> Line<'static> {
 
     spans.extend(metric_spans_default(
         "alloc",
-        &format_rate(bgw.buffers_alloc_s),
+        &fmt::format_rate(bgw.buffers_alloc_s, FmtStyle::Compact),
         BGW_ALLOC,
     ));
 
     line_with_padding(spans, width)
-}
-
-/// Formats milliseconds to human-readable form (ms/s/m).
-fn format_ms(ms: f64) -> String {
-    if ms >= 60_000.0 {
-        format!("{:.1}m", ms / 60_000.0)
-    } else if ms >= 1_000.0 {
-        format!("{:.1}s", ms / 1_000.0)
-    } else {
-        format!("{:.0}ms", ms)
-    }
-}
-
-/// Formats a rate value with K/M suffix if needed.
-fn format_rate(value: f64) -> String {
-    if value >= 1_000_000.0 {
-        format!("{:.1}M/s", value / 1_000_000.0)
-    } else if value >= 1000.0 {
-        format!("{:.1}K/s", value / 1000.0)
-    } else {
-        format!("{:.0}/s", value)
-    }
-}
-
-/// Formats a bytes-per-second rate with human-readable units.
-fn format_bytes_rate(bytes_per_sec: f64) -> String {
-    if bytes_per_sec >= 1024.0 * 1024.0 * 1024.0 {
-        format!("{:.1}G/s", bytes_per_sec / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes_per_sec >= 1024.0 * 1024.0 {
-        format!("{:.1}M/s", bytes_per_sec / (1024.0 * 1024.0))
-    } else if bytes_per_sec >= 1024.0 {
-        format!("{:.1}K/s", bytes_per_sec / 1024.0)
-    } else {
-        format!("{:.0}B/s", bytes_per_sec)
-    }
 }
 
 /// Renders MEM line - fixed-width metrics.

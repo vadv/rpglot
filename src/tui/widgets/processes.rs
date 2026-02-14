@@ -7,6 +7,7 @@ use ratatui::style::Modifier;
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Row, Table};
 
+use crate::tui::fmt::normalize_for_display;
 use crate::tui::state::{
     AppState, CachedWidths, ColumnType, DiffStatus, ProcessRow, ProcessViewMode, TableRow,
 };
@@ -178,27 +179,6 @@ fn cell_style(
             .add_modifier(Modifier::BOLD),
         _ => base,
     }
-}
-
-/// Normalizes text for single-line display in table cells.
-/// Replaces newlines, carriage returns, and tabs with spaces,
-/// then collapses multiple consecutive spaces into one.
-fn normalize_for_display(s: &str) -> String {
-    let s = s.replace('\n', " ").replace('\r', "").replace('\t', " ");
-    let mut result = String::with_capacity(s.len());
-    let mut prev_space = false;
-    for ch in s.chars() {
-        if ch == ' ' {
-            if !prev_space {
-                result.push(ch);
-            }
-            prev_space = true;
-        } else {
-            result.push(ch);
-            prev_space = false;
-        }
-    }
-    result
 }
 
 /// Extracts process rows from snapshot with VGROW/RGROW and CPU% calculation.

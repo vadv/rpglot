@@ -29,23 +29,22 @@ impl PostgresCollector {
         interner: &mut StringInterner,
     ) -> Result<Vec<PgStatUserIndexesInfo>, PgCollectError> {
         // Return cached data if fresh (re-intern strings for current interner state)
-        if let Some(cache_time) = self.indexes_cache_time {
-            if self.statements_collect_interval > std::time::Duration::ZERO
-                && cache_time.elapsed() < self.statements_collect_interval
-                && !self.indexes_cache.is_empty()
-            {
-                return Ok(self
-                    .indexes_cache
-                    .iter()
-                    .map(|entry| {
-                        let mut info = entry.info.clone();
-                        info.schemaname_hash = interner.intern(&entry.schemaname);
-                        info.relname_hash = interner.intern(&entry.relname);
-                        info.indexrelname_hash = interner.intern(&entry.indexrelname);
-                        info
-                    })
-                    .collect());
-            }
+        if let Some(cache_time) = self.indexes_cache_time
+            && self.statements_collect_interval > std::time::Duration::ZERO
+            && cache_time.elapsed() < self.statements_collect_interval
+            && !self.indexes_cache.is_empty()
+        {
+            return Ok(self
+                .indexes_cache
+                .iter()
+                .map(|entry| {
+                    let mut info = entry.info.clone();
+                    info.schemaname_hash = interner.intern(&entry.schemaname);
+                    info.relname_hash = interner.intern(&entry.relname);
+                    info.indexrelname_hash = interner.intern(&entry.indexrelname);
+                    info
+                })
+                .collect());
         }
 
         self.ensure_connected()?;

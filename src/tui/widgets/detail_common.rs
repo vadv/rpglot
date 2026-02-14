@@ -150,10 +150,8 @@ pub fn push_help(
     table: &[(&str, &str)],
     key: &str,
 ) {
-    if show_help {
-        if let Some(text) = help_text(table, key) {
-            lines.push(kv_help(text));
-        }
+    if show_help && let Some(text) = help_text(table, key) {
+        lines.push(kv_help(text));
     }
 }
 
@@ -199,6 +197,7 @@ pub fn kv_delta_i64(key: &str, current: i64, prev: Option<i64>) -> Line<'static>
 /// Key-value for PG block counters: displays blocks as human-readable bytes
 /// (blocks * 8192), delta also in bytes.
 pub fn kv_delta_blks(key: &str, blocks: i64, prev_blocks: Option<i64>) -> Line<'static> {
+    use crate::tui::fmt::format_blks_as_bytes;
     let bytes = blocks as f64 * 8192.0;
     let mut spans = vec![
         Span::styled(format!("{:>20}: ", key), Styles::cpu()),
@@ -219,24 +218,6 @@ pub fn kv_delta_blks(key: &str, blocks: i64, prev_blocks: Option<i64>) -> Line<'
     Line::from(spans)
 }
 
-/// Format bytes count (from blocks * 8192) to human-readable.
-fn format_blks_as_bytes(bytes: f64) -> String {
-    let abs = bytes.abs();
-    if abs >= 1_099_511_627_776.0 {
-        format!("{:.1} TB", bytes / 1_099_511_627_776.0)
-    } else if abs >= 1_073_741_824.0 {
-        format!("{:.1} GB", bytes / 1_073_741_824.0)
-    } else if abs >= 1_048_576.0 {
-        format!("{:.1} MB", bytes / 1_048_576.0)
-    } else if abs >= 1024.0 {
-        format!("{:.1} KB", bytes / 1024.0)
-    } else if abs >= 1.0 {
-        format!("{:.0} B", bytes)
-    } else {
-        "0".to_string()
-    }
-}
-
 /// Key-value with f64 delta shown as colored span.
 pub fn kv_delta_f64(key: &str, current: f64, prev: Option<f64>, precision: usize) -> Line<'static> {
     let mut spans = vec![
@@ -254,139 +235,35 @@ pub fn kv_delta_f64(key: &str, current: f64, prev: Option<f64>, precision: usize
 }
 
 // ---------------------------------------------------------------------------
-// Value formatting
+// Value formatting — delegated to crate::tui::fmt with FmtStyle::Detail
 // ---------------------------------------------------------------------------
 
-/// Format bytes to human-readable size.
+use crate::tui::fmt::{self, FmtStyle};
+
+pub use fmt::{format_bytes_signed, format_delta_kb, format_kb, format_ns, format_ticks};
+
 pub fn format_bytes(bytes: u64) -> String {
-    if bytes >= 1024 * 1024 * 1024 {
-        format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("{:.1} KiB", bytes as f64 / 1024.0)
-    } else {
-        format!("{} B", bytes)
-    }
+    fmt::format_bytes(bytes, FmtStyle::Detail)
 }
 
-/// Format signed bytes with +/- prefix.
-pub fn format_bytes_signed(bytes: i64) -> String {
-    let sign = if bytes >= 0 { "+" } else { "-" };
-    let abs = bytes.unsigned_abs();
-    if abs >= 1024 * 1024 * 1024 {
-        format!("{}{:.1} GiB", sign, abs as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if abs >= 1024 * 1024 {
-        format!("{}{:.1} MiB", sign, abs as f64 / (1024.0 * 1024.0))
-    } else if abs >= 1024 {
-        format!("{}{:.1} KiB", sign, abs as f64 / 1024.0)
-    } else {
-        format!("{}{} B", sign, abs)
-    }
-}
-
-/// Format KiB to human-readable size.
-pub fn format_kb(kb: u64) -> String {
-    if kb == 0 {
-        return "0".to_string();
-    }
-    if kb >= 1024 * 1024 {
-        format!("{:.1} GiB", kb as f64 / (1024.0 * 1024.0))
-    } else if kb >= 1024 {
-        format!("{:.1} MiB", kb as f64 / 1024.0)
-    } else {
-        format!("{} KiB", kb)
-    }
-}
-
-/// Format rate (ops/s) to human-readable.
-pub fn format_rate(rate: f64) -> String {
-    if rate < 0.01 {
-        "0".to_string()
-    } else if rate >= 1_000_000.0 {
-        format!("{:.1}M/s", rate / 1_000_000.0)
-    } else if rate >= 1_000.0 {
-        format!("{:.1}K/s", rate / 1_000.0)
-    } else if rate >= 10.0 {
-        format!("{:.0}/s", rate)
-    } else {
-        format!("{:.1}/s", rate)
-    }
-}
-
-/// Format bytes per second rate to human-readable.
-pub fn format_bytes_rate(rate: f64) -> String {
-    if rate < 1.0 {
-        "0".to_string()
-    } else if rate >= 1024.0 * 1024.0 * 1024.0 {
-        format!("{:.1} GiB/s", rate / (1024.0 * 1024.0 * 1024.0))
-    } else if rate >= 1024.0 * 1024.0 {
-        format!("{:.1} MiB/s", rate / (1024.0 * 1024.0))
-    } else if rate >= 1024.0 {
-        format!("{:.1} KiB/s", rate / 1024.0)
-    } else {
-        format!("{:.0} B/s", rate)
-    }
-}
-
-/// Format CPU ticks to human-readable time.
-pub fn format_ticks(ticks: u64) -> String {
-    if ticks == 0 {
-        return "0".to_string();
-    }
-    let secs = ticks / 100;
-    let ms = (ticks % 100) * 10;
-    if secs > 3600 {
-        format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
-    } else if secs > 60 {
-        format!("{}m{}s", secs / 60, secs % 60)
-    } else if secs > 0 {
-        format!("{}.{}s", secs, ms / 100)
-    } else {
-        format!("{}ms", ms)
-    }
-}
-
-/// Format duration in seconds to human-readable.
 pub fn format_duration(secs: i64) -> String {
-    if secs <= 0 {
-        return "0s".to_string();
-    }
-    if secs < 60 {
-        format!("{}s", secs)
-    } else if secs < 3600 {
-        format!("{}m {}s", secs / 60, secs % 60)
-    } else if secs < 86400 {
-        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
-    } else {
-        format!("{}d {}h", secs / 86400, (secs % 86400) / 3600)
-    }
+    fmt::format_duration(secs, FmtStyle::Detail)
 }
 
-/// Format duration or "-" for zero/invalid.
 pub fn format_duration_or_none(secs: i64) -> String {
-    if secs <= 0 {
-        "-".to_string()
-    } else {
-        format_duration(secs)
-    }
+    fmt::format_duration_or_none(secs)
 }
 
-/// Format epoch timestamp as age from now, or "-" for zero/invalid.
-/// Input is UNIX epoch seconds (from EXTRACT(EPOCH FROM timestamp)).
 pub fn format_epoch_age(epoch_secs: i64) -> String {
-    if epoch_secs <= 0 {
-        return "-".to_string();
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let age = now.saturating_sub(epoch_secs);
-    if age < 0 {
-        return "-".to_string();
-    }
-    format_duration(age)
+    fmt::format_epoch_age(epoch_secs)
+}
+
+pub fn format_rate(rate: f64) -> String {
+    fmt::format_rate(rate, FmtStyle::Detail)
+}
+
+pub fn format_bytes_rate(rate: f64) -> String {
+    fmt::format_bytes_rate(rate, FmtStyle::Detail)
 }
 
 /// Resolve hash to string using interner.
@@ -398,35 +275,4 @@ pub fn resolve_hash(interner: Option<&StringInterner>, hash: u64) -> String {
         .and_then(|i| i.resolve(hash))
         .map(|s| s.to_string())
         .unwrap_or_else(|| "-".to_string())
-}
-
-/// Format nanoseconds to human-readable.
-pub fn format_ns(ns: u64) -> String {
-    if ns == 0 {
-        return "0".to_string();
-    }
-    let ms = ns / 1_000_000;
-    if ms > 1000 {
-        format!("{:.1}s", ms as f64 / 1000.0)
-    } else if ms > 0 {
-        format!("{}ms", ms)
-    } else {
-        format!("{}us", ns / 1000)
-    }
-}
-
-/// Format memory delta (can be negative) in KiB.
-pub fn format_delta_kb(delta: i64) -> String {
-    if delta == 0 {
-        return "0".to_string();
-    }
-    let abs = delta.unsigned_abs();
-    let sign = if delta < 0 { "-" } else { "+" };
-    if abs >= 1024 * 1024 {
-        format!("{}{:.1} GiB", sign, abs as f64 / (1024.0 * 1024.0))
-    } else if abs >= 1024 {
-        format!("{}{:.1} MiB", sign, abs as f64 / 1024.0)
-    } else {
-        format!("{}{} KiB", sign, abs)
-    }
 }

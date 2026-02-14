@@ -5,6 +5,7 @@
 
 mod app;
 mod event;
+pub mod fmt;
 mod input;
 mod models;
 mod render;

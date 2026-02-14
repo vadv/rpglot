@@ -11,6 +11,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatStatementsInfo, Snapshot};
+use crate::tui::fmt::{format_opt_f64, normalize_query, truncate};
 use crate::tui::state::{AppState, PgStatementsViewMode, SortKey};
 use crate::tui::style::Styles;
 
@@ -172,13 +173,6 @@ impl PgStatementsRowData {
                 }
             }
         }
-    }
-}
-
-fn format_opt_f64(v: Option<f64>, width: usize, precision: usize) -> String {
-    match v {
-        Some(v) => format!("{:>width$.prec$}", v, width = width, prec = precision),
-        None => format!("{:>width$}", "--", width = width),
     }
 }
 
@@ -440,20 +434,6 @@ fn resolve_hash(interner: Option<&StringInterner>, hash: u64) -> String {
         .and_then(|i| i.resolve(hash))
         .unwrap_or("")
         .to_string()
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
-    }
-}
-
-/// Normalize query text for single-line display.
-/// Replaces newlines, carriage returns, and tabs with spaces.
-fn normalize_query(s: &str) -> String {
-    s.replace('\n', " ").replace('\r', "").replace('\t', " ")
 }
 
 fn hit_pct_style(hit_pct: f64) -> Style {

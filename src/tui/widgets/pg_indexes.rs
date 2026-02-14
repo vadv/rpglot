@@ -9,9 +9,9 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserIndexesInfo, Snapshot};
+use crate::tui::fmt::{self, FmtStyle, format_blks_rate, format_opt_f64, truncate};
 use crate::tui::state::{AppState, PgIndexesViewMode, SortKey};
 use crate::tui::style::Styles;
-use crate::tui::widgets::detail_common::format_bytes;
 
 const HEADERS_USAGE: &[&str] = &[
     "IDX/s", "TUP_RD/s", "TUP_FT/s", "HIT%", "DISK/s", "SIZE", "TABLE", "INDEX",
@@ -147,42 +147,6 @@ impl PgIndexesRowData {
     }
 }
 
-/// Format block rate (blocks/s) as human-readable bytes/s.
-/// Each block is 8192 bytes (8 KB).
-fn format_blks_rate(blks_per_sec: Option<f64>, width: usize) -> String {
-    match blks_per_sec {
-        None => format!("{:>width$}", "--", width = width),
-        Some(v) => {
-            let bytes = v * 8192.0;
-            if bytes >= 1_073_741_824.0 {
-                format!("{:>width$.1}G", bytes / 1_073_741_824.0, width = width - 1)
-            } else if bytes >= 1_048_576.0 {
-                format!("{:>width$.1}M", bytes / 1_048_576.0, width = width - 1)
-            } else if bytes >= 1024.0 {
-                format!("{:>width$.1}K", bytes / 1024.0, width = width - 1)
-            } else if bytes >= 1.0 {
-                format!("{:>width$.0}B", bytes, width = width - 1)
-            } else {
-                format!("{:>width$}", "0", width = width)
-            }
-        }
-    }
-}
-
-fn format_opt_pct(v: Option<f64>, width: usize) -> String {
-    match v {
-        Some(v) => format!("{:>width$.1}", v, width = width),
-        None => format!("{:>width$}", "--", width = width),
-    }
-}
-
-fn format_opt_f64(v: Option<f64>, width: usize, precision: usize) -> String {
-    match v {
-        Some(v) => format!("{:>width$.prec$}", v, width = width, prec = precision),
-        None => format!("{:>width$}", "--", width = width),
-    }
-}
-
 pub fn render_pg_indexes(
     frame: &mut Frame,
     area: Rect,
@@ -312,24 +276,33 @@ pub fn render_pg_indexes(
                     Span::raw(format_opt_f64(r.idx_scan_s, 9, 1)),
                     Span::raw(format_opt_f64(r.idx_tup_read_s, 9, 1)),
                     Span::raw(format_opt_f64(r.idx_tup_fetch_s, 9, 1)),
-                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_opt_f64(r.hit_pct, 5, 1)),
                     Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
-                    Span::raw(format!("{:>9}", format_bytes(r.size_bytes as u64))),
+                    Span::raw(format!(
+                        "{:>9}",
+                        fmt::format_bytes(r.size_bytes as u64, FmtStyle::Detail)
+                    )),
                     Span::raw(truncate(&r.display_table, 20)),
                     Span::raw(r.index_name.clone()),
                 ],
                 PgIndexesViewMode::Unused => vec![
                     Span::raw(format!("{:>11}", r.idx_scan)),
-                    Span::raw(format!("{:>9}", format_bytes(r.size_bytes as u64))),
+                    Span::raw(format!(
+                        "{:>9}",
+                        fmt::format_bytes(r.size_bytes as u64, FmtStyle::Detail)
+                    )),
                     Span::raw(truncate(&r.display_table, 20)),
                     Span::raw(r.index_name.clone()),
                 ],
                 PgIndexesViewMode::Io => vec![
                     Span::raw(format_blks_rate(r.idx_blks_read_s, 9)),
                     Span::raw(format_blks_rate(r.idx_blks_hit_s, 9)),
-                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_opt_f64(r.hit_pct, 5, 1)),
                     Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
-                    Span::raw(format!("{:>9}", format_bytes(r.size_bytes as u64))),
+                    Span::raw(format!(
+                        "{:>9}",
+                        fmt::format_bytes(r.size_bytes as u64, FmtStyle::Detail)
+                    )),
                     Span::raw(truncate(&r.display_table, 20)),
                     Span::raw(r.index_name.clone()),
                 ],
@@ -408,12 +381,4 @@ fn resolve_hash(interner: Option<&StringInterner>, hash: u64) -> String {
         .and_then(|i| i.resolve(hash))
         .unwrap_or("")
         .to_string()
-}
-
-fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len.saturating_sub(1)])
-    }
 }

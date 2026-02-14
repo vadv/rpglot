@@ -1,8 +1,6 @@
 //! PostgreSQL tables widget for PGT tab.
 //! Displays `pg_stat_user_tables` data with rate computation.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
@@ -11,6 +9,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table};
 
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserTablesInfo, Snapshot};
+use crate::tui::fmt::{format_age, format_blks_rate, format_i64, format_opt_f64, format_size};
 use crate::tui::state::{AppState, PgTablesViewMode, SortKey};
 use crate::tui::style::Styles;
 
@@ -242,95 +241,6 @@ impl PgTablesRowData {
     }
 }
 
-/// Format block rate (blocks/s) as human-readable bytes/s.
-/// Each block is 8192 bytes (8 KB).
-fn format_blks_rate(blks_per_sec: Option<f64>, width: usize) -> String {
-    match blks_per_sec {
-        None => format!("{:>width$}", "--", width = width),
-        Some(v) => {
-            let bytes = v * 8192.0;
-            if bytes >= 1_073_741_824.0 {
-                format!("{:>width$.1}G", bytes / 1_073_741_824.0, width = width - 1)
-            } else if bytes >= 1_048_576.0 {
-                format!("{:>width$.1}M", bytes / 1_048_576.0, width = width - 1)
-            } else if bytes >= 1024.0 {
-                format!("{:>width$.1}K", bytes / 1024.0, width = width - 1)
-            } else if bytes >= 1.0 {
-                format!("{:>width$.0}B", bytes, width = width - 1)
-            } else {
-                format!("{:>width$}", "0", width = width)
-            }
-        }
-    }
-}
-
-fn format_opt_pct(v: Option<f64>, width: usize) -> String {
-    match v {
-        Some(v) => format!("{:>width$.1}", v, width = width),
-        None => format!("{:>width$}", "--", width = width),
-    }
-}
-
-fn format_opt_f64(v: Option<f64>, width: usize, precision: usize) -> String {
-    match v {
-        Some(v) => format!("{:>width$.prec$}", v, width = width, prec = precision),
-        None => format!("{:>width$}", "--", width = width),
-    }
-}
-
-fn format_i64(v: i64, width: usize) -> String {
-    if v >= 1_000_000_000 {
-        format!("{:>width$.1}G", v as f64 / 1e9, width = width - 1)
-    } else if v >= 1_000_000 {
-        format!("{:>width$.1}M", v as f64 / 1e6, width = width - 1)
-    } else if v >= 10_000 {
-        format!("{:>width$.1}K", v as f64 / 1e3, width = width - 1)
-    } else {
-        format!("{:>width$}", v, width = width)
-    }
-}
-
-fn format_size(bytes: i64) -> String {
-    if bytes <= 0 {
-        return format!("{:>9}", "-");
-    }
-    let b = bytes as f64;
-    if b >= 1_099_511_627_776.0 {
-        format!("{:>8.1}T", b / 1_099_511_627_776.0)
-    } else if b >= 1_073_741_824.0 {
-        format!("{:>8.1}G", b / 1_073_741_824.0)
-    } else if b >= 1_048_576.0 {
-        format!("{:>8.1}M", b / 1_048_576.0)
-    } else if b >= 1024.0 {
-        format!("{:>8.1}K", b / 1024.0)
-    } else {
-        format!("{:>8}B", bytes)
-    }
-}
-
-fn format_age(epoch_secs: i64) -> String {
-    if epoch_secs == 0 {
-        return "-".to_string();
-    }
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let age = now.saturating_sub(epoch_secs);
-    if age < 0 {
-        return "-".to_string();
-    }
-    if age < 60 {
-        format!("{}s", age)
-    } else if age < 3600 {
-        format!("{}m", age / 60)
-    } else if age < 86400 {
-        format!("{}h", age / 3600)
-    } else {
-        format!("{}d", age / 86400)
-    }
-}
-
 pub fn render_pg_tables(
     frame: &mut Frame,
     area: Rect,
@@ -475,7 +385,7 @@ pub fn render_pg_tables(
                     Span::raw(format_opt_f64(r.total_read_s, 9, 1)),
                     Span::raw(format_opt_f64(r.seq_scan_s, 9, 1)),
                     Span::raw(format_opt_f64(r.idx_scan_s, 9, 1)),
-                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_opt_f64(r.hit_pct, 5, 1)),
                     Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
                     Span::raw(format_size(r.size_bytes)),
                     Span::raw(r.display_name.clone()),
@@ -515,7 +425,7 @@ pub fn render_pg_tables(
                     Span::raw(format_blks_rate(r.heap_blks_hit_s, 9)),
                     Span::raw(format_blks_rate(r.idx_blks_read_s, 9)),
                     Span::raw(format_blks_rate(r.idx_blks_hit_s, 9)),
-                    Span::raw(format_opt_pct(r.hit_pct, 5)),
+                    Span::raw(format_opt_f64(r.hit_pct, 5, 1)),
                     Span::raw(format_blks_rate(r.disk_read_blks_s, 7)),
                     Span::raw(format_size(r.size_bytes)),
                     Span::raw(r.display_name.clone()),
