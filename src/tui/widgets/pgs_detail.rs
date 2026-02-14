@@ -411,7 +411,10 @@ fn build_content(
 
     // Query section
     lines.push(section("Query"));
-    lines.push(Line::raw(query));
+    for line in query.lines() {
+        let sanitized = line.replace('\t', "    ");
+        lines.push(Line::raw(format!("  {}", sanitized)));
+    }
 
     lines
 }

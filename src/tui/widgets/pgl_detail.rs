@@ -165,7 +165,8 @@ pub fn render_pgl_detail(
     lines.push(section("Query"));
     let query_text = r(node.query_hash);
     for line in query_text.lines() {
-        lines.push(Line::raw(format!("  {}", line)));
+        let sanitized = line.replace('\t', "    ");
+        lines.push(Line::raw(format!("  {}", sanitized)));
     }
     push_help(&mut lines, show_help, HELP, "Query");
 

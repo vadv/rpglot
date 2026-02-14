@@ -59,13 +59,13 @@ pub fn render_popup_frame(
     // Split inner area into content + footer
     let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
-    // Estimate visual lines after wrapping
+    // Estimate visual lines after wrapping (using unicode display width)
     let inner_width = chunks[0].width as usize;
     let visual_lines: usize = if inner_width > 0 {
         content
             .iter()
             .map(|line| {
-                let line_width: usize = line.spans.iter().map(|s| s.content.len()).sum();
+                let line_width = line.width();
                 if line_width == 0 {
                     1
                 } else {

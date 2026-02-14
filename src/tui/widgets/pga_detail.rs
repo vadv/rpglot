@@ -468,8 +468,10 @@ fn build_content<'a>(
         )));
     } else {
         for line in query.lines() {
+            // Replace tabs with spaces to avoid ratatui rendering artifacts
+            let sanitized = line.replace('\t', "    ");
             lines.push(Line::from(Span::styled(
-                format!("  {}", line),
+                format!("  {}", sanitized),
                 Style::default().fg(Color::White),
             )));
         }
