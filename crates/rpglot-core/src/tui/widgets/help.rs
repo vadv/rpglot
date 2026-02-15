@@ -106,7 +106,7 @@ fn get_help_content(
         Tab::PgStatements => get_pgs_help(pgs_view_mode),
         Tab::PgTables => get_pgt_help(pgt_view_mode),
         Tab::PgIndexes => get_pgi_help(pgi_view_mode),
-        Tab::PgErrors => ("PostgreSQL Errors Help (PGE)", get_pge_help()),
+        Tab::PgErrors => ("PostgreSQL Events Help (PGE)", get_pge_help()),
         Tab::PgLocks => ("PostgreSQL Lock Tree Help (PGL)", get_pgl_help()),
     }
 }
@@ -933,7 +933,7 @@ fn get_pgi_help(mode: PgIndexesViewMode) -> (&'static str, Vec<Line<'static>>) {
 fn get_pge_help() -> Vec<Line<'static>> {
     vec![
         Line::from(Span::styled(
-            "PG Errors: PostgreSQL log errors (ERROR/FATAL/PANIC)",
+            "PG Events: PostgreSQL log events (errors, checkpoints, autovacuum)",
             Style::default().fg(Color::Cyan),
         )),
         Line::from(""),

@@ -38,8 +38,8 @@ const TAB_CONFIG: Record<
     icon: ListTree,
   },
   pge: {
-    label: "Errors",
-    fullName: "PG Log Errors",
+    label: "Events",
+    fullName: "PG Log Events",
     icon: AlertTriangle,
   },
   pgl: { label: "Locks", fullName: "pg_locks", icon: Lock },

@@ -333,7 +333,7 @@ const TAB_NAMES: Record<TabKey, string> = {
   pgs: "Statement",
   pgt: "Table",
   pgi: "Index",
-  pge: "Error",
+  pge: "Event",
   pgl: "Lock",
 };
 

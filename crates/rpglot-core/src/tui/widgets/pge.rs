@@ -21,12 +21,12 @@ pub fn render_pg_errors(
         Some(vm) => vm,
         None => {
             let label = if state.pge.filter.is_some() {
-                "No matching errors (filter active)"
+                "No matching events (filter active)"
             } else {
-                "No errors in the current hour"
+                "No events in the current hour"
             };
             let msg = Paragraph::new(label)
-                .block(Block::default().title("PGE: Errors").borders(Borders::ALL));
+                .block(Block::default().title("PGE: Events").borders(Borders::ALL));
             frame.render_widget(Clear, area);
             frame.render_widget(msg, area);
             return;
