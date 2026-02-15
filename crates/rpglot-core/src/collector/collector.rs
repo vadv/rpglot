@@ -55,6 +55,8 @@ pub struct CollectorTiming {
     pub pg_indexes: Duration,
     /// Time to collect PostgreSQL lock tree.
     pub pg_locks: Duration,
+    /// Time to collect PostgreSQL log errors.
+    pub pg_log: Duration,
     /// Time to collect cgroup metrics.
     pub cgroup: Duration,
     /// PostgreSQL statements caching interval (Duration::ZERO = no caching).
@@ -354,6 +356,13 @@ impl<F: FileSystem + Clone> Collector<F> {
             timing.pg_locks = start.elapsed();
             if !lock_tree.is_empty() {
                 blocks.push(DataBlock::PgLockTree(lock_tree));
+            }
+
+            let start = Instant::now();
+            let log_errors = pg_collector.collect_log_errors(self.process_collector.interner_mut());
+            timing.pg_log = start.elapsed();
+            if !log_errors.is_empty() {
+                blocks.push(DataBlock::PgLogErrors(log_errors));
             }
 
             // Store last error for TUI display

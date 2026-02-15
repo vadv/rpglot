@@ -593,3 +593,34 @@ pub struct PgStatBgwriterInfo {
     /// Buffers allocated (cumulative).
     pub buffers_alloc: i64,
 }
+
+// ---------------------------------------------------------------------------
+// PostgreSQL log errors
+// ---------------------------------------------------------------------------
+
+/// Severity level of a PostgreSQL log entry.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Hash)]
+pub enum PgLogSeverity {
+    Error = 0,
+    Fatal = 1,
+    Panic = 2,
+}
+
+/// A grouped PostgreSQL log error entry within a snapshot interval.
+///
+/// Errors are normalized into patterns (concrete values replaced with `"..."`)
+/// and grouped by pattern + severity. Each entry represents one unique pattern
+/// with its occurrence count.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PgLogEntry {
+    /// Normalized error pattern (through StringInterner).
+    /// e.g. `relation "..." does not exist`
+    pub pattern_hash: u64,
+    /// Severity level.
+    pub severity: PgLogSeverity,
+    /// Number of occurrences in this snapshot interval.
+    pub count: u32,
+    /// One concrete sample of the original message (through StringInterner).
+    /// e.g. `relation "users" does not exist`
+    pub sample_hash: u64,
+}

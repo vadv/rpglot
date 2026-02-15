@@ -55,6 +55,7 @@
 pub mod cgroup;
 #[allow(clippy::module_inception)]
 mod collector;
+pub mod log_collector;
 pub mod mock;
 mod pg_collector;
 pub mod procfs;

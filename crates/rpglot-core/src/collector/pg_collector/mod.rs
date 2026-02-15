@@ -33,6 +33,7 @@ mod tables;
 use postgres::{Client, NoTls};
 use std::time::{Duration, Instant};
 
+use super::log_collector::LogCollector;
 use indexes::PgStatUserIndexesCacheEntry;
 use statements::{PgStatStatementsCacheEntry, STATEMENTS_COLLECT_INTERVAL};
 use tables::PgStatUserTablesCacheEntry;
@@ -93,6 +94,8 @@ pub struct PostgresCollector {
     pub(crate) target_database: Option<String>,
     /// Last time we checked for the largest database.
     target_database_last_check: Option<Instant>,
+    /// PostgreSQL log file collector.
+    log_collector: LogCollector,
 }
 
 impl PostgresCollector {
@@ -139,6 +142,7 @@ impl PostgresCollector {
             explicit_database,
             target_database: None,
             target_database_last_check: None,
+            log_collector: LogCollector::new(),
         })
     }
 
@@ -163,6 +167,7 @@ impl PostgresCollector {
             explicit_database: true,
             target_database: None,
             target_database_last_check: None,
+            log_collector: LogCollector::new(),
         }
     }
 
@@ -248,6 +253,9 @@ impl PostgresCollector {
                     .and_then(|row| row.try_get::<_, String>(0).ok())
                     .and_then(|v| v.parse::<i32>().ok());
 
+                // Initialize log collector with the new connection.
+                self.log_collector.init(&mut client);
+
                 self.client = Some(client);
                 self.last_error = None;
 
@@ -282,6 +290,22 @@ impl PostgresCollector {
         self.tables_cache_time = None;
         self.indexes_cache.clear();
         self.indexes_cache_time = None;
+    }
+
+    /// Collects log errors from PostgreSQL log files.
+    ///
+    /// Returns grouped ERROR/FATAL/PANIC entries for the current snapshot interval.
+    pub fn collect_log_errors(
+        &mut self,
+        interner: &mut crate::storage::interner::StringInterner,
+    ) -> Vec<crate::storage::model::PgLogEntry> {
+        let mut client = match self.client.take() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let result = self.log_collector.collect(&mut client, interner);
+        self.client = Some(client);
+        result
     }
 
     /// Detects the largest non-template database and reconnects if it changed.

@@ -220,6 +220,12 @@ impl StorageManager {
                         hashes.insert(n.lock_target_hash);
                     }
                 }
+                DataBlock::PgLogErrors(entries) => {
+                    for e in entries {
+                        hashes.insert(e.pattern_hash);
+                        hashes.insert(e.sample_hash);
+                    }
+                }
                 _ => {}
             }
         }

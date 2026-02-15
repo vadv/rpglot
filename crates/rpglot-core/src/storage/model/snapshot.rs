@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::cgroup::CgroupInfo;
 use super::postgres::{
-    PgLockTreeNode, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
+    PgLockTreeNode, PgLogEntry, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
     PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 use super::process::ProcessInfo;
@@ -110,6 +110,10 @@ pub enum DataBlock {
     /// Cgroup v2 metrics (container resource limits and usage).
     /// Source: `/sys/fs/cgroup/*`
     Cgroup(CgroupInfo),
+
+    /// PostgreSQL log errors (grouped by normalized pattern).
+    /// Source: PostgreSQL log files (stderr/csvlog)
+    PgLogErrors(Vec<PgLogEntry>),
 }
 
 /// A point-in-time capture of all collected metrics.
