@@ -106,6 +106,7 @@ fn get_help_content(
         Tab::PgStatements => get_pgs_help(pgs_view_mode),
         Tab::PgTables => get_pgt_help(pgt_view_mode),
         Tab::PgIndexes => get_pgi_help(pgi_view_mode),
+        Tab::PgErrors => ("PostgreSQL Errors Help (PGE)", get_pge_help()),
         Tab::PgLocks => ("PostgreSQL Lock Tree Help (PGL)", get_pgl_help()),
     }
 }
@@ -927,6 +928,38 @@ fn get_pgi_help(mode: PgIndexesViewMode) -> (&'static str, Vec<Line<'static>>) {
             ("PostgreSQL Indexes Help (PGI) - I/O (i)", lines)
         }
     }
+}
+
+fn get_pge_help() -> Vec<Line<'static>> {
+    vec![
+        Line::from(Span::styled(
+            "PG Errors: PostgreSQL log errors (ERROR/FATAL/PANIC)",
+            Style::default().fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Data source: PostgreSQL stderr log parsing",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(
+            "Errors are accumulated within the current hour",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(""),
+        Line::from(Span::styled("Columns:", Style::default().fg(Color::Yellow))),
+        Line::from("SEVERITY  - ERROR, FATAL, or PANIC"),
+        Line::from("COUNT     - number of occurrences in current hour"),
+        Line::from("PATTERN   - normalized error pattern"),
+        Line::from("SAMPLE    - one concrete example of the error message"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Color coding:",
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from("Red bold  - PANIC (database crash)"),
+        Line::from("Red       - FATAL (connection terminated)"),
+        Line::from("Yellow    - ERROR (query failed)"),
+    ]
 }
 
 fn get_pgl_help() -> Vec<Line<'static>> {

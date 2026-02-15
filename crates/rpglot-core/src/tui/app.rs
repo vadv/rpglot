@@ -197,6 +197,9 @@ impl App {
         // Update pg_stat_user_indexes rates cache (used by PGI tab).
         self.state.pgi.update_rates_from_snapshot(&snapshot);
 
+        // Accumulate PostgreSQL log errors (used by PGE tab).
+        self.state.pge.accumulate_from_snapshot(&snapshot);
+
         // Update history position for non-live mode
         if !self.state.is_live
             && let Some(hp) = self.provider.as_any().and_then(|a| {
@@ -265,6 +268,15 @@ impl App {
                         false
                     }
                 })
+            }
+            PopupState::PgeDetail { pattern_hash, .. } => {
+                let hash = *pattern_hash;
+                !self
+                    .state
+                    .pge
+                    .accumulated
+                    .iter()
+                    .any(|a| a.pattern_hash == hash)
             }
             PopupState::PglDetail { pid, .. } => {
                 let pid = *pid;
@@ -490,6 +502,9 @@ impl App {
             }
             Tab::PgIndexes => {
                 // No further drill-down from PGI
+            }
+            Tab::PgErrors => {
+                // No drill-down from PGE
             }
             Tab::PgLocks => {
                 // PGL -> PGA: Navigate to PostgreSQL session by selected lock's PID

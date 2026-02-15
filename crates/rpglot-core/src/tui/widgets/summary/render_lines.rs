@@ -397,6 +397,19 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
         PG_DLOCK,
         dlock_style,
     ));
+    spans.push(Span::raw(" "));
+
+    let err_style = if pg.errors > 0 {
+        Styles::critical()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "err",
+        &format!("{}", pg.errors),
+        PG_ERR,
+        err_style,
+    ));
 
     line_with_padding(spans, width)
 }
@@ -845,6 +858,7 @@ pub(super) fn render_help_line(width: usize, tab: Tab) -> Line<'static> {
             spans.push(Span::styled("u/w/i", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));
         }
+        Tab::PgErrors => {}
         Tab::PgLocks => {
             spans.push(Span::styled(">", Styles::help_key()));
             spans.push(Span::styled(":drill ", Styles::help()));

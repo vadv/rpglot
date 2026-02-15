@@ -9,6 +9,7 @@ import {
   BarChart3,
   Table2,
   ListTree,
+  AlertTriangle,
   Lock,
 } from "lucide-react";
 import type { TabKey } from "../api/types";
@@ -20,6 +21,7 @@ const TAB_ICONS: Record<TabKey, typeof Monitor> = {
   pgs: BarChart3,
   pgt: Table2,
   pgi: ListTree,
+  pge: AlertTriangle,
   pgl: Lock,
 };
 
@@ -34,7 +36,8 @@ export function HelpModal({ tab, view, onClose }: HelpModalProps) {
   const Icon = TAB_ICONS[tab];
   const viewHelp = help.views[view] ?? Object.values(help.views)[0];
   const viewLabel =
-    Object.keys(help.views).find((k) => k === view) ?? Object.keys(help.views)[0];
+    Object.keys(help.views).find((k) => k === view) ??
+    Object.keys(help.views)[0];
 
   // Capture-phase Escape — close modal without propagating to App.tsx
   useEffect(() => {
@@ -91,10 +94,7 @@ export function HelpModal({ tab, view, onClose }: HelpModalProps) {
           </HelpSection>
 
           {viewHelp && (
-            <HelpSection
-              title={`Key Metrics \u2014 ${viewLabel}`}
-              defaultOpen
-            >
+            <HelpSection title={`Key Metrics \u2014 ${viewLabel}`} defaultOpen>
               <p className="text-xs text-[var(--text-tertiary)] mb-3">
                 {viewHelp.description}
               </p>
@@ -209,8 +209,8 @@ function ColorLegendRow({
         style={{ backgroundColor: color }}
       />
       <span className="text-[var(--text-secondary)]">
-        <strong className="text-[var(--text-primary)]">{label}</strong>{" "}
-        &mdash; {description}
+        <strong className="text-[var(--text-primary)]">{label}</strong> &mdash;{" "}
+        {description}
       </span>
     </div>
   );

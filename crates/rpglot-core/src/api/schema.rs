@@ -81,6 +81,7 @@ pub struct TabsSchema {
     pub pgs: TabSchema,
     pub pgt: TabSchema,
     pub pgi: TabSchema,
+    pub pge: TabSchema,
     pub pgl: TabSchema,
 }
 
@@ -574,6 +575,7 @@ fn generate_summary_schema() -> SummarySchema {
                         Some(Format::Bytes),
                     ),
                     field("deadlocks", "Deadlocks", DataType::Number, None, None),
+                    field("errors", "Errors", DataType::Integer, None, None),
                 ],
             },
             SummarySection {
@@ -635,6 +637,7 @@ fn generate_tabs_schema() -> TabsSchema {
         pgs: generate_pgs_schema(),
         pgt: generate_pgt_schema(),
         pgi: generate_pgi_schema(),
+        pge: generate_pge_schema(),
         pgl: generate_pgl_schema(),
     }
 }
@@ -2256,6 +2259,65 @@ fn generate_pgi_schema() -> TabSchema {
                 default_sort_desc: true,
             },
         ],
+        drill_down: None,
+    }
+}
+
+fn generate_pge_schema() -> TabSchema {
+    TabSchema {
+        name: "PG Errors".into(),
+        description: "PostgreSQL log errors (ERROR/FATAL/PANIC)".into(),
+        entity_id: "pattern_hash".into(),
+        columns: vec![
+            col(
+                "pattern_hash",
+                "Pattern ID",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "severity",
+                "Severity",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
+            col("count", "Count", DataType::Integer, None, None, true, false),
+            col(
+                "pattern",
+                "Pattern",
+                DataType::String,
+                None,
+                None,
+                false,
+                true,
+            ),
+            col(
+                "sample",
+                "Sample",
+                DataType::String,
+                None,
+                None,
+                false,
+                true,
+            ),
+        ],
+        views: vec![ViewSchema {
+            key: "default".into(),
+            label: "Errors".into(),
+            columns: vec!["severity", "count", "pattern", "sample"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            default: true,
+            default_sort: Some("count".into()),
+            default_sort_desc: true,
+        }],
         drill_down: None,
     }
 }

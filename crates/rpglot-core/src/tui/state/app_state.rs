@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use crate::storage::Snapshot;
 
 use super::{
-    CachedWidths, InputMode, PgActivityTabState, PgIndexesTabState, PgLocksTabState,
-    PgStatementsTabState, PgTablesTabState, PopupState, ProcessRow, ProcessViewMode, Tab, TabState,
-    TableState,
+    CachedWidths, InputMode, PgActivityTabState, PgErrorsTabState, PgIndexesTabState,
+    PgLocksTabState, PgStatementsTabState, PgTablesTabState, PopupState, ProcessRow,
+    ProcessViewMode, Tab, TabState, TableState,
 };
 
 /// Main application state.
@@ -86,6 +86,10 @@ pub struct AppState {
     /// pg_stat_user_indexes (PGI) tab state.
     pub pgi: PgIndexesTabState,
 
+    // ===== pg_log_errors (PGE tab) =====
+    /// PostgreSQL log errors (PGE) tab state.
+    pub pge: PgErrorsTabState,
+
     // ===== pg_locks tree (PGL tab) =====
     /// pg_locks tree (PGL) tab state.
     pub pgl: PgLocksTabState,
@@ -144,6 +148,7 @@ impl AppState {
             pgs: PgStatementsTabState::default(),
             pgt: PgTablesTabState::default(),
             pgi: PgIndexesTabState::default(),
+            pge: PgErrorsTabState::default(),
             pgl: PgLocksTabState::default(),
 
             status_message: None,
@@ -186,6 +191,12 @@ impl AppState {
                 sort_column: self.pgi.sort_column,
                 sort_ascending: self.pgi.sort_ascending,
                 selected: self.pgi.selected,
+            },
+            Tab::PgErrors => TabState {
+                filter: self.pge.filter.clone(),
+                sort_column: self.pge.sort_column,
+                sort_ascending: self.pge.sort_ascending,
+                selected: self.pge.selected,
             },
             Tab::PgLocks => TabState {
                 filter: self.pgl.filter.clone(),
@@ -236,6 +247,13 @@ impl AppState {
                     self.pgi.sort_ascending = state.sort_ascending;
                     self.pgi.selected = state.selected;
                 }
+                Tab::PgErrors => {
+                    self.pge.filter = state.filter.clone();
+                    self.filter_input = state.filter.clone().unwrap_or_default();
+                    self.pge.sort_column = state.sort_column;
+                    self.pge.sort_ascending = state.sort_ascending;
+                    self.pge.selected = state.selected;
+                }
                 Tab::PgLocks => {
                     self.pgl.filter = state.filter.clone();
                     self.filter_input = state.filter.clone().unwrap_or_default();
@@ -266,6 +284,9 @@ impl AppState {
                 Tab::PgIndexes => {
                     self.pgi.tracked_indexrelid = None;
                     self.pgi.filter_relid = None; // clear drill-down filter on manual tab switch
+                }
+                Tab::PgErrors => {
+                    self.pge.tracked_pattern_hash = None;
                 }
                 Tab::PgLocks => {
                     self.pgl.tracked_pid = None;

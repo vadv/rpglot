@@ -480,6 +480,8 @@ struct PgSummary {
     tmp_bytes_s: f64,
     /// Deadlocks in this interval.
     deadlocks: i64,
+    /// Total error count from PgLogErrors in current snapshot.
+    errors: u32,
 }
 
 /// PostgreSQL background writer summary (rates from pg_stat_bgwriter).
@@ -551,6 +553,7 @@ pub(super) mod metric_widths {
     pub const PG_TUP: usize = 15; // "tup:" (4) + value (11) — fits "410.4K/s"
     pub const PG_TMP: usize = 16; // "tmp:" (4) + value (12) — fits "100.0M/s"
     pub const PG_DLOCK: usize = 11; // "dlock:" (6) + value (5)
+    pub const PG_ERR: usize = 9; // "err:" (4) + value (5)
 
     // BGW line: ckpt: 0.0/m  wr:    0ms  be:      0  cln:  224/s  mxw:     0  alloc:  770/s
     // Aligned with PG: 1-space separators, wider fields for stable layout

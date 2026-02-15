@@ -15,6 +15,7 @@ export interface ApiSnapshot {
   pgs: PgStatementsRow[];
   pgt: PgTablesRow[];
   pgi: PgIndexesRow[];
+  pge: PgErrorsRow[];
   pgl: PgLocksRow[];
 }
 
@@ -130,6 +131,7 @@ export interface PgSummary {
   tuples_s: number | null;
   temp_bytes_s: number | null;
   deadlocks: number | null;
+  errors: number | null;
   bgwriter: BgwriterSummary | null;
 }
 
@@ -316,6 +318,14 @@ export interface PgIndexesRow {
   disk_blks_read_s: number | null;
 }
 
+export interface PgErrorsRow {
+  pattern_hash: number;
+  severity: string;
+  pattern: string;
+  count: number;
+  sample: string;
+}
+
 export interface PgLocksRow {
   pid: number;
   depth: number;
@@ -387,6 +397,7 @@ export interface TabsSchema {
   pgs: TabSchema;
   pgt: TabSchema;
   pgi: TabSchema;
+  pge: TabSchema;
   pgl: TabSchema;
 }
 
@@ -449,7 +460,8 @@ export interface HeatmapBucket {
   cpu: number;
   cgroup_cpu: number;
   cgroup_mem: number;
+  errors: number;
 }
 
 // Tab key type
-export type TabKey = "prc" | "pga" | "pgs" | "pgt" | "pgi" | "pgl";
+export type TabKey = "prc" | "pga" | "pgs" | "pgt" | "pgi" | "pge" | "pgl";

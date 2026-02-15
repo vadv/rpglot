@@ -756,6 +756,7 @@ impl HistoryProvider {
                             && let Some(snap) = wal.load_snapshot(wal_idx)
                         {
                             let active = metrics::count_active_sessions(&snap);
+                            let errors = metrics::count_error_entries(&snap);
                             // CPU% for WAL: simplified to 0 (WAL entries will be flushed
                             // to chunk with full CPU% soon, < 1 hour of data)
                             result.push((
@@ -765,6 +766,7 @@ impl HistoryProvider {
                                     cpu_pct_x10: 0,
                                     cgroup_cpu_pct_x10: 0,
                                     cgroup_mem_pct_x10: 0,
+                                    error_count: errors,
                                 },
                             ));
                         }
@@ -774,6 +776,7 @@ impl HistoryProvider {
                     for snap in snapshots {
                         if snap.timestamp >= start_ts && snap.timestamp <= end_ts {
                             let active = metrics::count_active_sessions(snap);
+                            let errors = metrics::count_error_entries(snap);
                             result.push((
                                 snap.timestamp,
                                 MetricsEntry {
@@ -781,6 +784,7 @@ impl HistoryProvider {
                                     cpu_pct_x10: 0,
                                     cgroup_cpu_pct_x10: 0,
                                     cgroup_mem_pct_x10: 0,
+                                    error_count: errors,
                                 },
                             ));
                         }

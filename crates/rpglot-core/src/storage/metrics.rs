@@ -1,15 +1,16 @@
 //! Lightweight per-snapshot metrics for timeline heatmap visualization.
 //!
-//! Each snapshot produces an 8-byte `MetricsEntry` (active_sessions, host CPU%,
-//! cgroup CPU%, cgroup memory%).
+//! Each snapshot produces a 10-byte `MetricsEntry` (active_sessions, host CPU%,
+//! cgroup CPU%, cgroup memory%, error_count).
 //! These are stored in `.metrics` sidecar files alongside `.zst` chunk files
 //! and read without decompressing snapshots — enabling O(1) access to activity
 //! data for arbitrary time ranges.
 //!
 //! ## File format
 //!
-//! **V2** (current): 4-byte magic `b"MET2"` followed by 8-byte entries.
-//! **V1** (legacy): no header, 4-byte entries. Read with cgroup fields = 0.
+//! **V3** (current): 4-byte magic `b"MET3"` followed by 10-byte entries.
+//! **V2** (legacy): 4-byte magic `b"MET2"` followed by 8-byte entries (error_count = 0).
+//! **V1** (legacy): no header, 4-byte entries. Read with cgroup + error fields = 0.
 
 use std::path::{Path, PathBuf};
 
@@ -21,8 +22,11 @@ use super::model::{CgroupCpuInfo, CgroupMemoryInfo, DataBlock, Snapshot, SystemC
 /// Magic bytes identifying V2 metrics files.
 const METRICS_MAGIC_V2: &[u8; 4] = b"MET2";
 
+/// Magic bytes identifying V3 metrics files (adds error_count).
+const METRICS_MAGIC_V3: &[u8; 4] = b"MET3";
+
 /// Lightweight per-snapshot metrics for timeline heatmap.
-/// Packed into 8 bytes for minimal disk/RAM footprint.
+/// V3: 10 bytes per entry. V2: 8 bytes (error_count = 0).
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct MetricsEntry {
@@ -40,6 +44,9 @@ pub struct MetricsEntry {
     /// Instant value: memory.current / memory.max.
     /// 0 when not in a container or no cgroup memory limit.
     pub cgroup_mem_pct_x10: u16,
+    /// Total PostgreSQL log error count in this snapshot (ERROR+FATAL+PANIC).
+    /// 0 when no errors or log collector not configured.
+    pub error_count: u16,
 }
 
 /// A bucketed heatmap data point for frontend display.
@@ -55,6 +62,8 @@ pub struct HeatmapBucket {
     pub cgroup_cpu: u16,
     /// Max cgroup memory% * 10 in this bucket (0..1000).
     pub cgroup_mem: u16,
+    /// Max PostgreSQL error count in this bucket.
+    pub errors: u16,
 }
 
 // ---------------------------------------------------------------------------
@@ -66,27 +75,47 @@ pub fn metrics_path(chunk_path: &Path) -> PathBuf {
     chunk_path.with_extension("metrics")
 }
 
-/// Writes metrics entries to a V2 `.metrics` sidecar file.
-/// Format: 4-byte magic `b"MET2"` + 8-byte little-endian entries.
+/// Writes metrics entries to a V3 `.metrics` sidecar file.
+/// Format: 4-byte magic `b"MET3"` + 10-byte little-endian entries.
 pub fn write_metrics(path: &Path, entries: &[MetricsEntry]) -> std::io::Result<()> {
-    let mut buf = Vec::with_capacity(4 + entries.len() * 8);
-    buf.extend_from_slice(METRICS_MAGIC_V2);
+    let mut buf = Vec::with_capacity(4 + entries.len() * 10);
+    buf.extend_from_slice(METRICS_MAGIC_V3);
     for e in entries {
         buf.extend_from_slice(&e.active_sessions.to_le_bytes());
         buf.extend_from_slice(&e.cpu_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.cgroup_cpu_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.cgroup_mem_pct_x10.to_le_bytes());
+        buf.extend_from_slice(&e.error_count.to_le_bytes());
     }
     std::fs::write(path, buf)
 }
 
 /// Reads metrics entries from a `.metrics` sidecar file.
-/// Supports both V2 (with magic header, 8 bytes/entry) and
+/// Supports V3 (10 bytes/entry), V2 (8 bytes/entry), and
 /// V1 (no header, 4 bytes/entry) formats transparently.
 pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
     let data = std::fs::read(path)?;
 
-    if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V2 {
+    if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V3 {
+        // V3 format: 4-byte header + 10-byte entries
+        let payload = &data[4..];
+        if payload.len() % 10 != 0 {
+            return Err(std::io::Error::other("invalid v3 metrics file size"));
+        }
+        let count = payload.len() / 10;
+        let mut entries = Vec::with_capacity(count);
+        for i in 0..count {
+            let off = i * 10;
+            entries.push(MetricsEntry {
+                active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
+                cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
+                cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
+                cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
+                error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
+            });
+        }
+        Ok(entries)
+    } else if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V2 {
         // V2 format: 4-byte header + 8-byte entries
         let payload = &data[4..];
         if payload.len() % 8 != 0 {
@@ -101,6 +130,7 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
                 cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
                 cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
                 cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
+                error_count: 0,
             });
         }
         Ok(entries)
@@ -118,6 +148,7 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
                 cpu_pct_x10: u16::from_le_bytes([data[off + 2], data[off + 3]]),
                 cgroup_cpu_pct_x10: 0,
                 cgroup_mem_pct_x10: 0,
+                error_count: 0,
             });
         }
         Ok(entries)
@@ -132,6 +163,22 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
 /// without needing the StringInterner.
 fn idle_hash() -> u64 {
     xxh3_64(b"idle")
+}
+
+/// Count total PostgreSQL log errors in a snapshot.
+pub fn count_error_entries(snapshot: &Snapshot) -> u16 {
+    let total: u64 = snapshot
+        .blocks
+        .iter()
+        .filter_map(|b| {
+            if let DataBlock::PgLogErrors(entries) = b {
+                Some(entries.iter().map(|e| e.count as u64).sum::<u64>())
+            } else {
+                None
+            }
+        })
+        .sum();
+    total.min(u16::MAX as u64) as u16
 }
 
 /// Count non-idle PGA sessions in a snapshot.
@@ -271,11 +318,15 @@ pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry>
             .map(compute_cgroup_mem_pct)
             .unwrap_or(0);
 
+        // PostgreSQL log error count
+        let errors = count_error_entries(snap);
+
         entries.push(MetricsEntry {
             active_sessions: active,
             cpu_pct_x10: cpu,
             cgroup_cpu_pct_x10: cgroup_cpu,
             cgroup_mem_pct_x10: cgroup_mem,
+            error_count: errors,
         });
 
         prev_cpu = extract_system_cpu(snap);
@@ -311,6 +362,7 @@ pub fn bucket_metrics(
                 cpu: 0,
                 cgroup_cpu: 0,
                 cgroup_mem: 0,
+                errors: 0,
             }
         })
         .collect();
@@ -322,6 +374,7 @@ pub fn bucket_metrics(
         buckets[idx].cpu = buckets[idx].cpu.max(entry.cpu_pct_x10);
         buckets[idx].cgroup_cpu = buckets[idx].cgroup_cpu.max(entry.cgroup_cpu_pct_x10);
         buckets[idx].cgroup_mem = buckets[idx].cgroup_mem.max(entry.cgroup_mem_pct_x10);
+        buckets[idx].errors = buckets[idx].errors.max(entry.error_count);
     }
 
     buckets
@@ -339,21 +392,24 @@ mod tests {
                 cpu_pct_x10: 450,
                 cgroup_cpu_pct_x10: 300,
                 cgroup_mem_pct_x10: 750,
+                error_count: 3,
             },
             MetricsEntry {
                 active_sessions: 0,
                 cpu_pct_x10: 0,
                 cgroup_cpu_pct_x10: 0,
                 cgroup_mem_pct_x10: 0,
+                error_count: 0,
             },
             MetricsEntry {
                 active_sessions: 100,
                 cpu_pct_x10: 999,
                 cgroup_cpu_pct_x10: 500,
                 cgroup_mem_pct_x10: 950,
+                error_count: 42,
             },
         ];
-        let dir = std::env::temp_dir().join("rpglot_test_metrics_v2");
+        let dir = std::env::temp_dir().join("rpglot_test_metrics_v3");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.metrics");
 
@@ -364,10 +420,12 @@ mod tests {
         assert_eq!(loaded[0].cpu_pct_x10, 450);
         assert_eq!(loaded[0].cgroup_cpu_pct_x10, 300);
         assert_eq!(loaded[0].cgroup_mem_pct_x10, 750);
+        assert_eq!(loaded[0].error_count, 3);
         assert_eq!(loaded[2].active_sessions, 100);
         assert_eq!(loaded[2].cpu_pct_x10, 999);
         assert_eq!(loaded[2].cgroup_cpu_pct_x10, 500);
         assert_eq!(loaded[2].cgroup_mem_pct_x10, 950);
+        assert_eq!(loaded[2].error_count, 42);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -412,6 +470,7 @@ mod tests {
                     cpu_pct_x10: 200,
                     cgroup_cpu_pct_x10: 100,
                     cgroup_mem_pct_x10: 500,
+                    error_count: 0,
                 },
             ),
             (
@@ -421,6 +480,7 @@ mod tests {
                     cpu_pct_x10: 700,
                     cgroup_cpu_pct_x10: 400,
                     cgroup_mem_pct_x10: 600,
+                    error_count: 5,
                 },
             ),
             (
@@ -430,6 +490,7 @@ mod tests {
                     cpu_pct_x10: 100,
                     cgroup_cpu_pct_x10: 50,
                     cgroup_mem_pct_x10: 550,
+                    error_count: 2,
                 },
             ),
         ];
@@ -440,11 +501,13 @@ mod tests {
         assert_eq!(buckets[0].cpu, 200);
         assert_eq!(buckets[0].cgroup_cpu, 100);
         assert_eq!(buckets[0].cgroup_mem, 500);
+        assert_eq!(buckets[0].errors, 0);
         // Second bucket [150, 200]: entries at 150 and 200
         assert_eq!(buckets[1].active, 10);
         assert_eq!(buckets[1].cpu, 700);
         assert_eq!(buckets[1].cgroup_cpu, 400);
         assert_eq!(buckets[1].cgroup_mem, 600);
+        assert_eq!(buckets[1].errors, 5);
     }
 
     #[test]

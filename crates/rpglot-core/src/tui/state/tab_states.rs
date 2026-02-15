@@ -2,7 +2,8 @@
 //! PGT (pg_stat_user_tables), PGI (pg_stat_user_indexes).
 
 use crate::storage::model::{
-    DataBlock, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, Snapshot,
+    DataBlock, PgLogSeverity, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    Snapshot,
 };
 use ratatui::widgets::TableState as RatatuiTableState;
 use std::collections::HashMap;
@@ -76,6 +77,139 @@ impl PgLocksTabState {
         }
 
         self.ratatui_state.select(Some(self.selected));
+    }
+}
+
+// ===========================================================================
+// PGE (pg_log_errors) tab state
+// ===========================================================================
+
+/// Accumulated error pattern within the current hour.
+#[derive(Debug, Clone)]
+pub struct AccumulatedError {
+    pub pattern_hash: u64,
+    pub severity: PgLogSeverity,
+    pub count: u32,
+    pub sample_hash: u64,
+    /// Timestamp of last occurrence.
+    pub last_seen: i64,
+}
+
+/// State for the PostgreSQL Errors (PGE) tab.
+#[derive(Debug, Default)]
+pub struct PgErrorsTabState {
+    pub selected: usize,
+    pub filter: Option<String>,
+    pub sort_column: usize,
+    pub sort_ascending: bool,
+    pub tracked_pattern_hash: Option<u64>,
+    pub ratatui_state: RatatuiTableState,
+    /// Accumulated errors within the current hour.
+    pub accumulated: Vec<AccumulatedError>,
+    /// Hour boundary (epoch of hour start) for reset detection.
+    pub current_hour_start: i64,
+}
+
+impl PgErrorsTabState {
+    pub fn next_sort_column(&mut self) {
+        // 4 columns: SEVERITY, COUNT, PATTERN, SAMPLE
+        self.sort_column = (self.sort_column + 1) % 4;
+    }
+
+    pub fn toggle_sort_direction(&mut self) {
+        self.sort_ascending = !self.sort_ascending;
+    }
+
+    pub fn select_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+        self.tracked_pattern_hash = None;
+    }
+
+    pub fn select_down(&mut self) {
+        self.selected = self.selected.saturating_add(1);
+        self.tracked_pattern_hash = None;
+    }
+
+    pub fn page_up(&mut self, n: usize) {
+        self.selected = self.selected.saturating_sub(n);
+        self.tracked_pattern_hash = None;
+    }
+
+    pub fn page_down(&mut self, n: usize) {
+        self.selected = self.selected.saturating_add(n);
+        self.tracked_pattern_hash = None;
+    }
+
+    pub fn home(&mut self) {
+        self.selected = 0;
+        self.tracked_pattern_hash = None;
+    }
+
+    pub fn end(&mut self) {
+        self.selected = usize::MAX;
+        self.tracked_pattern_hash = None;
+    }
+
+    /// Resolves selection after filtering: applies tracked pattern_hash,
+    /// clamps selected index, and syncs ratatui state.
+    pub fn resolve_selection(&mut self, row_hashes: &[u64]) {
+        if let Some(tracked) = self.tracked_pattern_hash {
+            if let Some(idx) = row_hashes.iter().position(|&h| h == tracked) {
+                self.selected = idx;
+            } else {
+                self.tracked_pattern_hash = None;
+            }
+        }
+
+        if !row_hashes.is_empty() {
+            self.selected = self.selected.min(row_hashes.len() - 1);
+            self.tracked_pattern_hash = Some(row_hashes[self.selected]);
+        } else {
+            self.selected = 0;
+            self.tracked_pattern_hash = None;
+        }
+
+        self.ratatui_state.select(Some(self.selected));
+    }
+
+    /// Accumulate errors from a snapshot into the current hour buffer.
+    /// Resets accumulator when the hour boundary changes.
+    pub fn accumulate_from_snapshot(&mut self, snapshot: &Snapshot) {
+        let hour_start = (snapshot.timestamp / 3600) * 3600;
+        if hour_start != self.current_hour_start {
+            self.accumulated.clear();
+            self.current_hour_start = hour_start;
+        }
+
+        let entries = snapshot.blocks.iter().find_map(|b| {
+            if let DataBlock::PgLogErrors(v) = b {
+                Some(v.as_slice())
+            } else {
+                None
+            }
+        });
+
+        let Some(entries) = entries else { return };
+
+        for entry in entries {
+            if let Some(acc) = self
+                .accumulated
+                .iter_mut()
+                .find(|a| a.pattern_hash == entry.pattern_hash)
+            {
+                acc.count += entry.count;
+                acc.sample_hash = entry.sample_hash;
+                acc.last_seen = snapshot.timestamp;
+            } else {
+                self.accumulated.push(AccumulatedError {
+                    pattern_hash: entry.pattern_hash,
+                    severity: entry.severity,
+                    count: entry.count,
+                    sample_hash: entry.sample_hash,
+                    last_seen: snapshot.timestamp,
+                });
+            }
+        }
     }
 }
 

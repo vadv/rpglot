@@ -204,6 +204,13 @@ const RULES: Record<string, Classifier> = {
     if (n > 0) return "critical";
     return undefined;
   },
+  errors: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n > 0) return "critical";
+    return undefined;
+  },
   temp_bytes_s: (v) => {
     if (v == null) return undefined;
     const n = Number(v);

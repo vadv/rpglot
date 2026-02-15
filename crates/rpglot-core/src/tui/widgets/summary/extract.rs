@@ -199,6 +199,20 @@ pub(super) fn extract_metrics(snapshot: &Snapshot, previous: Option<&Snapshot>) 
     // Compute Backend IO Hit Ratio for PG processes if pg_summary exists
     if let Some(ref mut pg) = metrics.pg_summary {
         pg.backend_io_hit = compute_backend_io_hit(snapshot, previous);
+
+        // Count errors from PgLogErrors
+        let error_count: u32 = snapshot
+            .blocks
+            .iter()
+            .filter_map(|b| {
+                if let DataBlock::PgLogErrors(entries) = b {
+                    Some(entries.iter().map(|e| e.count).sum::<u32>())
+                } else {
+                    None
+                }
+            })
+            .sum();
+        pg.errors = error_count;
     }
 
     metrics
@@ -595,6 +609,7 @@ fn extract_pg_summary(
         tup_s: sum_tup as f64 / delta_time,
         tmp_bytes_s: sum_temp_bytes as f64 / delta_time,
         deadlocks: sum_deadlocks,
+        errors: 0, // Filled in extract_metrics() from PgLogErrors
     })
 }
 

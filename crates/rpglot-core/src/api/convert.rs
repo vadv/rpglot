@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
-    CgroupCpuInfo, DataBlock, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
-    ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
+    CgroupCpuInfo, DataBlock, PgLogSeverity, PgStatActivityInfo, PgStatBgwriterInfo,
+    PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
 };
 
 use super::snapshot::*;
@@ -46,6 +46,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         pgs: extract_pgs(snap, ctx.interner, ctx.pgs_rates),
         pgt: extract_pgt(snap, ctx.interner, ctx.pgt_rates),
         pgi: extract_pgi(snap, ctx.interner, ctx.pgi_rates),
+        pge: extract_pge(snap, ctx.interner),
         pgl: extract_pgl(snap, ctx.interner),
     }
 }
@@ -548,6 +549,15 @@ fn extract_pg_summary(snap: &Snapshot, prev: Option<&Snapshot>, delta_time: f64)
     let bgw = compute_bgw_rates(snap, prev, delta_time);
     let backend_io_hit = compute_backend_io_hit(snap, prev);
 
+    let errors: u32 = find_block(snap, |b| {
+        if let DataBlock::PgLogErrors(entries) = b {
+            Some(entries.iter().map(|e| e.count).sum())
+        } else {
+            None
+        }
+    })
+    .unwrap_or(0);
+
     PgSummary {
         tps: db_rates.as_ref().map(|r| r.0),
         hit_ratio_pct: db_rates.as_ref().map(|r| r.1),
@@ -556,6 +566,7 @@ fn extract_pg_summary(snap: &Snapshot, prev: Option<&Snapshot>, delta_time: f64)
         temp_bytes_s: db_rates.as_ref().map(|r| r.3),
         deadlocks: db_rates.as_ref().map(|r| r.4),
         bgwriter: bgw,
+        errors: if errors > 0 { Some(errors) } else { None },
     }
 }
 
@@ -1404,6 +1415,38 @@ fn extract_pgi(
                 io_hit_pct,
                 disk_blks_read_s: idx_blks_read_s,
             }
+        })
+        .collect()
+}
+
+// ============================================================
+// PGE (pg_log_errors)
+// ============================================================
+
+fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgErrorsRow> {
+    let Some(entries) = find_block(snap, |b| {
+        if let DataBlock::PgLogErrors(v) = b {
+            Some(v.as_slice())
+        } else {
+            None
+        }
+    }) else {
+        return Vec::new();
+    };
+
+    entries
+        .iter()
+        .map(|e| PgErrorsRow {
+            pattern_hash: e.pattern_hash,
+            severity: match e.severity {
+                PgLogSeverity::Error => "ERROR",
+                PgLogSeverity::Fatal => "FATAL",
+                PgLogSeverity::Panic => "PANIC",
+            }
+            .to_string(),
+            pattern: resolve(interner, e.pattern_hash),
+            count: e.count,
+            sample: resolve(interner, e.sample_hash),
         })
         .collect()
 }

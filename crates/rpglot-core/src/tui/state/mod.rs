@@ -18,6 +18,7 @@ pub enum Tab {
     PgStatements,
     PgTables,
     PgIndexes,
+    PgErrors,
     PgLocks,
 }
 
@@ -29,6 +30,7 @@ impl Tab {
             Tab::PgStatements,
             Tab::PgTables,
             Tab::PgIndexes,
+            Tab::PgErrors,
             Tab::PgLocks,
         ]
     }
@@ -56,6 +58,7 @@ impl Tab {
             Tab::PgStatements => "PGS",
             Tab::PgTables => "PGT",
             Tab::PgIndexes => "PGI",
+            Tab::PgErrors => "PGE",
             Tab::PgLocks => "PGL",
         }
     }
@@ -67,7 +70,8 @@ impl Tab {
             Tab::PostgresActive => Tab::PgStatements,
             Tab::PgStatements => Tab::PgTables,
             Tab::PgTables => Tab::PgIndexes,
-            Tab::PgIndexes => Tab::PgLocks,
+            Tab::PgIndexes => Tab::PgErrors,
+            Tab::PgErrors => Tab::PgLocks,
             Tab::PgLocks => Tab::Processes,
         }
     }
@@ -80,7 +84,8 @@ impl Tab {
             Tab::PgStatements => Tab::PostgresActive,
             Tab::PgTables => Tab::PgStatements,
             Tab::PgIndexes => Tab::PgTables,
-            Tab::PgLocks => Tab::PgIndexes,
+            Tab::PgErrors => Tab::PgIndexes,
+            Tab::PgLocks => Tab::PgErrors,
         }
     }
 }
@@ -142,6 +147,12 @@ pub enum PopupState {
         scroll: usize,
         show_help: bool,
     },
+    /// PostgreSQL log errors detail popup (PGE tab).
+    PgeDetail {
+        pattern_hash: u64,
+        scroll: usize,
+        show_help: bool,
+    },
 }
 
 impl PopupState {
@@ -160,6 +171,7 @@ impl PopupState {
                 | Self::PgtDetail { .. }
                 | Self::PgiDetail { .. }
                 | Self::PglDetail { .. }
+                | Self::PgeDetail { .. }
         )
     }
 }

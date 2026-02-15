@@ -31,6 +31,8 @@ pub struct ApiSnapshot {
     pub pgt: Vec<PgTablesRow>,
     /// pg_stat_user_indexes rows (with rates).
     pub pgi: Vec<PgIndexesRow>,
+    /// PostgreSQL log errors (ERROR/FATAL/PANIC).
+    pub pge: Vec<PgErrorsRow>,
     /// pg_locks blocking tree (flat, with depth).
     pub pgl: Vec<PgLocksRow>,
 }
@@ -240,6 +242,8 @@ pub struct PgSummary {
     pub deadlocks: Option<f64>,
     /// Background writer stats.
     pub bgwriter: Option<BgwriterSummary>,
+    /// Total PostgreSQL log error count in this snapshot (ERROR+FATAL+PANIC).
+    pub errors: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -546,6 +550,21 @@ pub struct PgIndexesRow {
     pub io_hit_pct: Option<f64>,
     /// Alias for idx_blks_read_s (schema consistency).
     pub disk_blks_read_s: Option<f64>,
+}
+
+/// PostgreSQL log error pattern row.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PgErrorsRow {
+    /// Pattern hash (entity ID for selection tracking).
+    pub pattern_hash: u64,
+    /// Severity: "ERROR", "FATAL", or "PANIC".
+    pub severity: String,
+    /// Normalized error pattern text.
+    pub pattern: String,
+    /// Number of occurrences in this snapshot interval.
+    pub count: u32,
+    /// One concrete example of the error message.
+    pub sample: String,
 }
 
 /// pg_locks blocking tree row (flat with depth).

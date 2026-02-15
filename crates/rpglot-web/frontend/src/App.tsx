@@ -60,7 +60,7 @@ import type {
   Format,
 } from "./api/types";
 
-const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pgl"];
+const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pge", "pgl"];
 
 // Global auth username — set once during init, read by AppContent
 let _authUsername: string | null = null;
@@ -1649,7 +1649,7 @@ function HintsBar({
 }) {
   return (
     <div className="flex items-center gap-4 px-4 py-1 bg-[var(--bg-surface)] border-t border-[var(--border-default)] text-[11px] text-[var(--text-tertiary)]">
-      <Hint keys="1-6" action="tabs" />
+      <Hint keys="1-7" action="tabs" />
       <Hint keys="j/k" action="navigate" />
       {(detailOpen || hasSelection) && (
         <Hint keys="Esc" action={detailOpen ? "close detail" : "deselect"} />
@@ -1696,6 +1696,8 @@ function getTabData(
       return snapshot.pgt as unknown as Record<string, unknown>[];
     case "pgi":
       return snapshot.pgi as unknown as Record<string, unknown>[];
+    case "pge":
+      return snapshot.pge as unknown as Record<string, unknown>[];
     case "pgl":
       return snapshot.pgl as unknown as Record<string, unknown>[];
   }

@@ -4,12 +4,13 @@ import {
   BarChart3,
   Table2,
   ListTree,
+  AlertTriangle,
   Lock,
 } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import type { TabKey } from "../api/types";
 
-const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pgl"];
+const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pge", "pgl"];
 
 const TAB_CONFIG: Record<
   TabKey,
@@ -35,6 +36,11 @@ const TAB_CONFIG: Record<
     label: "Indexes",
     fullName: "pg_stat_user_indexes",
     icon: ListTree,
+  },
+  pge: {
+    label: "Errors",
+    fullName: "PG Log Errors",
+    icon: AlertTriangle,
   },
   pgl: { label: "Locks", fullName: "pg_locks", icon: Lock },
 };

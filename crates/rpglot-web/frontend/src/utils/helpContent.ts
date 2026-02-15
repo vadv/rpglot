@@ -398,6 +398,29 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
     },
   },
 
+  pge: {
+    label: "Errors",
+    source: "PostgreSQL stderr log parsing",
+    description:
+      "PostgreSQL log errors (ERROR/FATAL/PANIC) grouped by normalized pattern. Errors are accumulated within the current hour.",
+    howToRead:
+      "Sort by Count to find most frequent errors. PANIC = database crash, FATAL = connection terminated, ERROR = query failed. Check Sample column for concrete error message.",
+    views: {
+      default: {
+        description: "All error patterns from PostgreSQL logs.",
+        metrics: [
+          { label: "Severity", description: "ERROR, FATAL, or PANIC" },
+          {
+            label: "Count",
+            description: "Number of occurrences in current hour",
+          },
+          { label: "Pattern", description: "Normalized error pattern" },
+          { label: "Sample", description: "One concrete error message" },
+        ],
+      },
+    },
+  },
+
   pgl: {
     label: "Locks",
     source: "pg_locks + pg_stat_activity",

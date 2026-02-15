@@ -58,6 +58,19 @@ export function ActivityHeatmap({
           />
         );
       })}
+      {/* Error indicators — red dots at top of bars with errors */}
+      {buckets.map((b, i) =>
+        b.errors > 0 ? (
+          <circle
+            key={`err-${i}`}
+            cx={i + 0.5}
+            cy={2}
+            r={0.8}
+            fill="var(--status-critical)"
+            opacity={0.9}
+          />
+        ) : null,
+      )}
       {currentTs > startTs && currentTs < endTs && (
         <line
           x1={((currentTs - startTs) / range) * n}
