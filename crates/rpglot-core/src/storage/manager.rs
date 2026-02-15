@@ -7,6 +7,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
+/// WAL frame format: [u32 LE length][u32 LE crc32][payload bytes]
+const WAL_FRAME_HEADER_SIZE: usize = 8;
+/// Sanity limit for a single WAL entry (256 MB).
+const MAX_WAL_ENTRY_SIZE: u32 = 256 * 1024 * 1024;
+
 /// Configuration for automatic data rotation.
 #[derive(Debug, Clone)]
 pub struct RotationConfig {
@@ -92,6 +97,7 @@ impl StorageManager {
 
     /// Recovers WAL state on startup.
     /// Counts valid entries and truncates any corrupted data at the end.
+    /// WAL frame format: [u32 LE length][u32 LE crc32][payload]
     fn recover_from_wal(&mut self) {
         let wal_path = self.base_path.join("wal.log");
 
@@ -106,23 +112,55 @@ impl StorageManager {
             _ => return,
         };
 
-        let mut cursor = std::io::Cursor::new(&data);
-        let mut valid_end_position = 0u64;
+        let mut pos = 0usize;
+        let mut valid_end_position = 0usize;
         let mut recovered_count = 0usize;
         let mut last_error: Option<String> = None;
 
         // Count valid WAL entries and find valid end position
         loop {
-            let pos_before = cursor.position();
-            match bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
+            if pos + WAL_FRAME_HEADER_SIZE > data.len() {
+                if pos < data.len() {
+                    last_error = Some("truncated frame header".into());
+                }
+                break;
+            }
+            let length = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+            let expected_crc = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap());
+
+            if length > MAX_WAL_ENTRY_SIZE {
+                last_error = Some(format!("frame length {} exceeds limit", length));
+                break;
+            }
+
+            let payload_end = pos + WAL_FRAME_HEADER_SIZE + length as usize;
+            if payload_end > data.len() {
+                last_error = Some(format!(
+                    "truncated payload: need {} bytes, have {}",
+                    length,
+                    data.len() - pos - WAL_FRAME_HEADER_SIZE
+                ));
+                break;
+            }
+
+            let payload = &data[pos + WAL_FRAME_HEADER_SIZE..payload_end];
+            let actual_crc = crc32fast::hash(payload);
+            if actual_crc != expected_crc {
+                last_error = Some(format!(
+                    "CRC mismatch: expected {:#010x}, got {:#010x}",
+                    expected_crc, actual_crc
+                ));
+                break;
+            }
+
+            match postcard::from_bytes::<WalEntry>(payload) {
                 Ok(_entry) => {
-                    valid_end_position = cursor.position();
+                    pos = payload_end;
+                    valid_end_position = pos;
                     recovered_count += 1;
                 }
                 Err(e) => {
-                    if pos_before < data.len() as u64 {
-                        last_error = Some(format!("{}", e));
-                    }
+                    last_error = Some(format!("deserialization failed: {}", e));
                     break;
                 }
             }
@@ -134,14 +172,14 @@ impl StorageManager {
                 position = valid_end_position,
                 file_size = data.len(),
                 error = %err,
-                "WAL deserialization stopped at entry boundary"
+                "WAL recovery stopped"
             );
         }
 
         self.wal_entries_count = recovered_count;
 
         // Check if there's garbage after valid records (corruption detected)
-        let file_size = data.len() as u64;
+        let file_size = data.len();
         if valid_end_position < file_size && valid_end_position > 0 {
             let garbage_bytes = file_size - valid_end_position;
             warn!(
@@ -153,7 +191,7 @@ impl StorageManager {
             if let Err(e) = OpenOptions::new()
                 .write(true)
                 .open(&wal_path)
-                .and_then(|f| f.set_len(valid_end_position))
+                .and_then(|f| f.set_len(valid_end_position as u64))
             {
                 warn!("Failed to truncate WAL: {}", e);
             }
@@ -281,14 +319,12 @@ impl StorageManager {
         let used_hashes = Self::collect_snapshot_hashes(&snapshot);
         let wal_interner = interner.filter(&used_hashes);
 
-        // Write to WAL for SIGKILL resilience
+        // Write to WAL for SIGKILL resilience (framed: length + crc32 + postcard)
         let wal_entry = WalEntry {
             snapshot,
             interner: wal_interner,
         };
-        let encoded = bincode::serialize(&wal_entry).unwrap();
-        self.wal_file.write_all(&encoded).unwrap();
-        self.wal_file.sync_all().unwrap();
+        Self::write_wal_frame(&mut self.wal_file, &wal_entry);
         self.wal_entries_count += 1;
 
         // Check if size limit reached
@@ -327,14 +363,12 @@ impl StorageManager {
         let used_hashes = Self::collect_snapshot_hashes(&snapshot);
         let wal_interner = interner.filter(&used_hashes);
 
-        // Write to WAL
+        // Write to WAL (framed: length + crc32 + postcard)
         let wal_entry = WalEntry {
             snapshot,
             interner: wal_interner,
         };
-        let encoded = bincode::serialize(&wal_entry).unwrap();
-        self.wal_file.write_all(&encoded).unwrap();
-        self.wal_file.sync_all().unwrap();
+        Self::write_wal_frame(&mut self.wal_file, &wal_entry);
         self.wal_entries_count += 1;
 
         // Check if size limit reached
@@ -344,6 +378,17 @@ impl StorageManager {
         }
 
         flushed
+    }
+
+    /// Writes a single WAL entry with CRC32 framing: [u32 length][u32 crc32][payload].
+    fn write_wal_frame(file: &mut File, entry: &WalEntry) {
+        let encoded = postcard::to_allocvec(entry).expect("WAL entry serialization failed");
+        let length = encoded.len() as u32;
+        let crc = crc32fast::hash(&encoded);
+        file.write_all(&length.to_le_bytes()).unwrap();
+        file.write_all(&crc.to_le_bytes()).unwrap();
+        file.write_all(&encoded).unwrap();
+        file.sync_all().unwrap();
     }
 
     /// Flushes the current chunk using current time for filename.
@@ -418,6 +463,7 @@ impl StorageManager {
     }
 
     /// Loads unflushed snapshots and their interners from WAL file (internal).
+    /// Reads CRC32-framed entries: [u32 length][u32 crc32][payload].
     fn load_wal_snapshots_with_interner(&self) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
         let wal_path = self.base_path.join("wal.log");
         let mut snapshots = Vec::new();
@@ -426,71 +472,82 @@ impl StorageManager {
         if let Ok(data) = std::fs::read(&wal_path)
             && !data.is_empty()
         {
-            let mut cursor = std::io::Cursor::new(&data);
-            loop {
-                let pos_before = cursor.position();
-                match bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
-                    Ok(entry) => {
-                        merged_interner.merge(&entry.interner);
-                        snapshots.push(entry.snapshot);
-                    }
-                    Err(e) => {
-                        if pos_before < data.len() as u64 {
-                            warn!(
-                                loaded = snapshots.len(),
-                                position = pos_before,
-                                file_size = data.len(),
-                                error = %e,
-                                "WAL load: deserialization failed, remaining data skipped"
-                            );
-                        }
-                        break;
-                    }
-                }
+            let mut pos = 0usize;
+            while let Some((entry, next_pos)) = Self::read_wal_frame(&data, pos) {
+                merged_interner.merge(&entry.interner);
+                snapshots.push(entry.snapshot);
+                pos = next_pos;
             }
         }
 
         Ok((snapshots, merged_interner))
     }
 
-    /// Scans WAL file and returns entry metadata (byte_offset, byte_length, timestamp)
-    /// for each entry. Snapshots are deserialized to extract timestamps but immediately
-    /// dropped — peak RAM = one entry at a time. Interners are NOT merged; each WAL
-    /// entry's interner is loaded on demand via `load_wal_snapshot_with_interner`.
+    /// Reads a single WAL frame from `data` at `pos`.
+    /// Returns `Some((entry, next_pos))` on success, `None` on any error.
+    fn read_wal_frame(data: &[u8], pos: usize) -> Option<(WalEntry, usize)> {
+        if pos + WAL_FRAME_HEADER_SIZE > data.len() {
+            return None;
+        }
+        let length = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
+        let expected_crc = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap());
+
+        if length > MAX_WAL_ENTRY_SIZE {
+            return None;
+        }
+
+        let payload_end = pos + WAL_FRAME_HEADER_SIZE + length as usize;
+        if payload_end > data.len() {
+            return None;
+        }
+
+        let payload = &data[pos + WAL_FRAME_HEADER_SIZE..payload_end];
+        let actual_crc = crc32fast::hash(payload);
+        if actual_crc != expected_crc {
+            return None;
+        }
+
+        let entry: WalEntry = postcard::from_bytes(payload).ok()?;
+        Some((entry, payload_end))
+    }
+
+    /// Scans WAL file and returns entry metadata (byte_offset, frame_length, timestamp)
+    /// for each entry. Frame length includes the 8-byte header.
+    /// Snapshots are deserialized to extract timestamps but immediately
+    /// dropped — peak RAM = one entry at a time.
     pub fn scan_wal_metadata(wal_path: &Path) -> std::io::Result<Vec<(u64, u64, i64)>> {
-        use std::io::{BufReader, Seek};
-        let file = match std::fs::File::open(wal_path) {
-            Ok(f) => f,
+        let data = match std::fs::read(wal_path) {
+            Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(Vec::new());
             }
             Err(e) => return Err(e),
         };
-        let file_len = file.metadata()?.len();
-        if file_len == 0 {
+        if data.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut entries = Vec::new();
-        let mut reader = BufReader::new(file);
+        let mut pos = 0usize;
 
-        while reader.stream_position()? < file_len {
-            let start = reader.stream_position()?;
-            match bincode::deserialize_from::<_, WalEntry>(&mut reader) {
-                Ok(entry) => {
-                    let end = reader.stream_position()?;
+        loop {
+            let frame_start = pos;
+            match Self::read_wal_frame(&data, pos) {
+                Some((entry, next_pos)) => {
+                    let frame_len = next_pos - frame_start;
                     let ts = entry.snapshot.timestamp;
-                    entries.push((start, end - start, ts));
-                    // entry (snapshot + interner) dropped here — RAM freed
+                    entries.push((frame_start as u64, frame_len as u64, ts));
+                    pos = next_pos;
                 }
-                Err(e) => {
-                    warn!(
-                        loaded = entries.len(),
-                        position = start,
-                        file_size = file_len,
-                        error = %e,
-                        "WAL scan: deserialization failed, remaining data skipped"
-                    );
+                None => {
+                    if pos < data.len() {
+                        warn!(
+                            loaded = entries.len(),
+                            position = pos,
+                            file_size = data.len(),
+                            "WAL scan: frame read failed, remaining data skipped"
+                        );
+                    }
                     break;
                 }
             }
@@ -499,8 +556,8 @@ impl StorageManager {
         Ok(entries)
     }
 
-    /// Loads a single snapshot from WAL at the given byte range.
-    /// Reads the WAL file, extracts the entry at [offset..offset+length], deserializes it.
+    /// Loads a single snapshot from WAL at the given byte range (frame_offset, frame_length).
+    /// frame_length includes the 8-byte frame header.
     pub fn load_wal_snapshot_at(
         wal_path: &Path,
         offset: u64,
@@ -512,8 +569,7 @@ impl StorageManager {
     }
 
     /// Loads a single snapshot + its interner from WAL at the given byte range.
-    /// Each WAL entry contains a self-contained interner sufficient to resolve
-    /// all string hashes in that entry's snapshot.
+    /// frame_length includes the 8-byte frame header: [u32 len][u32 crc][payload].
     /// Uses seek+read to avoid loading the entire WAL file into memory.
     pub fn load_wal_snapshot_with_interner(
         wal_path: &Path,
@@ -525,8 +581,10 @@ impl StorageManager {
         file.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; length as usize];
         file.read_exact(&mut buf)?;
-        let entry: WalEntry = bincode::deserialize(&buf).map_err(std::io::Error::other)?;
-        Ok((entry.snapshot, entry.interner))
+
+        Self::read_wal_frame(&buf, 0)
+            .map(|(entry, _)| (entry.snapshot, entry.interner))
+            .ok_or_else(|| std::io::Error::other("WAL frame CRC check or deserialization failed"))
     }
 
     /// Loads all chunks from the storage directory and returns reconstructed snapshots
@@ -1124,5 +1182,155 @@ mod tests {
         assert_eq!(snapshots[0].timestamp, 100);
         assert_eq!(snapshots[1].timestamp, 200);
         assert_eq!(snapshots[2].timestamp, 300);
+    }
+
+    /// Helper: write a framed WAL entry to a Vec for testing.
+    fn write_test_wal_frame(buf: &mut Vec<u8>, snapshot: &Snapshot) {
+        let entry = WalEntry {
+            snapshot: snapshot.clone(),
+            interner: StringInterner::new(),
+        };
+        let encoded = postcard::to_allocvec(&entry).unwrap();
+        let length = encoded.len() as u32;
+        let crc = crc32fast::hash(&encoded);
+        buf.extend_from_slice(&length.to_le_bytes());
+        buf.extend_from_slice(&crc.to_le_bytes());
+        buf.extend_from_slice(&encoded);
+    }
+
+    fn test_snapshot(ts: i64) -> Snapshot {
+        Snapshot {
+            timestamp: ts,
+            blocks: vec![DataBlock::Processes(vec![ProcessInfo {
+                pid: 1,
+                name_hash: 1,
+                cmdline_hash: 1,
+                ..ProcessInfo::default()
+            }])],
+        }
+    }
+
+    #[test]
+    fn test_wal_crc_framing_roundtrip() {
+        let dir = tempdir().unwrap();
+
+        // Manually write framed WAL entries
+        let wal_path = dir.path().join("wal.log");
+        let mut buf = Vec::new();
+        write_test_wal_frame(&mut buf, &test_snapshot(100));
+        write_test_wal_frame(&mut buf, &test_snapshot(200));
+        std::fs::write(&wal_path, &buf).unwrap();
+
+        // Manager should recover both entries
+        let manager = StorageManager::new(dir.path());
+        assert_eq!(manager.current_chunk_size(), 2);
+
+        let (snapshots, _) = manager.load_all_snapshots_with_interner().unwrap();
+        assert_eq!(snapshots.len(), 2);
+        assert_eq!(snapshots[0].timestamp, 100);
+        assert_eq!(snapshots[1].timestamp, 200);
+    }
+
+    #[test]
+    fn test_wal_corrupted_payload_detected() {
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("wal.log");
+
+        // Write one valid entry, then one with corrupted payload
+        let mut buf = Vec::new();
+        write_test_wal_frame(&mut buf, &test_snapshot(100));
+
+        // Write a second frame with corrupted payload (flip a byte)
+        let entry = WalEntry {
+            snapshot: test_snapshot(200),
+            interner: StringInterner::new(),
+        };
+        let mut encoded = postcard::to_allocvec(&entry).unwrap();
+        let crc = crc32fast::hash(&encoded); // CRC of original
+        encoded[0] ^= 0xFF; // corrupt the payload
+        let length = encoded.len() as u32;
+        buf.extend_from_slice(&length.to_le_bytes());
+        buf.extend_from_slice(&crc.to_le_bytes()); // original CRC won't match
+        buf.extend_from_slice(&encoded);
+
+        std::fs::write(&wal_path, &buf).unwrap();
+
+        // Manager should recover only the first valid entry
+        let manager = StorageManager::new(dir.path());
+        assert_eq!(manager.current_chunk_size(), 1);
+
+        let (snapshots, _) = manager.load_all_snapshots_with_interner().unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].timestamp, 100);
+    }
+
+    #[test]
+    fn test_wal_truncated_entry_handled() {
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("wal.log");
+
+        let mut buf = Vec::new();
+        write_test_wal_frame(&mut buf, &test_snapshot(100));
+
+        // Add a truncated frame: header says 1000 bytes but only 5 bytes follow
+        buf.extend_from_slice(&1000u32.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes()); // dummy CRC
+        buf.extend_from_slice(&[0u8; 5]); // only 5 of 1000 bytes
+
+        std::fs::write(&wal_path, &buf).unwrap();
+
+        let manager = StorageManager::new(dir.path());
+        assert_eq!(manager.current_chunk_size(), 1);
+    }
+
+    #[test]
+    fn test_wal_garbage_after_valid_entries() {
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("wal.log");
+
+        let mut buf = Vec::new();
+        write_test_wal_frame(&mut buf, &test_snapshot(100));
+        write_test_wal_frame(&mut buf, &test_snapshot(200));
+
+        // Append random garbage
+        buf.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE]);
+
+        std::fs::write(&wal_path, &buf).unwrap();
+
+        // Should recover 2 valid entries, truncate garbage
+        let manager = StorageManager::new(dir.path());
+        assert_eq!(manager.current_chunk_size(), 2);
+
+        // WAL file should be truncated to remove garbage
+        let wal_size = std::fs::metadata(&wal_path).unwrap().len();
+        let expected_size = buf.len() - 6; // minus garbage
+        assert_eq!(wal_size as usize, expected_size);
+    }
+
+    #[test]
+    fn test_wal_empty_file_handled() {
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("wal.log");
+        std::fs::write(&wal_path, &[]).unwrap();
+
+        let manager = StorageManager::new(dir.path());
+        assert_eq!(manager.current_chunk_size(), 0);
+    }
+
+    #[test]
+    fn test_wal_only_header_no_payload() {
+        let dir = tempdir().unwrap();
+        let wal_path = dir.path().join("wal.log");
+
+        // Write only a frame header (8 bytes) with no payload
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&100u32.to_le_bytes()); // length = 100
+        buf.extend_from_slice(&0u32.to_le_bytes()); // crc = 0
+
+        std::fs::write(&wal_path, &buf).unwrap();
+
+        // Should handle gracefully — 0 recovered
+        let manager = StorageManager::new(dir.path());
+        assert_eq!(manager.current_chunk_size(), 0);
     }
 }

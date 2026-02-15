@@ -325,7 +325,9 @@ fn main() {
             Ok(snapshot) => {
                 snapshot_count += 1;
                 let description = describe_snapshot(&snapshot);
-                let serialized_size = bincode::serialize(&snapshot).map(|s| s.len()).unwrap_or(0);
+                let serialized_size = postcard::to_allocvec(&snapshot)
+                    .map(|s| s.len())
+                    .unwrap_or(0);
 
                 info!(
                     "Snapshot #{}: {} ({})",

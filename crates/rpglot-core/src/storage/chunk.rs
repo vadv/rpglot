@@ -29,12 +29,12 @@
 //! │   zstd trained dictionary (~64-112 KB)                  │
 //! ├─────────────────────────────────────────────────────────┤
 //! │ SNAPSHOT FRAMES (each compressed WITH dictionary)       │
-//! │   zstd_dict(bincode(Snapshot_0))                        │
-//! │   zstd_dict(bincode(Snapshot_1))                        │
+//! │   zstd_dict(postcard(Snapshot_0))                        │
+//! │   zstd_dict(postcard(Snapshot_1))                       │
 //! │   ...                                                   │
 //! ├─────────────────────────────────────────────────────────┤
 //! │ INTERNER FRAME (one zstd frame, WITHOUT dictionary)     │
-//! │   zstd(bincode(StringInterner))                         │
+//! │   zstd(postcard(StringInterner))                        │
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
@@ -163,14 +163,14 @@ impl ChunkReader {
             zstd::bulk::Decompressor::with_prepared_dictionary(&self.decoder_dict)?;
         let decompressed =
             decompressor.decompress(&self.data[start..end], uncompressed_len as usize)?;
-        let snapshot: Snapshot = bincode::deserialize(&decompressed).map_err(|e| {
+        let snapshot: Snapshot = postcard::from_bytes(&decompressed).map_err(|e| {
             warn!(
                 idx,
                 compressed_len = compressed_len,
                 uncompressed_len,
                 decompressed_len = decompressed.len(),
                 error = %e,
-                "chunk: snapshot bincode deserialization failed"
+                "chunk: snapshot deserialization failed"
             );
             io::Error::other(e)
         })?;
@@ -188,11 +188,11 @@ impl ChunkReader {
         }
 
         let decompressed = zstd::decode_all(&self.data[start..end])?;
-        let interner: StringInterner = bincode::deserialize(&decompressed).map_err(|e| {
+        let interner: StringInterner = postcard::from_bytes(&decompressed).map_err(|e| {
             warn!(
                 decompressed_len = decompressed.len(),
                 error = %e,
-                "chunk: interner bincode deserialization failed"
+                "chunk: interner deserialization failed"
             );
             io::Error::other(e)
         })?;
@@ -225,10 +225,10 @@ pub fn write_chunk(
 
     let snapshot_count = snapshots.len() as u16;
 
-    // Serialize all snapshots to bincode
+    // Serialize all snapshots to postcard
     let raw_snapshots: Vec<Vec<u8>> = snapshots
         .iter()
-        .map(|s| bincode::serialize(s).map_err(io::Error::other))
+        .map(|s| postcard::to_allocvec(s).map_err(io::Error::other))
         .collect::<Result<_, _>>()?;
 
     // Train dictionary on all serialized snapshots.
@@ -267,7 +267,7 @@ pub fn write_chunk(
 
     // Write interner frame (without dictionary)
     let interner_offset = file.stream_position()?;
-    let raw_interner = bincode::serialize(interner).map_err(io::Error::other)?;
+    let raw_interner = postcard::to_allocvec(interner).map_err(io::Error::other)?;
     let compressed_interner = zstd::encode_all(&raw_interner[..], 3)?;
     let interner_compressed_len = compressed_interner.len() as u64;
     file.write_all(&compressed_interner)?;
@@ -473,7 +473,7 @@ mod tests {
         let file_size = std::fs::metadata(&path).unwrap().len();
         let total_raw: usize = snapshots
             .iter()
-            .map(|s| bincode::serialize(s).unwrap().len())
+            .map(|s| postcard::to_allocvec(s).unwrap().len())
             .sum();
 
         // Dictionary compression should achieve at least 3x ratio on similar data
