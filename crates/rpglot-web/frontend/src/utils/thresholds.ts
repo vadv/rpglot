@@ -266,6 +266,116 @@ const RULES: Record<string, Classifier> = {
     return undefined;
   },
 
+  // --- PGE: Error severity ---
+  severity: (v) => {
+    if (v === "PANIC") return "critical";
+    if (v === "FATAL") return "critical";
+    if (v === "ERROR") return "warning";
+    return undefined;
+  },
+
+  // --- PGE: Error count ---
+  count: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n <= 10) return undefined;
+    if (n <= 100) return "warning";
+    return "critical";
+  },
+
+  // --- PGE: Autovacuum elapsed time ---
+  elapsed_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 30) return undefined;
+    if (n < 300) return "warning";
+    return "critical";
+  },
+
+  // --- PGE: Autovacuum CPU ---
+  cpu_user_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 5) return undefined;
+    if (n < 30) return "warning";
+    return "critical";
+  },
+  cpu_system_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 5) return undefined;
+    if (n < 30) return "warning";
+    return "critical";
+  },
+
+  // --- PGE: Autovacuum I/O rates ---
+  avg_read_rate_mbs: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 20) return undefined;
+    if (n < 100) return "warning";
+    return "critical";
+  },
+  avg_write_rate_mbs: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 10) return undefined;
+    if (n < 50) return "warning";
+    return "critical";
+  },
+
+  // --- PGE: Autovacuum buffer misses (physical reads) ---
+  buffer_misses: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 1000) return undefined;
+    if (n < 10000) return "warning";
+    return "critical";
+  },
+
+  // --- PGE: Autovacuum buffers dirtied ---
+  buffer_dirtied: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 100) return undefined;
+    if (n < 1000) return "warning";
+    return "critical";
+  },
+
+  // --- PGE: Autovacuum buffer hits (informational, zero = inactive) ---
+  buffer_hits: rateInactive,
+
+  // --- PGE: Autovacuum WAL bytes ---
+  wal_bytes: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 10485760) return undefined; // < 10 MB
+    if (n < 104857600) return "warning"; // < 100 MB
+    return "critical";
+  },
+
+  // --- PGE: WAL records/FPI (informational, zero = inactive) ---
+  wal_records: rateInactive,
+  wal_fpi: rateInactive,
+
   // Rates — zero = inactive
   calls_s: rateInactive,
   rows_s: rateInactive,
