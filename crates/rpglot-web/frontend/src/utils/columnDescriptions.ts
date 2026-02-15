@@ -67,6 +67,8 @@ export const COLUMN_DESCRIPTIONS: Record<string, string> = {
   xact_start: "When current transaction started",
   query_start: "When current query started",
   rss_kb: "Resident memory of backend OS process",
+  rchar_s: "Read syscall bytes/s (includes page cache hits)",
+  wchar_s: "Write syscall bytes/s (includes page cache)",
   stmt_mean_exec_time_ms: "Mean execution time from pg_stat_statements",
   stmt_max_exec_time_ms: "Max execution time from pg_stat_statements",
   stmt_calls_s: "Calls/s rate from pg_stat_statements",

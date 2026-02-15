@@ -132,7 +132,14 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
     },
     {
       title: "OS Process",
-      fields: ["cpu_pct", "rss_kb"],
+      fields: [
+        "cpu_pct",
+        "rss_kb",
+        "rchar_s",
+        "wchar_s",
+        "read_bytes_s",
+        "write_bytes_s",
+      ],
     },
     {
       title: "Statements",

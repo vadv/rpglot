@@ -133,6 +133,11 @@ pub struct ProcessDskInfo {
     /// Source: `/proc/[pid]/io` (syscw)
     pub wio: u64,
 
+    /// Total bytes written through write() syscalls (includes page cache).
+    /// Source: `/proc/[pid]/io` (wchar)
+    #[serde(default)]
+    pub wchar: u64,
+
     /// Total bytes written (cumulative sectors written).
     /// Source: `/proc/[pid]/io` (write_bytes)
     pub wsz: u64,

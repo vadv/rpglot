@@ -394,6 +394,14 @@ pub struct PgActivityRow {
     pub cpu_pct: Option<f64>,
     /// Resident memory KB from OS process (if matched).
     pub rss_kb: Option<u64>,
+    /// Read syscall bytes/s (rchar delta / dt) from /proc/[pid]/io.
+    pub rchar_s: Option<f64>,
+    /// Write syscall bytes/s (wchar delta / dt) from /proc/[pid]/io.
+    pub wchar_s: Option<f64>,
+    /// Physical read bytes/s (read_bytes delta / dt) from /proc/[pid]/io.
+    pub read_bytes_s: Option<f64>,
+    /// Physical write bytes/s (write_bytes delta / dt) from /proc/[pid]/io.
+    pub write_bytes_s: Option<f64>,
     /// Mean exec time from pg_stat_statements (if query_id matched).
     pub stmt_mean_exec_time_ms: Option<f64>,
     /// Max exec time from pg_stat_statements.

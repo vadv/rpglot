@@ -211,6 +211,7 @@ impl<F: FileSystem> ProcessCollector<F> {
                 rsz: io.read_bytes,
                 rchar: io.rchar,
                 wio: io.syscw,
+                wchar: io.wchar,
                 wsz: io.write_bytes,
                 cwsz: io.cancelled_write_bytes,
             },

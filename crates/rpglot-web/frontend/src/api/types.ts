@@ -217,6 +217,10 @@ export interface PgActivityRow {
   query_start: number;
   cpu_pct: number | null;
   rss_kb: number | null;
+  rchar_s: number | null;
+  wchar_s: number | null;
+  read_bytes_s: number | null;
+  write_bytes_s: number | null;
   stmt_mean_exec_time_ms: number | null;
   stmt_max_exec_time_ms: number | null;
   stmt_calls_s: number | null;
