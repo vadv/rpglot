@@ -305,12 +305,18 @@ export function CalendarPopover({
   onSelectDate,
   onClose,
   anchorRect,
+  currentHour,
+  onSelectHour,
+  timezone,
 }: {
   dates: DateInfo[];
   currentDate: string;
   onSelectDate: (date: DateInfo) => void;
   onClose: () => void;
   anchorRect: DOMRect;
+  currentHour?: number;
+  onSelectHour?: (hour: number) => void;
+  timezone?: TimezoneMode;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -404,10 +410,29 @@ export function CalendarPopover({
     "Dec",
   ];
 
+  // Determine which hours have data for the currently selected date
+  const selectedDateInfo = useMemo(
+    () => dataDateMap.get(currentDate) ?? null,
+    [dataDateMap, currentDate],
+  );
+
+  const hourAvailability = useMemo(() => {
+    if (!selectedDateInfo || !timezone) return null;
+    const startParts = getDatePartsInTz(
+      selectedDateInfo.first_timestamp,
+      timezone,
+    );
+    const endParts = getDatePartsInTz(
+      selectedDateInfo.last_timestamp,
+      timezone,
+    );
+    return { startHour: startParts.hour, endHour: endParts.hour };
+  }, [selectedDateInfo, timezone]);
+
   // Position: below anchor, centered
   const style: React.CSSProperties = {
     position: "fixed",
-    left: Math.max(8, anchorRect.left + anchorRect.width / 2 - 120),
+    left: Math.max(8, anchorRect.left + anchorRect.width / 2 - 140),
     top: anchorRect.bottom + 4,
     zIndex: 9999,
   };
@@ -415,7 +440,7 @@ export function CalendarPopover({
   return createPortal(
     <div
       ref={popoverRef}
-      className="w-[240px] p-2 rounded-lg shadow-lg bg-[var(--bg-surface)] border border-[var(--border-default)]"
+      className="w-[280px] p-2 rounded-lg shadow-lg bg-[var(--bg-surface)] border border-[var(--border-default)]"
       style={style}
     >
       {/* Month navigation */}
@@ -480,6 +505,41 @@ export function CalendarPopover({
           );
         })}
       </div>
+
+      {/* Hour grid */}
+      {onSelectHour && (
+        <>
+          <div className="border-t border-[var(--border-default)] mt-1.5 mb-1.5" />
+          <div className="grid grid-cols-6 gap-0.5">
+            {Array.from({ length: 24 }, (_, h) => {
+              const hasHourData =
+                hourAvailability != null &&
+                h >= hourAvailability.startHour &&
+                h <= hourAvailability.endHour;
+              const isSelectedHour = h === currentHour;
+
+              return (
+                <button
+                  key={h}
+                  disabled={!hasHourData}
+                  onClick={() => {
+                    onSelectHour(h);
+                    onClose();
+                  }}
+                  className={`
+                    flex items-center justify-center text-[11px] rounded py-0.5 transition-colors
+                    ${isSelectedHour ? "bg-[var(--accent)] text-white font-semibold" : ""}
+                    ${hasHourData && !isSelectedHour ? "text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer" : ""}
+                    ${!hasHourData ? "text-[var(--text-disabled)] cursor-default" : ""}
+                  `}
+                >
+                  {String(h).padStart(2, "0")}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>,
     document.body,
   );

@@ -752,29 +752,15 @@ function Header({
           </span>
         )}
         {isHistory && dates && dates.length > 0 ? (
-          /* History mode: clickable date + hour picker + editable time */
+          /* History mode: clickable date+hour button + editable time */
           <div className="flex items-center gap-1.5">
             <button
               ref={dateButtonRef}
               onClick={toggleCalendar}
               className="font-mono text-xs px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer transition-colors"
             >
-              {currentDateStr}
+              {currentDateStr} {String(currentHour ?? 0).padStart(2, "0")}:00
             </button>
-            {currentHour != null && (
-              <select
-                value={currentHour}
-                onChange={(e) => handleHourChange(Number(e.target.value))}
-                className="font-mono text-xs px-1 py-0.5 rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer transition-colors appearance-none text-center w-[52px]"
-                title="Select hour"
-              >
-                {Array.from({ length: 24 }, (_, h) => (
-                  <option key={h} value={h}>
-                    {String(h).padStart(2, "0")}:00
-                  </option>
-                ))}
-              </select>
-            )}
             {ts > 0 && (
               <TimeInput
                 timestamp={ts}
@@ -827,6 +813,9 @@ function Header({
           onSelectDate={handleSelectDate}
           onClose={() => setCalendarOpen(false)}
           anchorRect={anchorRect}
+          currentHour={currentHour}
+          onSelectHour={handleHourChange}
+          timezone={tz}
         />
       )}
     </div>
