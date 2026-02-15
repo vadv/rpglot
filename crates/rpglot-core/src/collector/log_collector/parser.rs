@@ -1060,4 +1060,25 @@ system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
         assert_eq!(strip_sqlstate("no sqlstate here"), "no sqlstate here");
         assert_eq!(strip_sqlstate("short"), "short");
     }
+
+    #[test]
+    fn test_stderr_statement_line() {
+        let parser = StderrParser::new("%t [%p] => ");
+        let line = r#"2026-02-15 21:04:11 GMT [716338] => [2-1] client=[local],db=postgres,user=postgres STATEMENT:  select pg_sleep(2);"#;
+        let parsed = parser.parse_line(line);
+        assert!(parsed.is_some(), "STATEMENT line should be parsed");
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Statement);
+        assert_eq!(parsed.message, "select pg_sleep(2);");
+    }
+
+    #[test]
+    fn test_stderr_walg_info_ignored() {
+        let parser = StderrParser::new("%t [%p] => ");
+        let line = r#"INFO: [2026-02-15 21:04:06,103]: archive-push complete, time: 0.439s"#;
+        assert!(
+            parser.parse_line(line).is_none(),
+            "WAL-G INFO line should be ignored"
+        );
+    }
 }

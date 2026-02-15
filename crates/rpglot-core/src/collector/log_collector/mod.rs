@@ -837,4 +837,45 @@ mod tests {
         let entries = collector.drain_pending(&mut interner);
         assert!(entries.is_empty());
     }
+
+    /// End-to-end test: real log lines → parse → accumulate → drain.
+    /// Simulates the exact flow of `collect()` without needing a PG connection.
+    #[test]
+    fn test_e2e_statement_with_real_log_lines() {
+        let mut collector = LogCollector::new();
+        collector.stderr_parser = Some(StderrParser::new("%t [%p] => "));
+        collector.log_format = Some(LogFormat::Stderr);
+        let mut interner = StringInterner::new();
+
+        let lines = vec![
+            r#"INFO: [2026-02-15 21:04:06,103]: archive-push complete, time: 0.439s"#.to_string(),
+            r#"2026-02-15 21:04:11 GMT [716338] => [1-1] client=[local],db=postgres,user=postgres ERROR:  canceling statement due to statement timeout"#.to_string(),
+            r#"2026-02-15 21:04:11 GMT [716338] => [2-1] client=[local],db=postgres,user=postgres STATEMENT:  select pg_sleep(2);"#.to_string(),
+        ];
+
+        // Simulate the collect() loop
+        for line in &lines {
+            if is_continuation_line(line) {
+                continue;
+            }
+            let parsed = collector.parse_line(line);
+            let Some(parsed) = parsed else {
+                collector.last_error_key = None;
+                continue;
+            };
+            collector.accumulate(parsed);
+        }
+
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(entries.len(), 1, "should have exactly one error entry");
+        assert_eq!(entries[0].count, 1);
+        assert!(
+            entries[0].statement_hash != 0,
+            "statement_hash should be non-zero: STATEMENT was not attached!"
+        );
+
+        // Verify the statement text
+        let stmt = interner.resolve(entries[0].statement_hash).unwrap();
+        assert_eq!(stmt, "select pg_sleep(2);");
+    }
 }

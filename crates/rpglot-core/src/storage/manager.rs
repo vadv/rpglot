@@ -246,6 +246,7 @@ impl StorageManager {
                     for e in entries {
                         hashes.insert(e.pattern_hash);
                         hashes.insert(e.sample_hash);
+                        hashes.insert(e.statement_hash);
                     }
                 }
                 _ => {}
