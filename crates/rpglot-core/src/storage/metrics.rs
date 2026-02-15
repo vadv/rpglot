@@ -1,28 +1,45 @@
 //! Lightweight per-snapshot metrics for timeline heatmap visualization.
 //!
-//! Each snapshot produces a 4-byte `MetricsEntry` (active_sessions + cpu_pct).
+//! Each snapshot produces an 8-byte `MetricsEntry` (active_sessions, host CPU%,
+//! cgroup CPU%, cgroup memory%).
 //! These are stored in `.metrics` sidecar files alongside `.zst` chunk files
 //! and read without decompressing snapshots — enabling O(1) access to activity
 //! data for arbitrary time ranges.
+//!
+//! ## File format
+//!
+//! **V2** (current): 4-byte magic `b"MET2"` followed by 8-byte entries.
+//! **V1** (legacy): no header, 4-byte entries. Read with cgroup fields = 0.
 
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use xxhash_rust::xxh3::xxh3_64;
 
-use super::model::{DataBlock, Snapshot, SystemCpuInfo};
+use super::model::{CgroupCpuInfo, CgroupMemoryInfo, DataBlock, Snapshot, SystemCpuInfo};
+
+/// Magic bytes identifying V2 metrics files.
+const METRICS_MAGIC_V2: &[u8; 4] = b"MET2";
 
 /// Lightweight per-snapshot metrics for timeline heatmap.
-/// Packed into 4 bytes for minimal disk/RAM footprint.
+/// Packed into 8 bytes for minimal disk/RAM footprint.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct MetricsEntry {
     /// Number of pg_stat_activity rows where state != "idle".
     pub active_sessions: u16,
-    /// CPU utilization * 10 (0..1000 = 0.0%..100.0%).
+    /// Host CPU utilization * 10 (0..1000 = 0.0%..100.0%).
     /// Computed as delta between consecutive snapshots' SystemCpuInfo jiffies.
     /// First entry in chunk = 0 (no previous data for delta).
     pub cpu_pct_x10: u16,
+    /// Cgroup CPU utilization * 10 relative to cgroup limit (0..1000).
+    /// Computed as delta(usage_usec) / (delta_time * limit_cores).
+    /// 0 when not in a container or no cgroup CPU limit.
+    pub cgroup_cpu_pct_x10: u16,
+    /// Cgroup memory utilization * 10 (0..1000 = 0.0%..100.0%).
+    /// Instant value: memory.current / memory.max.
+    /// 0 when not in a container or no cgroup memory limit.
+    pub cgroup_mem_pct_x10: u16,
 }
 
 /// A bucketed heatmap data point for frontend display.
@@ -32,8 +49,12 @@ pub struct HeatmapBucket {
     pub ts: i64,
     /// Max active sessions in this bucket.
     pub active: u16,
-    /// Max CPU% * 10 in this bucket (0..1000).
+    /// Max host CPU% * 10 in this bucket (0..1000).
     pub cpu: u16,
+    /// Max cgroup CPU% * 10 in this bucket (0..1000).
+    pub cgroup_cpu: u16,
+    /// Max cgroup memory% * 10 in this bucket (0..1000).
+    pub cgroup_mem: u16,
 }
 
 // ---------------------------------------------------------------------------
@@ -45,34 +66,62 @@ pub fn metrics_path(chunk_path: &Path) -> PathBuf {
     chunk_path.with_extension("metrics")
 }
 
-/// Writes metrics entries to a `.metrics` sidecar file (little-endian, no header).
+/// Writes metrics entries to a V2 `.metrics` sidecar file.
+/// Format: 4-byte magic `b"MET2"` + 8-byte little-endian entries.
 pub fn write_metrics(path: &Path, entries: &[MetricsEntry]) -> std::io::Result<()> {
-    let mut buf = Vec::with_capacity(entries.len() * 4);
+    let mut buf = Vec::with_capacity(4 + entries.len() * 8);
+    buf.extend_from_slice(METRICS_MAGIC_V2);
     for e in entries {
         buf.extend_from_slice(&e.active_sessions.to_le_bytes());
         buf.extend_from_slice(&e.cpu_pct_x10.to_le_bytes());
+        buf.extend_from_slice(&e.cgroup_cpu_pct_x10.to_le_bytes());
+        buf.extend_from_slice(&e.cgroup_mem_pct_x10.to_le_bytes());
     }
     std::fs::write(path, buf)
 }
 
 /// Reads metrics entries from a `.metrics` sidecar file.
+/// Supports both V2 (with magic header, 8 bytes/entry) and
+/// V1 (no header, 4 bytes/entry) formats transparently.
 pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
     let data = std::fs::read(path)?;
-    if data.len() % 4 != 0 {
-        return Err(std::io::Error::other("invalid metrics file size"));
+
+    if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V2 {
+        // V2 format: 4-byte header + 8-byte entries
+        let payload = &data[4..];
+        if payload.len() % 8 != 0 {
+            return Err(std::io::Error::other("invalid v2 metrics file size"));
+        }
+        let count = payload.len() / 8;
+        let mut entries = Vec::with_capacity(count);
+        for i in 0..count {
+            let off = i * 8;
+            entries.push(MetricsEntry {
+                active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
+                cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
+                cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
+                cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
+            });
+        }
+        Ok(entries)
+    } else {
+        // V1 format: no header, 4-byte entries (legacy)
+        if data.len() % 4 != 0 {
+            return Err(std::io::Error::other("invalid metrics file size"));
+        }
+        let count = data.len() / 4;
+        let mut entries = Vec::with_capacity(count);
+        for i in 0..count {
+            let off = i * 4;
+            entries.push(MetricsEntry {
+                active_sessions: u16::from_le_bytes([data[off], data[off + 1]]),
+                cpu_pct_x10: u16::from_le_bytes([data[off + 2], data[off + 3]]),
+                cgroup_cpu_pct_x10: 0,
+                cgroup_mem_pct_x10: 0,
+            });
+        }
+        Ok(entries)
     }
-    let count = data.len() / 4;
-    let mut entries = Vec::with_capacity(count);
-    for i in 0..count {
-        let off = i * 4;
-        let active = u16::from_le_bytes([data[off], data[off + 1]]);
-        let cpu = u16::from_le_bytes([data[off + 2], data[off + 3]]);
-        entries.push(MetricsEntry {
-            active_sessions: active,
-            cpu_pct_x10: cpu,
-        });
-    }
-    Ok(entries)
 }
 
 // ---------------------------------------------------------------------------
@@ -113,6 +162,28 @@ fn extract_system_cpu(snapshot: &Snapshot) -> Option<&SystemCpuInfo> {
     })
 }
 
+/// Extract CgroupCpuInfo from snapshot.
+fn extract_cgroup_cpu(snapshot: &Snapshot) -> Option<&CgroupCpuInfo> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::Cgroup(cg) = b {
+            cg.cpu.as_ref()
+        } else {
+            None
+        }
+    })
+}
+
+/// Extract CgroupMemoryInfo from snapshot.
+fn extract_cgroup_memory(snapshot: &Snapshot) -> Option<&CgroupMemoryInfo> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::Cgroup(cg) = b {
+            cg.memory.as_ref()
+        } else {
+            None
+        }
+    })
+}
+
 /// Compute CPU utilization percentage from delta between two SystemCpuInfo.
 /// Returns cpu_pct * 10 (0..1000).
 fn compute_cpu_pct(prev: &SystemCpuInfo, curr: &SystemCpuInfo) -> u16 {
@@ -142,24 +213,74 @@ fn compute_cpu_pct(prev: &SystemCpuInfo, curr: &SystemCpuInfo) -> u16 {
     pct_x10.min(1000)
 }
 
+/// Compute cgroup CPU utilization percentage from delta between two snapshots.
+/// Returns cgroup_cpu_pct * 10 (0..1000) relative to the cgroup limit.
+fn compute_cgroup_cpu_pct(prev: &CgroupCpuInfo, curr: &CgroupCpuInfo, delta_time_secs: f64) -> u16 {
+    if delta_time_secs <= 0.0 || curr.quota <= 0 || curr.period == 0 {
+        return 0;
+    }
+    let limit_cores = curr.quota as f64 / curr.period as f64;
+    if limit_cores <= 0.0 {
+        return 0;
+    }
+    let d_usage = curr.usage_usec.saturating_sub(prev.usage_usec) as f64 / 1_000_000.0;
+    let used_pct = d_usage / delta_time_secs / limit_cores * 100.0;
+    let pct_x10 = (used_pct * 10.0) as u16;
+    pct_x10.min(1000)
+}
+
+/// Compute cgroup memory utilization percentage (instant, no delta).
+/// Returns cgroup_mem_pct * 10 (0..1000).
+fn compute_cgroup_mem_pct(mem: &CgroupMemoryInfo) -> u16 {
+    if mem.max == 0 || mem.max == u64::MAX {
+        return 0;
+    }
+    let pct_x10 = (mem.current as f64 / mem.max as f64 * 1000.0) as u16;
+    pct_x10.min(1000)
+}
+
 /// Build MetricsEntry array from a sequence of snapshots.
-/// CPU% is computed as delta between consecutive snapshots.
-/// First snapshot gets cpu_pct_x10 = 0 (no previous data).
+/// Host CPU% and cgroup CPU% are computed as deltas between consecutive snapshots.
+/// First snapshot gets cpu values = 0 (no previous data).
 pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry> {
     let mut entries = Vec::with_capacity(snapshots.len());
     let mut prev_cpu: Option<&SystemCpuInfo> = None;
+    let mut prev_cgroup_cpu: Option<&CgroupCpuInfo> = None;
+    let mut prev_timestamp: Option<i64> = None;
 
     for snap in snapshots {
         let active = count_active_sessions(snap);
+
+        // Host CPU%
         let cpu = match (prev_cpu, extract_system_cpu(snap)) {
             (Some(prev), Some(curr)) => compute_cpu_pct(prev, curr),
             _ => 0,
         };
+
+        // Cgroup CPU% (needs wall-clock delta for usage_usec → %)
+        let delta_time = prev_timestamp
+            .map(|pt| (snap.timestamp - pt) as f64)
+            .unwrap_or(0.0);
+        let cgroup_cpu = match (prev_cgroup_cpu, extract_cgroup_cpu(snap)) {
+            (Some(prev), Some(curr)) => compute_cgroup_cpu_pct(prev, curr, delta_time),
+            _ => 0,
+        };
+
+        // Cgroup memory% (instant value, no delta)
+        let cgroup_mem = extract_cgroup_memory(snap)
+            .map(compute_cgroup_mem_pct)
+            .unwrap_or(0);
+
         entries.push(MetricsEntry {
             active_sessions: active,
             cpu_pct_x10: cpu,
+            cgroup_cpu_pct_x10: cgroup_cpu,
+            cgroup_mem_pct_x10: cgroup_mem,
         });
+
         prev_cpu = extract_system_cpu(snap);
+        prev_cgroup_cpu = extract_cgroup_cpu(snap);
+        prev_timestamp = Some(snap.timestamp);
     }
     entries
 }
@@ -169,7 +290,7 @@ pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry>
 // ---------------------------------------------------------------------------
 
 /// Aggregate raw metrics into a fixed number of buckets.
-/// Each bucket = max(active_sessions), max(cpu_pct_x10) within that time range.
+/// Each bucket = max of each field within that time range.
 pub fn bucket_metrics(
     entries: &[(i64, MetricsEntry)],
     start_ts: i64,
@@ -188,6 +309,8 @@ pub fn bucket_metrics(
                 ts: bucket_ts,
                 active: 0,
                 cpu: 0,
+                cgroup_cpu: 0,
+                cgroup_mem: 0,
             }
         })
         .collect();
@@ -197,6 +320,8 @@ pub fn bucket_metrics(
         let idx = idx.min(num_buckets - 1);
         buckets[idx].active = buckets[idx].active.max(entry.active_sessions);
         buckets[idx].cpu = buckets[idx].cpu.max(entry.cpu_pct_x10);
+        buckets[idx].cgroup_cpu = buckets[idx].cgroup_cpu.max(entry.cgroup_cpu_pct_x10);
+        buckets[idx].cgroup_mem = buckets[idx].cgroup_mem.max(entry.cgroup_mem_pct_x10);
     }
 
     buckets
@@ -212,17 +337,23 @@ mod tests {
             MetricsEntry {
                 active_sessions: 5,
                 cpu_pct_x10: 450,
+                cgroup_cpu_pct_x10: 300,
+                cgroup_mem_pct_x10: 750,
             },
             MetricsEntry {
                 active_sessions: 0,
                 cpu_pct_x10: 0,
+                cgroup_cpu_pct_x10: 0,
+                cgroup_mem_pct_x10: 0,
             },
             MetricsEntry {
                 active_sessions: 100,
                 cpu_pct_x10: 999,
+                cgroup_cpu_pct_x10: 500,
+                cgroup_mem_pct_x10: 950,
             },
         ];
-        let dir = std::env::temp_dir().join("rpglot_test_metrics");
+        let dir = std::env::temp_dir().join("rpglot_test_metrics_v2");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.metrics");
 
@@ -231,8 +362,41 @@ mod tests {
         assert_eq!(loaded.len(), 3);
         assert_eq!(loaded[0].active_sessions, 5);
         assert_eq!(loaded[0].cpu_pct_x10, 450);
+        assert_eq!(loaded[0].cgroup_cpu_pct_x10, 300);
+        assert_eq!(loaded[0].cgroup_mem_pct_x10, 750);
         assert_eq!(loaded[2].active_sessions, 100);
         assert_eq!(loaded[2].cpu_pct_x10, 999);
+        assert_eq!(loaded[2].cgroup_cpu_pct_x10, 500);
+        assert_eq!(loaded[2].cgroup_mem_pct_x10, 950);
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn test_metrics_v1_backward_compat() {
+        // Simulate a V1 file: no magic header, 4-byte entries
+        let dir = std::env::temp_dir().join("rpglot_test_metrics_v1");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("legacy.metrics");
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&5u16.to_le_bytes());
+        buf.extend_from_slice(&450u16.to_le_bytes());
+        buf.extend_from_slice(&10u16.to_le_bytes());
+        buf.extend_from_slice(&200u16.to_le_bytes());
+        std::fs::write(&path, &buf).unwrap();
+
+        let loaded = read_metrics(&path).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].active_sessions, 5);
+        assert_eq!(loaded[0].cpu_pct_x10, 450);
+        assert_eq!(loaded[0].cgroup_cpu_pct_x10, 0);
+        assert_eq!(loaded[0].cgroup_mem_pct_x10, 0);
+        assert_eq!(loaded[1].active_sessions, 10);
+        assert_eq!(loaded[1].cpu_pct_x10, 200);
+        assert_eq!(loaded[1].cgroup_cpu_pct_x10, 0);
+        assert_eq!(loaded[1].cgroup_mem_pct_x10, 0);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -246,6 +410,8 @@ mod tests {
                 MetricsEntry {
                     active_sessions: 3,
                     cpu_pct_x10: 200,
+                    cgroup_cpu_pct_x10: 100,
+                    cgroup_mem_pct_x10: 500,
                 },
             ),
             (
@@ -253,6 +419,8 @@ mod tests {
                 MetricsEntry {
                     active_sessions: 10,
                     cpu_pct_x10: 700,
+                    cgroup_cpu_pct_x10: 400,
+                    cgroup_mem_pct_x10: 600,
                 },
             ),
             (
@@ -260,27 +428,72 @@ mod tests {
                 MetricsEntry {
                     active_sessions: 1,
                     cpu_pct_x10: 100,
+                    cgroup_cpu_pct_x10: 50,
+                    cgroup_mem_pct_x10: 550,
                 },
             ),
         ];
         let buckets = bucket_metrics(&entries, 100, 200, 2);
         assert_eq!(buckets.len(), 2);
-        // First bucket [100, 150): entry at 100 → active=3, cpu=200
-        // But 150 maps to idx = ((150-100)/100 * 2) = 1.0 → idx=1
-        // So first bucket has ts=100 entry: active=3, cpu=200
+        // First bucket [100, 150): entry at 100
         assert_eq!(buckets[0].active, 3);
         assert_eq!(buckets[0].cpu, 200);
+        assert_eq!(buckets[0].cgroup_cpu, 100);
+        assert_eq!(buckets[0].cgroup_mem, 500);
         // Second bucket [150, 200]: entries at 150 and 200
         assert_eq!(buckets[1].active, 10);
         assert_eq!(buckets[1].cpu, 700);
+        assert_eq!(buckets[1].cgroup_cpu, 400);
+        assert_eq!(buckets[1].cgroup_mem, 600);
     }
 
     #[test]
     fn test_idle_hash_stable() {
-        // Ensure idle hash matches what StringInterner would produce
         let hash = idle_hash();
         assert_eq!(hash, xxh3_64(b"idle"));
-        // Hash should be non-zero
         assert_ne!(hash, 0);
+    }
+
+    #[test]
+    fn test_compute_cgroup_cpu_pct() {
+        let prev = CgroupCpuInfo {
+            quota: 100_000,
+            period: 100_000,
+            usage_usec: 1_000_000,
+            ..Default::default()
+        };
+        let curr = CgroupCpuInfo {
+            quota: 100_000,
+            period: 100_000,
+            usage_usec: 6_000_000, // +5s of CPU in 10s wall → 50%
+            ..Default::default()
+        };
+        let pct = compute_cgroup_cpu_pct(&prev, &curr, 10.0);
+        assert_eq!(pct, 500); // 50.0% * 10
+
+        // Unlimited quota → 0
+        let unlimited = CgroupCpuInfo {
+            quota: -1,
+            ..curr.clone()
+        };
+        assert_eq!(compute_cgroup_cpu_pct(&prev, &unlimited, 10.0), 0);
+    }
+
+    #[test]
+    fn test_compute_cgroup_mem_pct() {
+        let mem = CgroupMemoryInfo {
+            max: 1_073_741_824,   // 1 GiB
+            current: 536_870_912, // 512 MiB → 50%
+            ..Default::default()
+        };
+        assert_eq!(compute_cgroup_mem_pct(&mem), 500); // 50.0% * 10
+
+        // Unlimited → 0
+        let unlimited = CgroupMemoryInfo {
+            max: u64::MAX,
+            current: 536_870_912,
+            ..Default::default()
+        };
+        assert_eq!(compute_cgroup_mem_pct(&unlimited), 0);
     }
 }

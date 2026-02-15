@@ -27,6 +27,9 @@ export interface SystemSummary {
   networks: NetworkSummary[];
   psi: PsiSummary | null;
   vmstat: VmstatSummary | null;
+  cgroup_cpu: CgroupCpuSummary | null;
+  cgroup_memory: CgroupMemorySummary | null;
+  cgroup_pids: CgroupPidsSummary | null;
 }
 
 export interface CpuSummary {
@@ -94,6 +97,30 @@ export interface VmstatSummary {
   swout_s: number;
   pgfault_s: number;
   ctxsw_s: number;
+}
+
+export interface CgroupCpuSummary {
+  limit_cores: number;
+  used_pct: number;
+  usr_pct: number;
+  sys_pct: number;
+  throttled_ms: number;
+  nr_throttled: number;
+}
+
+export interface CgroupMemorySummary {
+  limit_bytes: number;
+  used_bytes: number;
+  used_pct: number;
+  anon_bytes: number;
+  file_bytes: number;
+  slab_bytes: number;
+  oom_kills: number;
+}
+
+export interface CgroupPidsSummary {
+  current: number;
+  max: number;
 }
 
 export interface PgSummary {
@@ -415,6 +442,8 @@ export interface HeatmapBucket {
   ts: number;
   active: number;
   cpu: number;
+  cgroup_cpu: number;
+  cgroup_mem: number;
 }
 
 // Tab key type

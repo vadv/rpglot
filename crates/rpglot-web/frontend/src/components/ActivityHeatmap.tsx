@@ -19,6 +19,12 @@ export function ActivityHeatmap({
     [buckets],
   );
 
+  // Use cgroup CPU when available (container environment)
+  const hasCgroup = useMemo(
+    () => buckets.some((b) => b.cgroup_cpu > 0),
+    [buckets],
+  );
+
   const range = endTs - startTs;
   if (buckets.length === 0 || range <= 0) return null;
 
@@ -32,13 +38,14 @@ export function ActivityHeatmap({
     >
       {buckets.map((b, i) => {
         const height = (b.active / maxActive) * 24;
+        const cpuVal = hasCgroup ? b.cgroup_cpu : b.cpu;
         const color =
-          b.cpu > 600
+          cpuVal > 600
             ? "var(--status-critical)"
-            : b.cpu > 400
+            : cpuVal > 400
               ? "var(--status-warning)"
               : "var(--accent)";
-        const opacity = b.cpu > 600 ? 0.6 : b.cpu > 400 ? 0.5 : 0.3;
+        const opacity = cpuVal > 600 ? 0.6 : cpuVal > 400 ? 0.5 : 0.3;
         return (
           <rect
             key={i}

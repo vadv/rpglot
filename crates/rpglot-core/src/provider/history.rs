@@ -763,6 +763,8 @@ impl HistoryProvider {
                                 MetricsEntry {
                                     active_sessions: active,
                                     cpu_pct_x10: 0,
+                                    cgroup_cpu_pct_x10: 0,
+                                    cgroup_mem_pct_x10: 0,
                                 },
                             ));
                         }
@@ -777,6 +779,8 @@ impl HistoryProvider {
                                 MetricsEntry {
                                     active_sessions: active,
                                     cpu_pct_x10: 0,
+                                    cgroup_cpu_pct_x10: 0,
+                                    cgroup_mem_pct_x10: 0,
                                 },
                             ));
                         }
