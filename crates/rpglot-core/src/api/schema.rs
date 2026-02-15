@@ -439,6 +439,99 @@ fn generate_summary_schema() -> SummarySchema {
                     ),
                 ],
             },
+            SummarySection {
+                key: "cgroup_cpu".into(),
+                label: "Cgroup CPU".into(),
+                fields: vec![
+                    field("limit_cores", "Limit", DataType::Number, None, None),
+                    field(
+                        "used_pct",
+                        "Used",
+                        DataType::Number,
+                        Some(Unit::Percent),
+                        Some(Format::Percent),
+                    ),
+                    field(
+                        "usr_pct",
+                        "User",
+                        DataType::Number,
+                        Some(Unit::Percent),
+                        Some(Format::Percent),
+                    ),
+                    field(
+                        "sys_pct",
+                        "System",
+                        DataType::Number,
+                        Some(Unit::Percent),
+                        Some(Format::Percent),
+                    ),
+                    field(
+                        "throttled_ms",
+                        "Throttled",
+                        DataType::Number,
+                        Some(Unit::Ms),
+                        None,
+                    ),
+                    field("nr_throttled", "Thr Events", DataType::Number, None, None),
+                ],
+            },
+            SummarySection {
+                key: "cgroup_memory".into(),
+                label: "Cgroup Memory".into(),
+                fields: vec![
+                    field(
+                        "limit_bytes",
+                        "Limit",
+                        DataType::Integer,
+                        Some(Unit::Bytes),
+                        Some(Format::Bytes),
+                    ),
+                    field(
+                        "used_bytes",
+                        "Used",
+                        DataType::Integer,
+                        Some(Unit::Bytes),
+                        Some(Format::Bytes),
+                    ),
+                    field(
+                        "used_pct",
+                        "Used%",
+                        DataType::Number,
+                        Some(Unit::Percent),
+                        Some(Format::Percent),
+                    ),
+                    field(
+                        "anon_bytes",
+                        "Anon",
+                        DataType::Integer,
+                        Some(Unit::Bytes),
+                        Some(Format::Bytes),
+                    ),
+                    field(
+                        "file_bytes",
+                        "File",
+                        DataType::Integer,
+                        Some(Unit::Bytes),
+                        Some(Format::Bytes),
+                    ),
+                    field(
+                        "slab_bytes",
+                        "Slab",
+                        DataType::Integer,
+                        Some(Unit::Bytes),
+                        Some(Format::Bytes),
+                    ),
+                    field("oom_kills", "OOM Kills", DataType::Integer, None, None),
+                ],
+            },
+            SummarySection {
+                key: "cgroup_pids".into(),
+                label: "Cgroup PIDs".into(),
+                fields: vec![
+                    field("current", "Current", DataType::Integer, None, None),
+                    field("max", "Max", DataType::Integer, None, None),
+                ],
+            },
         ],
         pg: vec![
             SummarySection {
@@ -455,6 +548,13 @@ fn generate_summary_schema() -> SummarySchema {
                     field(
                         "hit_ratio_pct",
                         "Hit Ratio",
+                        DataType::Number,
+                        Some(Unit::Percent),
+                        Some(Format::Percent),
+                    ),
+                    field(
+                        "backend_io_hit_pct",
+                        "Backend IO Hit",
                         DataType::Number,
                         Some(Unit::Percent),
                         Some(Format::Percent),

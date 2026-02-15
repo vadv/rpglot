@@ -1,8 +1,8 @@
 //! Metric extraction from snapshots.
 
 use crate::storage::model::{
-    DataBlock, PgStatBgwriterInfo, PgStatDatabaseInfo, Snapshot, SystemCpuInfo, SystemDiskInfo,
-    SystemNetInfo, SystemPsiInfo, SystemStatInfo, SystemVmstatInfo,
+    DataBlock, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo, ProcessInfo, Snapshot,
+    SystemCpuInfo, SystemDiskInfo, SystemNetInfo, SystemPsiInfo, SystemStatInfo, SystemVmstatInfo,
 };
 
 use super::{
@@ -194,6 +194,11 @@ pub(super) fn extract_metrics(snapshot: &Snapshot, previous: Option<&Snapshot>) 
     if let Some(nets) = current_nets {
         metrics.top_nets =
             extract_top_nets(nets, prev_nets, metrics.delta_time, is_container_snapshot);
+    }
+
+    // Compute Backend IO Hit Ratio for PG processes if pg_summary exists
+    if let Some(ref mut pg) = metrics.pg_summary {
+        pg.backend_io_hit = compute_backend_io_hit(snapshot, previous);
     }
 
     metrics
@@ -586,8 +591,89 @@ fn extract_pg_summary(
     Some(PgSummary {
         tps: (sum_commit + sum_rollback) as f64 / delta_time,
         hit_ratio,
+        backend_io_hit: 100.0, // Overwritten after the main loop
         tup_s: sum_tup as f64 / delta_time,
         tmp_bytes_s: sum_temp_bytes as f64 / delta_time,
         deadlocks: sum_deadlocks,
     })
+}
+
+/// Finds PgStatActivity rows in a snapshot.
+fn find_pg_activity(snapshot: &Snapshot) -> Option<&[PgStatActivityInfo]> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatActivity(rows) = b {
+            Some(rows.as_slice())
+        } else {
+            None
+        }
+    })
+}
+
+/// Finds Process rows in a snapshot.
+fn find_processes(snapshot: &Snapshot) -> Option<&[ProcessInfo]> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::Processes(procs) = b {
+            Some(procs.as_slice())
+        } else {
+            None
+        }
+    })
+}
+
+/// Computes Backend IO Hit Ratio from /proc/[pid]/io data of PG backend processes.
+///
+/// Formula: (delta_rchar - delta_read_bytes) / delta_rchar * 100
+/// This measures how much of the PG backends' read I/O was served from OS page cache.
+fn compute_backend_io_hit(snapshot: &Snapshot, previous: Option<&Snapshot>) -> f64 {
+    let previous = match previous {
+        Some(p) => p,
+        None => return 100.0,
+    };
+
+    // Collect PG backend PIDs from pg_stat_activity
+    let Some(pga) = find_pg_activity(snapshot) else {
+        return 100.0;
+    };
+    let pg_pids: std::collections::HashSet<u32> = pga
+        .iter()
+        .filter_map(|a| u32::try_from(a.pid).ok())
+        .collect();
+    if pg_pids.is_empty() {
+        return 100.0;
+    }
+
+    // Sum rchar and read_bytes for PG processes in current snapshot
+    let Some(curr_procs) = find_processes(snapshot) else {
+        return 100.0;
+    };
+    let (curr_rchar, curr_rsz) = sum_pg_io(curr_procs, &pg_pids);
+
+    // Sum rchar and read_bytes for PG processes in previous snapshot
+    let Some(prev_procs) = find_processes(previous) else {
+        return 100.0;
+    };
+    let (prev_rchar, prev_rsz) = sum_pg_io(prev_procs, &pg_pids);
+
+    let delta_rchar = curr_rchar.saturating_sub(prev_rchar);
+    let delta_rsz = curr_rsz.saturating_sub(prev_rsz);
+
+    if delta_rchar == 0 {
+        return 100.0;
+    }
+
+    let cache_bytes = delta_rchar.saturating_sub(delta_rsz);
+    cache_bytes as f64 * 100.0 / delta_rchar as f64
+}
+
+/// Sums rchar and read_bytes for processes whose PID is in pg_pids.
+fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &std::collections::HashSet<u32>) -> (u64, u64) {
+    let mut rchar = 0u64;
+    let mut rsz = 0u64;
+    for p in procs {
+        if pg_pids.contains(&p.pid) {
+            rchar += p.dsk.rchar;
+            rsz += p.dsk.rsz;
+        }
+    }
+    (rchar, rsz)
 }

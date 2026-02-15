@@ -152,6 +152,113 @@ const RULES: Record<string, Classifier> = {
     return "critical";
   },
 
+  // --- Summary: Host CPU ---
+  iow_pct: (v) => pctHigh(v, 5, 15),
+  steal_pct: (v) => pctHigh(v, 3, 10),
+  idle_pct: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n < 10) return "critical";
+    if (n < 30) return "warning";
+    return undefined;
+  },
+
+  // --- Summary: Host Swap ---
+  "swap.used_kb": (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "good";
+    if (n > 1048576) return "critical"; // >1 GB
+    return "warning";
+  },
+
+  // --- Summary: PSI ---
+  cpu_some_pct: (v) => pctHigh(v, 5, 25),
+  mem_some_pct: (v) => pctHigh(v, 5, 25),
+  io_some_pct: (v) => pctHigh(v, 10, 40),
+
+  // --- Summary: VMstat ---
+  swin_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    return "critical";
+  },
+  swout_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    return "critical";
+  },
+
+  // --- Summary: PostgreSQL ---
+  hit_ratio_pct: (v) => pctHit(v),
+  deadlocks: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n > 0) return "critical";
+    return undefined;
+  },
+  temp_bytes_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    return "warning";
+  },
+
+  // --- Summary: BGWriter ---
+  buffers_backend_s: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    return "warning";
+  },
+  maxwritten_clean: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n > 0) return "warning";
+    return undefined;
+  },
+
+  // --- Summary: Disk ---
+  "disk.util_pct": (v) => pctHigh(v, 60, 90),
+
+  // --- Summary: Cgroup CPU (qualified keys) ---
+  "cgroup_cpu.used_pct": (v) => pctHigh(v, 70, 90),
+  "cgroup_cpu.throttled_ms": (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n > 1000) return "critical";
+    return "warning";
+  },
+  "cgroup_cpu.nr_throttled": (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    return "warning";
+  },
+
+  // --- Summary: Cgroup Memory (qualified keys) ---
+  "cgroup_memory.used_pct": (v) => pctHigh(v, 80, 95),
+  "cgroup_memory.oom_kills": (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n > 0) return "critical";
+    return undefined;
+  },
+
   // Rates — zero = inactive
   calls_s: rateInactive,
   rows_s: rateInactive,

@@ -49,6 +49,15 @@ pub struct SystemSummary {
     pub networks: Vec<NetworkSummary>,
     pub psi: Option<PsiSummary>,
     pub vmstat: Option<VmstatSummary>,
+    /// Cgroup CPU metrics (container mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cgroup_cpu: Option<CgroupCpuSummary>,
+    /// Cgroup memory metrics (container mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cgroup_memory: Option<CgroupMemorySummary>,
+    /// Cgroup PIDs metrics (container mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cgroup_pids: Option<CgroupPidsSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -165,6 +174,52 @@ pub struct VmstatSummary {
 }
 
 // ============================================================
+// Cgroup summary (container mode)
+// ============================================================
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CgroupCpuSummary {
+    /// CPU limit in cores (quota / period).
+    pub limit_cores: f64,
+    /// CPU usage percentage relative to limit.
+    pub used_pct: f64,
+    /// User CPU percentage of total usage.
+    pub usr_pct: f64,
+    /// System CPU percentage of total usage.
+    pub sys_pct: f64,
+    /// Throttled time in ms (delta).
+    pub throttled_ms: f64,
+    /// Throttle event count (delta).
+    pub nr_throttled: f64,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CgroupMemorySummary {
+    /// Memory limit in bytes.
+    pub limit_bytes: u64,
+    /// Current memory usage in bytes.
+    pub used_bytes: u64,
+    /// Usage percentage of limit.
+    pub used_pct: f64,
+    /// Anonymous memory in bytes.
+    pub anon_bytes: u64,
+    /// File-backed (page cache) memory in bytes.
+    pub file_bytes: u64,
+    /// Slab memory in bytes.
+    pub slab_bytes: u64,
+    /// Cumulative OOM kill count.
+    pub oom_kills: u64,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CgroupPidsSummary {
+    /// Current number of processes.
+    pub current: u64,
+    /// Maximum allowed processes.
+    pub max: u64,
+}
+
+// ============================================================
 // PostgreSQL summary
 // ============================================================
 
@@ -174,6 +229,9 @@ pub struct PgSummary {
     pub tps: Option<f64>,
     /// Buffer cache hit ratio (0..100).
     pub hit_ratio_pct: Option<f64>,
+    /// Backend IO hit ratio (0..100): (rchar - read_bytes) / rchar.
+    /// Based on /proc/[pid]/io for PG backend processes.
+    pub backend_io_hit_pct: Option<f64>,
     /// Tuples returned+fetched per second.
     pub tuples_s: Option<f64>,
     /// Temp bytes per second.

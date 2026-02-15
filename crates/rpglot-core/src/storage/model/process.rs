@@ -124,6 +124,11 @@ pub struct ProcessDskInfo {
     /// Source: `/proc/[pid]/io` (read_bytes)
     pub rsz: u64,
 
+    /// Total bytes read through read() syscalls (includes page cache hits).
+    /// Source: `/proc/[pid]/io` (rchar)
+    #[serde(default)]
+    pub rchar: u64,
+
     /// Number of write operations (write syscalls).
     /// Source: `/proc/[pid]/io` (syscw)
     pub wio: u64,

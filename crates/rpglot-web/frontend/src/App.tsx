@@ -268,6 +268,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   }, [snapshot?.timestamp, timezoneHook.timezone]);
 
   // Load heatmap data for the current hour
+  const heatmapKey = hourRange ? `${hourRange.start}-${hourRange.end}` : "";
   useEffect(() => {
     if (!hourRange) return;
     const { start, end } = hourRange;
@@ -278,7 +279,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     return () => {
       cancelled = true;
     };
-  }, [hourRange?.start]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [heatmapKey]);
 
   // On mount: jump to URL timestamp
   useEffect(() => {
@@ -319,12 +321,19 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
+      const isTextInput =
         target.tagName === "TEXTAREA" ||
-        target.tagName === "SELECT"
-      )
-        return;
+        target.tagName === "SELECT" ||
+        (target.tagName === "INPUT" &&
+          (target as HTMLInputElement).type !== "range");
+      if (isTextInput) return;
+      // Blur range input so it doesn't capture further keys
+      if (
+        target.tagName === "INPUT" &&
+        (target as HTMLInputElement).type === "range"
+      ) {
+        (target as HTMLInputElement).blur();
+      }
       // Shift+Arrow: step ±1 hour
       if (e.shiftKey && e.key === "ArrowLeft") {
         e.preventDefault();
@@ -1397,9 +1406,9 @@ function TabContent({
     return tabSchema.views;
   }, [activeTab, tabSchema.views]);
 
-  // PGA-specific toggle filters (hide idle / hide walsender)
+  // PGA-specific toggle filters (hide idle / hide system backends)
   const [hideIdle, setHideIdle] = useState(true);
-  const [hideWalSender, setHideWalSender] = useState(true);
+  const [hideSystem, setHideSystem] = useState(true);
 
   // PRC: only PostgreSQL processes (default ON)
   const [pgOnly, setPgOnly] = useState(true);
@@ -1418,7 +1427,12 @@ function TabContent({
     if (activeTab === "pga") {
       filtered = filtered.filter((row) => {
         if (hideIdle && row.state === "idle") return false;
-        if (hideWalSender && row.backend_type === "walsender") return false;
+        if (
+          hideSystem &&
+          row.backend_type !== "client backend" &&
+          row.backend_type !== "autovacuum worker"
+        )
+          return false;
         return true;
       });
     }
@@ -1441,7 +1455,7 @@ function TabContent({
     activeTab,
     activeView,
     hideIdle,
-    hideWalSender,
+    hideSystem,
     pgOnly,
     problemsOnly,
   ]);
@@ -1452,9 +1466,11 @@ function TabContent({
     if (activeTab === "pga") {
       if (hideIdle)
         counts.idle = rawData.filter((r) => r.state === "idle").length;
-      if (hideWalSender)
-        counts.walsender = rawData.filter(
-          (r) => r.backend_type === "walsender",
+      if (hideSystem)
+        counts.system = rawData.filter(
+          (r) =>
+            r.backend_type !== "client backend" &&
+            r.backend_type !== "autovacuum worker",
         ).length;
     }
     if (activeTab === "prc" && pgOnly) {
@@ -1473,7 +1489,7 @@ function TabContent({
     activeTab,
     activeView,
     hideIdle,
-    hideWalSender,
+    hideSystem,
     pgOnly,
     problemsOnly,
   ]);
@@ -1489,10 +1505,10 @@ function TabContent({
             count={hiddenCounts.idle}
           />
           <ToggleButton
-            active={hideWalSender}
-            onClick={() => setHideWalSender((p) => !p)}
-            label="walsender"
-            count={hiddenCounts.walsender}
+            active={hideSystem}
+            onClick={() => setHideSystem((p) => !p)}
+            label="system"
+            count={hiddenCounts.system}
           />
         </>
       );
@@ -1522,7 +1538,7 @@ function TabContent({
   }, [
     activeTab,
     hideIdle,
-    hideWalSender,
+    hideSystem,
     pgOnly,
     problemsOnly,
     hiddenCounts,

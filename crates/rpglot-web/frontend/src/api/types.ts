@@ -126,6 +126,7 @@ export interface CgroupPidsSummary {
 export interface PgSummary {
   tps: number | null;
   hit_ratio_pct: number | null;
+  backend_io_hit_pct: number | null;
   tuples_s: number | null;
   temp_bytes_s: number | null;
   deadlocks: number | null;

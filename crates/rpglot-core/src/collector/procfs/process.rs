@@ -209,6 +209,7 @@ impl<F: FileSystem> ProcessCollector<F> {
             dsk: ProcessDskInfo {
                 rio: io.syscr,
                 rsz: io.read_bytes,
+                rchar: io.rchar,
                 wio: io.syscw,
                 wsz: io.write_bytes,
                 cwsz: io.cancelled_write_bytes,

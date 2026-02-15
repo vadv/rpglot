@@ -33,10 +33,24 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       generic: {
         description: "General overview of process activity.",
         metrics: [
-          { label: "CPU%", description: "CPU usage since last sample", thresholds: ">90% critical · 50-90% warning" },
-          { label: "MEM%", description: "Resident memory as % of total", thresholds: ">90% critical · 70-90% warning" },
-          { label: "VGrow", description: "Virtual memory growth since last sample" },
-          { label: "RGrow", description: "Resident memory growth since last sample" },
+          {
+            label: "CPU%",
+            description: "CPU usage since last sample",
+            thresholds: ">90% critical · 50-90% warning",
+          },
+          {
+            label: "MEM%",
+            description: "Resident memory as % of total",
+            thresholds: ">90% critical · 70-90% warning",
+          },
+          {
+            label: "VGrow",
+            description: "Virtual memory growth since last sample",
+          },
+          {
+            label: "RGrow",
+            description: "Resident memory growth since last sample",
+          },
           { label: "Threads", description: "Number of threads in the process" },
         ],
       },
@@ -44,7 +58,10 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         description: "Process hierarchy and command lines.",
         metrics: [
           { label: "PPID", description: "Parent process ID" },
-          { label: "State", description: "R=running, S=sleeping, D=disk wait, Z=zombie" },
+          {
+            label: "State",
+            description: "R=running, S=sleeping, D=disk wait, Z=zombie",
+          },
           { label: "Command", description: "Full command line of the process" },
         ],
       },
@@ -53,7 +70,10 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         metrics: [
           { label: "VSize", description: "Total virtual memory" },
           { label: "RSS", description: "Resident set size (physical memory)" },
-          { label: "PSS", description: "Proportional set size (shared pages divided)" },
+          {
+            label: "PSS",
+            description: "Proportional set size (shared pages divided)",
+          },
           { label: "VSwap", description: "Amount swapped to disk" },
           { label: "VLock", description: "Locked (non-swappable) memory" },
         ],
@@ -70,10 +90,22 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       scheduler: {
         description: "CPU scheduling details.",
         metrics: [
-          { label: "Nice", description: "Process scheduling priority (-20 to 19)" },
-          { label: "VCtx/s", description: "Voluntary context switches (I/O waits)" },
-          { label: "ICtx/s", description: "Involuntary context switches (CPU contention)" },
-          { label: "RunDelay", description: "Time spent waiting in CPU run queue" },
+          {
+            label: "Nice",
+            description: "Process scheduling priority (-20 to 19)",
+          },
+          {
+            label: "VCtx/s",
+            description: "Voluntary context switches (I/O waits)",
+          },
+          {
+            label: "ICtx/s",
+            description: "Involuntary context switches (CPU contention)",
+          },
+          {
+            label: "RunDelay",
+            description: "Time spent waiting in CPU run queue",
+          },
         ],
       },
     },
@@ -86,28 +118,68 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       "Currently active PostgreSQL sessions. Primary tab for diagnosing active queries, blocked sessions, and connection usage.",
     howToRead:
       "Look for long query durations (>1s for OLTP). 'idle in transaction' sessions hold locks without working \u2014 dangerous for long periods. Wait events show what resources backends are stuck on. Use Stats view to correlate with historical pg_stat_statements data.",
-    drillDown: "Navigate to PGS to see aggregated statistics for the selected query pattern.",
+    drillDown:
+      "Navigate to PGS to see aggregated statistics for the selected query pattern.",
     views: {
       generic: {
         description: "All active sessions with OS metrics and wait events.",
         metrics: [
-          { label: "CPU%", description: "CPU usage of backend OS process", thresholds: ">90% critical" },
+          {
+            label: "CPU%",
+            description: "CPU usage of backend OS process",
+            thresholds: ">90% critical",
+          },
           { label: "RSS", description: "Physical memory of backend process" },
-          { label: "State", description: "Backend state", thresholds: "idle in transaction = warning" },
-          { label: "Wait Type", description: "What resource the backend waits for", thresholds: "any = warning" },
-          { label: "Query Dur", description: "Time since query started", thresholds: ">30s critical · 1-30s warning" },
-          { label: "Xact Dur", description: "Time since transaction started", thresholds: ">60s critical · 5-60s warning" },
-          { label: "Backend Type", description: "client backend, autovacuum, etc." },
-          { label: "Query", description: "Currently executing SQL (truncated)" },
+          {
+            label: "State",
+            description: "Backend state",
+            thresholds: "idle in transaction = warning",
+          },
+          {
+            label: "Wait Type",
+            description: "What resource the backend waits for",
+            thresholds: "any = warning",
+          },
+          {
+            label: "Query Dur",
+            description: "Time since query started",
+            thresholds: ">30s critical · 1-30s warning",
+          },
+          {
+            label: "Xact Dur",
+            description: "Time since transaction started",
+            thresholds: ">60s critical · 5-60s warning",
+          },
+          {
+            label: "Backend Type",
+            description: "client backend, autovacuum, etc.",
+          },
+          {
+            label: "Query",
+            description: "Currently executing SQL (truncated)",
+          },
         ],
       },
       stats: {
         description: "Sessions enriched with pg_stat_statements metrics.",
         metrics: [
-          { label: "Avg Time", description: "Historical average execution time per call" },
-          { label: "Max Time", description: "Historical maximum execution time" },
-          { label: "Calls/s", description: "Execution frequency of this query pattern" },
-          { label: "Hit%", description: "Buffer cache hit ratio for this query", thresholds: "\u226599% good · <90% critical" },
+          {
+            label: "Avg Time",
+            description: "Historical average execution time per call",
+          },
+          {
+            label: "Max Time",
+            description: "Historical maximum execution time",
+          },
+          {
+            label: "Calls/s",
+            description: "Execution frequency of this query pattern",
+          },
+          {
+            label: "Hit%",
+            description: "Buffer cache hit ratio for this query",
+            thresholds: "\u226599% good · <90% critical",
+          },
           { label: "Query", description: "Currently executing SQL" },
         ],
       },
@@ -139,16 +211,29 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
           { label: "Calls/s", description: "Executions per second" },
           { label: "Avg Time", description: "Average execution time (ms)" },
           { label: "Max Time", description: "Maximum execution time (ms)" },
-          { label: "StdDev", description: "Standard deviation of execution time" },
+          {
+            label: "StdDev",
+            description: "Standard deviation of execution time",
+          },
           { label: "Query", description: "Normalized query text" },
         ],
       },
       io: {
         description: "Queries doing the most physical I/O.",
         metrics: [
-          { label: "Blk Rd/s", description: "Shared blocks read from disk per second" },
-          { label: "Blk Hit/s", description: "Shared blocks served from cache per second" },
-          { label: "HIT%", description: "Buffer cache hit ratio", thresholds: "\u226599% good · 90-99% warning · <90% critical" },
+          {
+            label: "Blk Rd/s",
+            description: "Shared blocks read from disk per second",
+          },
+          {
+            label: "Blk Hit/s",
+            description: "Shared blocks served from cache per second",
+          },
+          {
+            label: "HIT%",
+            description: "Buffer cache hit ratio",
+            thresholds: "\u226599% good · 90-99% warning · <90% critical",
+          },
           { label: "Dirty/s", description: "Blocks dirtied per second" },
           { label: "Query", description: "Normalized query text" },
         ],
@@ -177,10 +262,20 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       reads: {
         description: "Tables with highest read activity.",
         metrics: [
-          { label: "Seq Rd/s", description: "Rows read via sequential scans per second" },
-          { label: "Idx Fetch/s", description: "Rows fetched via index scans per second" },
+          {
+            label: "Seq Rd/s",
+            description: "Rows read via sequential scans per second",
+          },
+          {
+            label: "Idx Fetch/s",
+            description: "Rows fetched via index scans per second",
+          },
           { label: "Tot Rd/s", description: "Total rows read per second" },
-          { label: "HIT%", description: "Buffer cache hit ratio", thresholds: "\u226599% good · <90% critical" },
+          {
+            label: "HIT%",
+            description: "Buffer cache hit ratio",
+            thresholds: "\u226599% good · <90% critical",
+          },
           { label: "Size", description: "Table size on disk" },
         ],
       },
@@ -190,8 +285,15 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
           { label: "Ins/s", description: "Rows inserted per second" },
           { label: "Upd/s", description: "Rows updated per second" },
           { label: "Del/s", description: "Rows deleted per second" },
-          { label: "HOT Upd/s", description: "HOT updates (no index change needed)" },
-          { label: "Dead Tup", description: "Dead rows waiting for vacuum", thresholds: ">100K critical · 1K-100K warning" },
+          {
+            label: "HOT Upd/s",
+            description: "HOT updates (no index change needed)",
+          },
+          {
+            label: "Dead Tup",
+            description: "Dead rows waiting for vacuum",
+            thresholds: ">100K critical · 1K-100K warning",
+          },
         ],
       },
       scans: {
@@ -199,17 +301,33 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         metrics: [
           { label: "Seq Scan/s", description: "Sequential scans per second" },
           { label: "Idx Scan/s", description: "Index scans per second" },
-          { label: "SEQ%", description: "Sequential scan ratio", thresholds: ">80% critical · 30-80% warning" },
-          { label: "HIT%", description: "Buffer cache hit ratio", thresholds: "\u226599% good · <90% critical" },
+          {
+            label: "SEQ%",
+            description: "Sequential scan ratio",
+            thresholds: ">80% critical · 30-80% warning",
+          },
+          {
+            label: "HIT%",
+            description: "Buffer cache hit ratio",
+            thresholds: "\u226599% good · <90% critical",
+          },
           { label: "Size", description: "Table size on disk" },
         ],
       },
       maintenance: {
         description: "Vacuum and analyze status \u2014 dead tuples, bloat.",
         metrics: [
-          { label: "Dead Tup", description: "Dead rows waiting for vacuum", thresholds: ">100K critical" },
+          {
+            label: "Dead Tup",
+            description: "Dead rows waiting for vacuum",
+            thresholds: ">100K critical",
+          },
           { label: "Live Tup", description: "Estimated live rows" },
-          { label: "DEAD%", description: "Dead row ratio", thresholds: ">20% critical · 5-20% warning" },
+          {
+            label: "DEAD%",
+            description: "Dead row ratio",
+            thresholds: ">20% critical · 5-20% warning",
+          },
           { label: "Vac/s", description: "Manual vacuum rate" },
           { label: "AutoVac", description: "Last autovacuum timestamp" },
         ],
@@ -217,11 +335,18 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       io: {
         description: "Physical I/O by table \u2014 cache hit ratio.",
         metrics: [
-          { label: "Heap Rd/s", description: "Heap blocks read from disk per second" },
+          {
+            label: "Heap Rd/s",
+            description: "Heap blocks read from disk per second",
+          },
           { label: "Heap Hit/s", description: "Heap blocks served from cache" },
           { label: "Idx Rd/s", description: "Index blocks read from disk" },
           { label: "Idx Hit/s", description: "Index blocks served from cache" },
-          { label: "HIT%", description: "Overall buffer cache hit ratio", thresholds: "\u226599% good · <90% critical" },
+          {
+            label: "HIT%",
+            description: "Overall buffer cache hit ratio",
+            thresholds: "\u226599% good · <90% critical",
+          },
         ],
       },
     },
@@ -240,7 +365,10 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         metrics: [
           { label: "Idx Scan/s", description: "Index scans per second" },
           { label: "Tup Read/s", description: "Index tuples read per second" },
-          { label: "Tup Fetch/s", description: "Index tuples fetched per second" },
+          {
+            label: "Tup Fetch/s",
+            description: "Index tuples fetched per second",
+          },
           { label: "Size", description: "Index size on disk" },
         ],
       },
@@ -248,7 +376,10 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         description: "Indexes with zero scans \u2014 candidates for DROP.",
         metrics: [
           { label: "Idx Scans", description: "Total index scans (cumulative)" },
-          { label: "Size", description: "Index size on disk (wasted if unused)" },
+          {
+            label: "Size",
+            description: "Index size on disk (wasted if unused)",
+          },
         ],
       },
       io: {
@@ -256,7 +387,11 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         metrics: [
           { label: "Blk Rd/s", description: "Index blocks read from disk" },
           { label: "Blk Hit/s", description: "Index blocks served from cache" },
-          { label: "HIT%", description: "Index buffer cache hit ratio", thresholds: "\u226599% good · <90% critical" },
+          {
+            label: "HIT%",
+            description: "Index buffer cache hit ratio",
+            thresholds: "\u226599% good · <90% critical",
+          },
           { label: "Size", description: "Index size on disk" },
         ],
       },
@@ -276,9 +411,20 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         description: "Lock blocking tree \u2014 who blocks whom.",
         metrics: [
           { label: "PID", description: "Session PID with depth indentation" },
-          { label: "Lock Mode", description: "Lock type being held or waited for" },
-          { label: "Granted", description: "true=held, false=waiting", thresholds: "false = critical" },
-          { label: "State", description: "Backend state", thresholds: "idle in transaction = warning" },
+          {
+            label: "Lock Mode",
+            description: "Lock type being held or waited for",
+          },
+          {
+            label: "Granted",
+            description: "true=held, false=waiting",
+            thresholds: "false = critical",
+          },
+          {
+            label: "State",
+            description: "Backend state",
+            thresholds: "idle in transaction = warning",
+          },
           { label: "Query", description: "Currently executing SQL" },
         ],
       },
@@ -289,10 +435,19 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
 export const SUMMARY_SECTION_HELP: Record<string, string> = {
   cpu: "CPU time breakdown across all cores. iow_pct >10% = disk bottleneck. steal >5% = hypervisor overcommit.",
   load: "Load average = processes waiting for CPU/IO. Compare to core count. >2x cores = overloaded.",
-  memory: "available_kb is the key metric \u2014 includes reclaimable cache. <10% of total = memory pressure.",
+  memory:
+    "available_kb is the key metric \u2014 includes reclaimable cache. <10% of total = memory pressure.",
   swap: "Any swap usage for PostgreSQL backends degrades performance severely. Ideally used_kb = 0.",
   psi: "Pressure Stall Information \u2014 measures actual resource contention, not just utilization.",
-  vmstat: "Page faults and context switches. swin_s/swout_s >0 = active swapping (bad).",
+  vmstat:
+    "Page faults and context switches. swin_s/swout_s >0 = active swapping (bad).",
   pg: "Database-wide throughput. hit_ratio <99% for OLTP is concerning. temp_bytes_s >0 = work_mem overflow.",
-  bgwriter: "buffers_backend_s >0 means bgwriter can't keep up. maxwritten_clean high = increase bgwriter_lru_maxpages.",
+  bgwriter:
+    "buffers_backend_s >0 means bgwriter can't keep up. maxwritten_clean high = increase bgwriter_lru_maxpages.",
+  cgroup_cpu:
+    "Container CPU usage vs limit. throttled_ms >0 = container exceeded quota, queries slowed down. Increase CPU limit or optimize queries.",
+  cgroup_memory:
+    "Container memory usage vs limit. used_pct >95% risks OOM kills. oom_kills >0 = processes were terminated. Increase memory limit.",
+  cgroup_pids:
+    "Container process/thread count vs limit. Approaching max prevents new connections and fork().",
 };

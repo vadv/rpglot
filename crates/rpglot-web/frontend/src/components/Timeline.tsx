@@ -74,7 +74,6 @@ export function Timeline({
   // Time labels for slider endpoints
   const startTime = sliderMin > 0 ? formatTime(sliderMin, timezone) : "";
   const endTime = sliderMax > 0 ? formatTime(sliderMax, timezone) : "";
-  const currentTime = ts > 0 ? formatTime(ts, timezone) : "-";
 
   const handleSliderChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -153,11 +152,6 @@ export function Timeline({
           {endTime}
         </span>
       )}
-
-      {/* Current time */}
-      <span className="text-[var(--text-primary)] font-mono tabular-nums font-medium">
-        {currentTime}
-      </span>
 
       {/* Next hour */}
       <StepButton

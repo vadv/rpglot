@@ -1,5 +1,5 @@
 const TOKEN_KEY = "sso_access_token";
-const REFRESH_MARGIN_SEC = 300; // redirect 5 min before expiry
+const REFRESH_MARGIN_SEC = 90; // redirect 1.5 min before expiry
 
 // Global SSO proxy URL (set once from /api/v1/auth/config)
 let _ssoProxyUrl: string | null = null;

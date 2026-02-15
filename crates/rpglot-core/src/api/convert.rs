@@ -3,13 +3,13 @@
 //! Converts internal `Snapshot` + computed rates into a JSON-serializable `ApiSnapshot`.
 //! All interned strings are resolved, all rates are pre-computed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
-    DataBlock, PgStatBgwriterInfo, PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo,
-    SystemDiskInfo, SystemNetInfo,
+    CgroupCpuInfo, DataBlock, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
+    ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
 };
 
 use super::snapshot::*;
@@ -167,6 +167,8 @@ fn extract_system_summary(
 
     let vmstat = extract_vmstat_summary(snap, prev, delta_time);
 
+    let (cgroup_cpu, cgroup_memory, cgroup_pids) = extract_cgroup_summaries(snap, prev, delta_time);
+
     SystemSummary {
         cpu,
         load,
@@ -176,6 +178,9 @@ fn extract_system_summary(
         networks,
         psi,
         vmstat,
+        cgroup_cpu,
+        cgroup_memory,
+        cgroup_pids,
     }
 }
 
@@ -416,16 +421,137 @@ fn extract_vmstat_summary(
 }
 
 // ============================================================
+// Cgroup summaries (container mode)
+// ============================================================
+
+fn find_cgroup_cpu(snap: &Snapshot) -> Option<&CgroupCpuInfo> {
+    find_block(snap, |b| {
+        if let DataBlock::Cgroup(cg) = b {
+            cg.cpu.as_ref()
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_cgroup_summaries(
+    snap: &Snapshot,
+    prev: Option<&Snapshot>,
+    delta_time: f64,
+) -> (
+    Option<CgroupCpuSummary>,
+    Option<CgroupMemorySummary>,
+    Option<CgroupPidsSummary>,
+) {
+    let cg = find_block(snap, |b| {
+        if let DataBlock::Cgroup(cg) = b {
+            Some(cg)
+        } else {
+            None
+        }
+    });
+    let Some(cg) = cg else {
+        return (None, None, None);
+    };
+
+    // --- Cgroup CPU ---
+    let cgroup_cpu = cg
+        .cpu
+        .as_ref()
+        .filter(|c| c.quota > 0 && c.period > 0)
+        .map(|cpu| {
+            let limit_cores = cpu.quota as f64 / cpu.period as f64;
+
+            let prev_cpu = prev.and_then(find_cgroup_cpu);
+            let (used_pct, usr_pct, sys_pct, throttled_ms, nr_throttled) = if let Some(pc) =
+                prev_cpu
+            {
+                if delta_time > 0.0 {
+                    let d_usage = cpu.usage_usec.saturating_sub(pc.usage_usec) as f64 / 1_000_000.0;
+                    let d_user = cpu.user_usec.saturating_sub(pc.user_usec) as f64 / 1_000_000.0;
+                    let d_system =
+                        cpu.system_usec.saturating_sub(pc.system_usec) as f64 / 1_000_000.0;
+                    let d_throttled =
+                        cpu.throttled_usec.saturating_sub(pc.throttled_usec) as f64 / 1000.0;
+                    let d_nr = cpu.nr_throttled.saturating_sub(pc.nr_throttled) as f64;
+
+                    let used = if limit_cores > 0.0 {
+                        (d_usage / delta_time / limit_cores) * 100.0
+                    } else {
+                        0.0
+                    };
+                    let usr = if d_usage > 0.0 {
+                        (d_user / d_usage) * 100.0
+                    } else {
+                        0.0
+                    };
+                    let sys = if d_usage > 0.0 {
+                        (d_system / d_usage) * 100.0
+                    } else {
+                        0.0
+                    };
+                    (used, usr, sys, d_throttled, d_nr)
+                } else {
+                    (0.0, 0.0, 0.0, 0.0, 0.0)
+                }
+            } else {
+                (0.0, 0.0, 0.0, 0.0, 0.0)
+            };
+
+            CgroupCpuSummary {
+                limit_cores,
+                used_pct,
+                usr_pct,
+                sys_pct,
+                throttled_ms,
+                nr_throttled,
+            }
+        });
+
+    // --- Cgroup Memory ---
+    let cgroup_memory = cg.memory.as_ref().filter(|m| m.max != u64::MAX).map(|mem| {
+        let used_pct = if mem.max > 0 {
+            mem.current as f64 * 100.0 / mem.max as f64
+        } else {
+            0.0
+        };
+        CgroupMemorySummary {
+            limit_bytes: mem.max,
+            used_bytes: mem.current,
+            used_pct,
+            anon_bytes: mem.anon,
+            file_bytes: mem.file,
+            slab_bytes: mem.slab,
+            oom_kills: mem.oom_kill,
+        }
+    });
+
+    // --- Cgroup PIDs ---
+    let cgroup_pids =
+        cg.pids
+            .as_ref()
+            .filter(|p| p.max != u64::MAX)
+            .map(|pids| CgroupPidsSummary {
+                current: pids.current,
+                max: pids.max,
+            });
+
+    (cgroup_cpu, cgroup_memory, cgroup_pids)
+}
+
+// ============================================================
 // PG summary
 // ============================================================
 
 fn extract_pg_summary(snap: &Snapshot, prev: Option<&Snapshot>, delta_time: f64) -> PgSummary {
     let db_rates = compute_pg_db_rates(snap, prev, delta_time);
     let bgw = compute_bgw_rates(snap, prev, delta_time);
+    let backend_io_hit = compute_backend_io_hit(snap, prev);
 
     PgSummary {
         tps: db_rates.as_ref().map(|r| r.0),
         hit_ratio_pct: db_rates.as_ref().map(|r| r.1),
+        backend_io_hit_pct: backend_io_hit,
         tuples_s: db_rates.as_ref().map(|r| r.2),
         temp_bytes_s: db_rates.as_ref().map(|r| r.3),
         deadlocks: db_rates.as_ref().map(|r| r.4),
@@ -501,6 +627,70 @@ fn compute_pg_db_rates(
         sum_temp_bytes as f64 / delta_time,
         sum_deadlocks as f64,
     ))
+}
+
+/// Computes Backend IO Hit Ratio from /proc/[pid]/io for PG backend processes.
+/// Returns None if no previous snapshot or no PG activity data.
+fn compute_backend_io_hit(snap: &Snapshot, prev: Option<&Snapshot>) -> Option<f64> {
+    let prev = prev?;
+
+    let pga: &[PgStatActivityInfo] = find_block(snap, |b| {
+        if let DataBlock::PgStatActivity(rows) = b {
+            Some(rows.as_slice())
+        } else {
+            None
+        }
+    })?;
+
+    let pg_pids: HashSet<u32> = pga
+        .iter()
+        .filter_map(|a| u32::try_from(a.pid).ok())
+        .collect();
+    if pg_pids.is_empty() {
+        return None;
+    }
+
+    let curr_procs: &[ProcessInfo] = find_block(snap, |b| {
+        if let DataBlock::Processes(procs) = b {
+            Some(procs.as_slice())
+        } else {
+            None
+        }
+    })?;
+
+    let prev_procs: &[ProcessInfo] = find_block(prev, |b| {
+        if let DataBlock::Processes(procs) = b {
+            Some(procs.as_slice())
+        } else {
+            None
+        }
+    })?;
+
+    let (curr_rchar, curr_rsz) = sum_pg_io(curr_procs, &pg_pids);
+    let (prev_rchar, prev_rsz) = sum_pg_io(prev_procs, &pg_pids);
+
+    let delta_rchar = curr_rchar.saturating_sub(prev_rchar);
+    let delta_rsz = curr_rsz.saturating_sub(prev_rsz);
+
+    if delta_rchar == 0 {
+        return Some(100.0);
+    }
+
+    let cache_bytes = delta_rchar.saturating_sub(delta_rsz);
+    Some(cache_bytes as f64 * 100.0 / delta_rchar as f64)
+}
+
+/// Sums rchar and read_bytes for processes whose PID is in pg_pids.
+fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
+    let mut rchar = 0u64;
+    let mut rsz = 0u64;
+    for p in procs {
+        if pg_pids.contains(&p.pid) {
+            rchar += p.dsk.rchar;
+            rsz += p.dsk.rsz;
+        }
+    }
+    (rchar, rsz)
 }
 
 fn compute_bgw_rates(

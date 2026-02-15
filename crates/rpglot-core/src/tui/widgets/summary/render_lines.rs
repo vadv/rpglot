@@ -323,7 +323,7 @@ pub(super) fn render_vmstat_line(rates: &VmstatRates, width: usize) -> Line<'sta
 }
 
 /// Renders PostgreSQL summary line from pg_stat_database.
-/// Format: PG  │ tps:    750/s  hit:  99.3%  tup: 410.4K/s  tmp:          0  dlock:     0
+/// Format: PG  │ tps:    750/s  hit:  99.3%  iohr:  98.5%  tup: 410.4K/s  tmp:          0  dlock:     0
 pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
     let mut spans = vec![Span::styled(" PG", Styles::cpu()), Span::raw(" │ ")];
 
@@ -346,6 +346,21 @@ pub(super) fn render_pg_line(pg: &PgSummary, width: usize) -> Line<'static> {
         &format!("{:.1}%", pg.hit_ratio),
         PG_HIT,
         hit_style,
+    ));
+    spans.push(Span::raw(" "));
+
+    let iohr_style = if pg.backend_io_hit < 90.0 {
+        Styles::critical()
+    } else if pg.backend_io_hit < 95.0 {
+        Styles::modified_item()
+    } else {
+        Styles::default()
+    };
+    spans.extend(metric_spans(
+        "iohr",
+        &format!("{:.1}%", pg.backend_io_hit),
+        PG_IOHR,
+        iohr_style,
     ));
     spans.push(Span::raw(" "));
 

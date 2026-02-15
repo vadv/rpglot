@@ -88,6 +88,184 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   },
 
   // =====================================================
+  // Summary: Host CPU
+  // =====================================================
+  iow_pct: {
+    label: "IO Wait%",
+    description: "Percentage of CPU time waiting for I/O completion.",
+    thresholds: ">15% critical \u00b7 5-15% warning",
+    tip: "High iowait indicates disk I/O bottleneck. Check disk utilization",
+  },
+  steal_pct: {
+    label: "Steal%",
+    description: "CPU time stolen by hypervisor for other VMs.",
+    thresholds: ">10% critical \u00b7 3-10% warning",
+    tip: "High steal = hypervisor overcommit. Consider dedicated resources",
+  },
+  idle_pct: {
+    label: "Idle%",
+    description: "Percentage of CPU time idle (not doing any work).",
+    thresholds: "<10% critical \u00b7 <30% warning",
+    tip: "Very low idle = CPU saturated. Check top consumers in PRC tab",
+  },
+
+  // =====================================================
+  // Summary: Host Swap
+  // =====================================================
+  "swap.used_kb": {
+    label: "Used",
+    description: "Amount of swap space currently in use.",
+    thresholds: ">1 GB critical \u00b7 >0 warning \u00b7 =0 good",
+    tip: "Any swap usage for PostgreSQL backends degrades performance severely",
+  },
+
+  // =====================================================
+  // Summary: PSI
+  // =====================================================
+  cpu_some_pct: {
+    label: "CPU Some%",
+    description: "Percentage of time at least some tasks were stalled on CPU.",
+    thresholds: ">25% critical \u00b7 5-25% warning",
+    tip: "Measures actual CPU contention, not just utilization",
+  },
+  mem_some_pct: {
+    label: "Mem Some%",
+    description:
+      "Percentage of time at least some tasks were stalled on memory.",
+    thresholds: ">25% critical \u00b7 5-25% warning",
+    tip: "Memory pressure causing page reclaim or swap",
+  },
+  io_some_pct: {
+    label: "IO Some%",
+    description: "Percentage of time at least some tasks were stalled on I/O.",
+    thresholds: ">40% critical \u00b7 10-40% warning",
+    tip: "I/O pressure from disk bottleneck or insufficient buffer cache",
+  },
+
+  // =====================================================
+  // Summary: VMstat
+  // =====================================================
+  swin_s: {
+    label: "Swap In/s",
+    description: "Pages swapped in from disk per second.",
+    thresholds: ">0 critical",
+    tip: "Active swap-in = memory pressure. Increase RAM or reduce shared_buffers",
+  },
+  swout_s: {
+    label: "Swap Out/s",
+    description: "Pages swapped out to disk per second.",
+    thresholds: ">0 critical",
+    tip: "Active swap-out = severe memory pressure",
+  },
+
+  // =====================================================
+  // Summary: PostgreSQL
+  // =====================================================
+  hit_ratio_pct: {
+    label: "Hit Ratio",
+    description: "Buffer cache hit ratio across all databases.",
+    thresholds: "\u226599% good \u00b7 90-99% warning \u00b7 <90% critical",
+    tip: "For OLTP, hit ratio should be \u226599%. Low values = increase shared_buffers",
+  },
+  temp_bytes_s: {
+    label: "Temp/s",
+    description: "Temporary file bytes written per second across all backends.",
+    thresholds: ">0 warning",
+    tip: "Temp files indicate work_mem overflow. Increase work_mem",
+  },
+
+  // =====================================================
+  // Summary: BGWriter
+  // =====================================================
+  buffers_backend_s: {
+    label: "Backend Buf/s",
+    description: "Buffers written directly by backends (not bgwriter).",
+    thresholds: ">0 warning",
+    tip: "Should be 0 normally. High values = bgwriter can't keep up",
+  },
+  maxwritten_clean: {
+    label: "Max Written",
+    description:
+      "Number of times bgwriter stopped cleaning because it wrote too many buffers.",
+    thresholds: ">0 warning",
+    tip: "Increase bgwriter_lru_maxpages if this is non-zero",
+  },
+
+  // =====================================================
+  // Summary: Disk
+  // =====================================================
+  "disk.util_pct": {
+    label: "Util%",
+    description: "Disk utilization percentage (time spent doing I/O).",
+    thresholds: ">90% critical \u00b7 60-90% warning",
+    tip: "100% utilization = disk saturated. Consider faster storage or I/O optimization",
+  },
+
+  // =====================================================
+  // Summary: Cgroup CPU
+  // =====================================================
+  "cgroup_cpu.limit_cores": {
+    label: "Limit",
+    description: "CPU core limit assigned to this container (quota/period).",
+    tip: "Container can use up to this many CPU cores",
+  },
+  "cgroup_cpu.used_pct": {
+    label: "Used%",
+    description: "CPU utilization as percentage of container limit.",
+    thresholds: ">90% critical \u00b7 70-90% warning",
+    tip: "Approaching limit will cause throttling. Request more CPU or optimize",
+  },
+  "cgroup_cpu.throttled_ms": {
+    label: "Throttled",
+    description:
+      "CPU throttling time per sample interval (ms). Container exceeded its CPU quota.",
+    thresholds: ">1000ms critical \u00b7 >0 warning",
+    tip: "Non-zero throttling degrades query performance. Increase CPU limit",
+  },
+  "cgroup_cpu.nr_throttled": {
+    label: "Nr Throttled",
+    description:
+      "Number of times this container's CPU usage was throttled per sample.",
+    thresholds: ">0 warning",
+    tip: "Frequent throttling = CPU limit too low for the workload",
+  },
+
+  // =====================================================
+  // Summary: Cgroup Memory
+  // =====================================================
+  "cgroup_memory.used_pct": {
+    label: "Used%",
+    description: "Memory utilization as percentage of container limit.",
+    thresholds: ">95% critical \u00b7 80-95% warning",
+    tip: "Approaching limit triggers OOM kills. Increase memory limit or optimize",
+  },
+  "cgroup_memory.oom_kills": {
+    label: "OOM Kills",
+    description: "Cumulative number of OOM kills in this container.",
+    thresholds: ">0 critical",
+    tip: "OOM kills terminate processes. Increase memory limit immediately",
+  },
+  "cgroup_memory.limit_bytes": {
+    label: "Limit",
+    description: "Memory limit assigned to this container.",
+    tip: "Container will be OOM-killed if it exceeds this limit",
+  },
+
+  // =====================================================
+  // Summary: Cgroup PIDs
+  // =====================================================
+  "cgroup_pids.current": {
+    label: "Current",
+    description: "Current number of processes/threads in the container.",
+    tip: "Approaching max may prevent fork() and new connections",
+  },
+  "cgroup_pids.max": {
+    label: "Max",
+    description:
+      "Maximum number of processes/threads allowed in the container.",
+  },
+
+  // =====================================================
   // PGA (pg_stat_activity)
   // =====================================================
   database: {

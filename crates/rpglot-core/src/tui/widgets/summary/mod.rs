@@ -471,6 +471,9 @@ struct PgSummary {
     tps: f64,
     /// Buffer cache hit ratio (0..100).
     hit_ratio: f64,
+    /// Backend IO hit ratio (0..100): (rchar - read_bytes) / rchar.
+    /// Based on /proc/[pid]/io for PG backend processes.
+    backend_io_hit: f64,
     /// Tuples per second (returned + fetched + inserted + updated + deleted).
     tup_s: f64,
     /// Temp bytes per second.
@@ -544,6 +547,7 @@ pub(super) mod metric_widths {
     // Aligned with DSK/NET: 1-space separators, wider fields for stable layout
     pub const PG_TPS: usize = 13; // "tps:" (4) + value (9) — fits "12.5K/s"
     pub const PG_HIT: usize = 12; // "hit:" (4) + value (8) — fits "99.3%"
+    pub const PG_IOHR: usize = 13; // "iohr:" (5) + value (8) — fits "99.3%"
     pub const PG_TUP: usize = 15; // "tup:" (4) + value (11) — fits "410.4K/s"
     pub const PG_TMP: usize = 16; // "tmp:" (4) + value (12) — fits "100.0M/s"
     pub const PG_DLOCK: usize = 11; // "dlock:" (6) + value (5)

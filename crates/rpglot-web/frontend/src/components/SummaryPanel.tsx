@@ -8,10 +8,13 @@ import {
   Gauge,
   BarChart,
   Info,
+  Container,
 } from "lucide-react";
 import { RichTooltip } from "./RichTooltip";
 import type { ApiSnapshot, SummarySchema } from "../api/types";
 import { formatValue } from "../utils/formatters";
+import { getThresholdClass } from "../utils/thresholds";
+import { buildColumnTooltip } from "../utils/columnHelp";
 import { SUMMARY_SECTION_HELP } from "../utils/helpContent";
 
 const SECTION_ICONS: Record<string, typeof Cpu> = {
@@ -25,6 +28,9 @@ const SECTION_ICONS: Record<string, typeof Cpu> = {
   network: Network,
   pg: Database,
   bgwriter: Database,
+  cgroup_cpu: Container,
+  cgroup_memory: Container,
+  cgroup_pids: Container,
 };
 
 interface SummaryPanelProps {
@@ -33,19 +39,29 @@ interface SummaryPanelProps {
 }
 
 export function SummaryPanel({ snapshot, schema }: SummaryPanelProps) {
+  const hasCgroupCpu = snapshot.system.cgroup_cpu != null;
+  const hasCgroupMemory = snapshot.system.cgroup_memory != null;
+
   const systemSections = schema.system
     .map((section) => ({
       section,
       data: getSystemData(snapshot, section.key),
     }))
-    .filter((s) => s.data !== null);
+    .filter((s) => s.data != null)
+    .filter(({ section }) => {
+      // In container mode, replace host CPU/Memory/Swap with cgroup equivalents
+      if (hasCgroupCpu && section.key === "cpu") return false;
+      if (hasCgroupMemory && section.key === "memory") return false;
+      if (hasCgroupMemory && section.key === "swap") return false;
+      return true;
+    });
 
   const pgSections = schema.pg
     .map((section) => ({
       section,
       data: getPgData(snapshot, section.key),
     }))
-    .filter((s) => s.data !== null);
+    .filter((s) => s.data != null);
 
   const disks = snapshot.system.disks;
   const networks = snapshot.system.networks;
@@ -149,8 +165,11 @@ function SummaryCard({
         {visibleFields.map((f) => (
           <KV
             key={f.key}
+            sectionKey={sectionKey}
+            fieldKey={f.key}
             label={f.label}
             value={formatValue(data[f.key], f.unit as never, f.format as never)}
+            rawValue={data[f.key]}
           />
         ))}
       </div>
@@ -172,18 +191,39 @@ function DiskCard({ disk }: { disk: ApiSnapshot["system"]["disks"][number] }) {
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         <KV
+          sectionKey="disk"
+          fieldKey="read_bytes_s"
           label="Read"
           value={formatValue(disk.read_bytes_s, "bytes/s", "bytes")}
+          rawValue={disk.read_bytes_s}
         />
         <KV
+          sectionKey="disk"
+          fieldKey="write_bytes_s"
           label="Write"
           value={formatValue(disk.write_bytes_s, "bytes/s", "bytes")}
+          rawValue={disk.write_bytes_s}
         />
-        <KV label="R IOPS" value={formatValue(disk.read_iops, "/s", "rate")} />
-        <KV label="W IOPS" value={formatValue(disk.write_iops, "/s", "rate")} />
         <KV
+          sectionKey="disk"
+          fieldKey="read_iops"
+          label="R IOPS"
+          value={formatValue(disk.read_iops, "/s", "rate")}
+          rawValue={disk.read_iops}
+        />
+        <KV
+          sectionKey="disk"
+          fieldKey="write_iops"
+          label="W IOPS"
+          value={formatValue(disk.write_iops, "/s", "rate")}
+          rawValue={disk.write_iops}
+        />
+        <KV
+          sectionKey="disk"
+          fieldKey="util_pct"
           label="Util"
           value={formatValue(disk.util_pct, "percent", "percent")}
+          rawValue={disk.util_pct}
         />
       </div>
     </div>
@@ -208,33 +248,82 @@ function NetworkCard({
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         <KV
+          sectionKey="network"
+          fieldKey="rx_bytes_s"
           label="RX"
           value={formatValue(net.rx_bytes_s, "bytes/s", "bytes")}
+          rawValue={net.rx_bytes_s}
         />
         <KV
+          sectionKey="network"
+          fieldKey="tx_bytes_s"
           label="TX"
           value={formatValue(net.tx_bytes_s, "bytes/s", "bytes")}
+          rawValue={net.tx_bytes_s}
         />
         <KV
+          sectionKey="network"
+          fieldKey="rx_packets_s"
           label="RX pkt"
           value={formatValue(net.rx_packets_s, "/s", "rate")}
+          rawValue={net.rx_packets_s}
         />
         <KV
+          sectionKey="network"
+          fieldKey="tx_packets_s"
           label="TX pkt"
           value={formatValue(net.tx_packets_s, "/s", "rate")}
+          rawValue={net.tx_packets_s}
         />
       </div>
     </div>
   );
 }
 
-function KV({ label, value }: { label: string; value: string }) {
+function KV({
+  sectionKey,
+  fieldKey,
+  label,
+  value,
+  rawValue,
+}: {
+  sectionKey?: string;
+  fieldKey?: string;
+  label: string;
+  value: string;
+  rawValue?: unknown;
+}) {
+  // Threshold coloring: try qualified key first, then bare key
+  const qKey = sectionKey && fieldKey ? `${sectionKey}.${fieldKey}` : "";
+  const colorClass =
+    (qKey && getThresholdClass(qKey, rawValue, {})) ||
+    (fieldKey && getThresholdClass(fieldKey, rawValue, {})) ||
+    "";
+
+  // Rich tooltip on label
+  const tooltip =
+    (qKey && buildColumnTooltip(qKey)) ||
+    (fieldKey && buildColumnTooltip(fieldKey)) ||
+    null;
+
+  const labelEl = (
+    <span className="text-[var(--text-tertiary)] whitespace-nowrap">
+      {label}
+    </span>
+  );
+
   return (
     <>
-      <span className="text-[var(--text-tertiary)] whitespace-nowrap">
-        {label}
-      </span>
-      <span className="text-[var(--text-primary)] whitespace-nowrap text-right font-mono tabular-nums">
+      {tooltip ? (
+        <RichTooltip content={tooltip} side="bottom">
+          {labelEl}
+        </RichTooltip>
+      ) : (
+        labelEl
+      )}
+      <span
+        className={`whitespace-nowrap text-right font-mono tabular-nums ${colorClass || "text-[var(--text-primary)]"}`}
+      >
         {value}
       </span>
     </>
@@ -259,6 +348,12 @@ function getSystemData(
       return s.psi as unknown as Record<string, unknown>;
     case "vmstat":
       return s.vmstat as unknown as Record<string, unknown>;
+    case "cgroup_cpu":
+      return s.cgroup_cpu as unknown as Record<string, unknown>;
+    case "cgroup_memory":
+      return s.cgroup_memory as unknown as Record<string, unknown>;
+    case "cgroup_pids":
+      return s.cgroup_pids as unknown as Record<string, unknown>;
     default:
       return null;
   }
