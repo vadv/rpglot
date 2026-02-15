@@ -292,16 +292,17 @@ impl PostgresCollector {
         self.indexes_cache_time = None;
     }
 
-    /// Collects log errors from PostgreSQL log files.
+    /// Collects log data from PostgreSQL log files.
     ///
-    /// Returns grouped ERROR/FATAL/PANIC entries for the current snapshot interval.
-    pub fn collect_log_errors(
+    /// Returns grouped ERROR/FATAL/PANIC entries and operational event counts
+    /// (checkpoints, autovacuum) for the current snapshot interval.
+    pub fn collect_log_data(
         &mut self,
         interner: &mut crate::storage::interner::StringInterner,
-    ) -> Vec<crate::storage::model::PgLogEntry> {
+    ) -> crate::collector::log_collector::LogCollectResult {
         let mut client = match self.client.take() {
             Some(c) => c,
-            None => return Vec::new(),
+            None => return crate::collector::log_collector::LogCollectResult::default(),
         };
         let result = self.log_collector.collect(&mut client, interner);
         self.client = Some(client);

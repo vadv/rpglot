@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use super::cgroup::CgroupInfo;
 use super::postgres::{
-    PgLockTreeNode, PgLogEntry, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
-    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    PgLockTreeNode, PgLogEntry, PgLogEventsInfo, PgStatActivityInfo, PgStatBgwriterInfo,
+    PgStatDatabaseInfo, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 use super::process::ProcessInfo;
 use super::system::{
@@ -114,6 +114,10 @@ pub enum DataBlock {
     /// PostgreSQL log errors (grouped by normalized pattern).
     /// Source: PostgreSQL log files (stderr/csvlog)
     PgLogErrors(Vec<PgLogEntry>),
+
+    /// PostgreSQL operational events (checkpoint, autovacuum) counts.
+    /// Source: PostgreSQL log files (LOG-level messages)
+    PgLogEvents(PgLogEventsInfo),
 }
 
 /// A point-in-time capture of all collected metrics.

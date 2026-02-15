@@ -71,6 +71,32 @@ export function ActivityHeatmap({
           />
         ) : null,
       )}
+      {/* Checkpoint indicators — blue diamonds near top */}
+      {buckets.map((b, i) =>
+        b.checkpoints > 0 ? (
+          <polygon
+            key={`ckpt-${i}`}
+            points={`${i + 0.5},0.5 ${i + 1},2 ${i + 0.5},3.5 ${i},2`}
+            fill="var(--status-info, #38bdf8)"
+            opacity={0.8}
+          />
+        ) : null,
+      )}
+      {/* Autovacuum indicators — green rectangles at bottom */}
+      {buckets.map((b, i) =>
+        b.autovacuums > 0 ? (
+          <rect
+            key={`av-${i}`}
+            x={i + 0.15}
+            y={22}
+            width={0.7}
+            height={1.5}
+            rx={0.3}
+            fill="var(--status-success, #4ade80)"
+            opacity={0.7}
+          />
+        ) : null,
+      )}
       {currentTs > startTs && currentTs < endTs && (
         <line
           x1={((currentTs - startTs) / range) * n}

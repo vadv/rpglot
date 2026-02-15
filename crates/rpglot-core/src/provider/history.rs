@@ -757,6 +757,8 @@ impl HistoryProvider {
                         {
                             let active = metrics::count_active_sessions(&snap);
                             let errors = metrics::count_error_entries(&snap);
+                            let checkpoints = metrics::count_checkpoint_events(&snap);
+                            let autovacuums = metrics::count_autovacuum_events(&snap);
                             // CPU% for WAL: simplified to 0 (WAL entries will be flushed
                             // to chunk with full CPU% soon, < 1 hour of data)
                             result.push((
@@ -767,6 +769,8 @@ impl HistoryProvider {
                                     cgroup_cpu_pct_x10: 0,
                                     cgroup_mem_pct_x10: 0,
                                     error_count: errors,
+                                    checkpoint_count: checkpoints,
+                                    autovacuum_count: autovacuums,
                                 },
                             ));
                         }
@@ -777,6 +781,8 @@ impl HistoryProvider {
                         if snap.timestamp >= start_ts && snap.timestamp <= end_ts {
                             let active = metrics::count_active_sessions(snap);
                             let errors = metrics::count_error_entries(snap);
+                            let checkpoints = metrics::count_checkpoint_events(snap);
+                            let autovacuums = metrics::count_autovacuum_events(snap);
                             result.push((
                                 snap.timestamp,
                                 MetricsEntry {
@@ -785,6 +791,8 @@ impl HistoryProvider {
                                     cgroup_cpu_pct_x10: 0,
                                     cgroup_mem_pct_x10: 0,
                                     error_count: errors,
+                                    checkpoint_count: checkpoints,
+                                    autovacuum_count: autovacuums,
                                 },
                             ));
                         }

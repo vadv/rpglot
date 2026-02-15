@@ -1,16 +1,17 @@
 //! Lightweight per-snapshot metrics for timeline heatmap visualization.
 //!
-//! Each snapshot produces a 10-byte `MetricsEntry` (active_sessions, host CPU%,
-//! cgroup CPU%, cgroup memory%, error_count).
+//! Each snapshot produces a 12-byte `MetricsEntry` (active_sessions, host CPU%,
+//! cgroup CPU%, cgroup memory%, error_count, checkpoint_count, autovacuum_count).
 //! These are stored in `.metrics` sidecar files alongside `.zst` chunk files
 //! and read without decompressing snapshots — enabling O(1) access to activity
 //! data for arbitrary time ranges.
 //!
 //! ## File format
 //!
-//! **V3** (current): 4-byte magic `b"MET3"` followed by 10-byte entries.
-//! **V2** (legacy): 4-byte magic `b"MET2"` followed by 8-byte entries (error_count = 0).
-//! **V1** (legacy): no header, 4-byte entries. Read with cgroup + error fields = 0.
+//! **V4** (current): 4-byte magic `b"MET4"` followed by 12-byte entries.
+//! **V3** (legacy): 4-byte magic `b"MET3"` followed by 10-byte entries (checkpoint/autovacuum = 0).
+//! **V2** (legacy): 4-byte magic `b"MET2"` followed by 8-byte entries (error + event fields = 0).
+//! **V1** (legacy): no header, 4-byte entries. Read with cgroup + error + event fields = 0.
 
 use std::path::{Path, PathBuf};
 
@@ -25,28 +26,28 @@ const METRICS_MAGIC_V2: &[u8; 4] = b"MET2";
 /// Magic bytes identifying V3 metrics files (adds error_count).
 const METRICS_MAGIC_V3: &[u8; 4] = b"MET3";
 
+/// Magic bytes identifying V4 metrics files (adds checkpoint/autovacuum counts).
+const METRICS_MAGIC_V4: &[u8; 4] = b"MET4";
+
 /// Lightweight per-snapshot metrics for timeline heatmap.
-/// V3: 10 bytes per entry. V2: 8 bytes (error_count = 0).
+/// V4: 12 bytes per entry.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct MetricsEntry {
     /// Number of pg_stat_activity rows where state != "idle".
     pub active_sessions: u16,
     /// Host CPU utilization * 10 (0..1000 = 0.0%..100.0%).
-    /// Computed as delta between consecutive snapshots' SystemCpuInfo jiffies.
-    /// First entry in chunk = 0 (no previous data for delta).
     pub cpu_pct_x10: u16,
     /// Cgroup CPU utilization * 10 relative to cgroup limit (0..1000).
-    /// Computed as delta(usage_usec) / (delta_time * limit_cores).
-    /// 0 when not in a container or no cgroup CPU limit.
     pub cgroup_cpu_pct_x10: u16,
     /// Cgroup memory utilization * 10 (0..1000 = 0.0%..100.0%).
-    /// Instant value: memory.current / memory.max.
-    /// 0 when not in a container or no cgroup memory limit.
     pub cgroup_mem_pct_x10: u16,
     /// Total PostgreSQL log error count in this snapshot (ERROR+FATAL+PANIC).
-    /// 0 when no errors or log collector not configured.
     pub error_count: u16,
+    /// Number of checkpoint events in this snapshot interval.
+    pub checkpoint_count: u8,
+    /// Number of autovacuum/autoanalyze events in this snapshot interval.
+    pub autovacuum_count: u8,
 }
 
 /// A bucketed heatmap data point for frontend display.
@@ -64,6 +65,10 @@ pub struct HeatmapBucket {
     pub cgroup_mem: u16,
     /// Max PostgreSQL error count in this bucket.
     pub errors: u16,
+    /// Total checkpoint events in this bucket.
+    pub checkpoints: u8,
+    /// Total autovacuum/autoanalyze events in this bucket.
+    pub autovacuums: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -75,28 +80,51 @@ pub fn metrics_path(chunk_path: &Path) -> PathBuf {
     chunk_path.with_extension("metrics")
 }
 
-/// Writes metrics entries to a V3 `.metrics` sidecar file.
-/// Format: 4-byte magic `b"MET3"` + 10-byte little-endian entries.
+/// Writes metrics entries to a V4 `.metrics` sidecar file.
+/// Format: 4-byte magic `b"MET4"` + 12-byte little-endian entries.
 pub fn write_metrics(path: &Path, entries: &[MetricsEntry]) -> std::io::Result<()> {
-    let mut buf = Vec::with_capacity(4 + entries.len() * 10);
-    buf.extend_from_slice(METRICS_MAGIC_V3);
+    let mut buf = Vec::with_capacity(4 + entries.len() * 12);
+    buf.extend_from_slice(METRICS_MAGIC_V4);
     for e in entries {
         buf.extend_from_slice(&e.active_sessions.to_le_bytes());
         buf.extend_from_slice(&e.cpu_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.cgroup_cpu_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.cgroup_mem_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.error_count.to_le_bytes());
+        buf.push(e.checkpoint_count);
+        buf.push(e.autovacuum_count);
     }
     std::fs::write(path, buf)
 }
 
 /// Reads metrics entries from a `.metrics` sidecar file.
-/// Supports V3 (10 bytes/entry), V2 (8 bytes/entry), and
-/// V1 (no header, 4 bytes/entry) formats transparently.
+/// Supports V4 (12 bytes/entry), V3 (10 bytes/entry), V2 (8 bytes/entry),
+/// and V1 (no header, 4 bytes/entry) formats transparently.
 pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
     let data = std::fs::read(path)?;
 
-    if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V3 {
+    if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V4 {
+        // V4 format: 4-byte header + 12-byte entries
+        let payload = &data[4..];
+        if payload.len() % 12 != 0 {
+            return Err(std::io::Error::other("invalid v4 metrics file size"));
+        }
+        let count = payload.len() / 12;
+        let mut entries = Vec::with_capacity(count);
+        for i in 0..count {
+            let off = i * 12;
+            entries.push(MetricsEntry {
+                active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
+                cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
+                cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
+                cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
+                error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
+                checkpoint_count: payload[off + 10],
+                autovacuum_count: payload[off + 11],
+            });
+        }
+        Ok(entries)
+    } else if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V3 {
         // V3 format: 4-byte header + 10-byte entries
         let payload = &data[4..];
         if payload.len() % 10 != 0 {
@@ -112,6 +140,8 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
                 cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
                 cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
                 error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
+                checkpoint_count: 0,
+                autovacuum_count: 0,
             });
         }
         Ok(entries)
@@ -131,6 +161,8 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
                 cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
                 cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
                 error_count: 0,
+                checkpoint_count: 0,
+                autovacuum_count: 0,
             });
         }
         Ok(entries)
@@ -149,6 +181,8 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
                 cgroup_cpu_pct_x10: 0,
                 cgroup_mem_pct_x10: 0,
                 error_count: 0,
+                checkpoint_count: 0,
+                autovacuum_count: 0,
             });
         }
         Ok(entries)
@@ -163,6 +197,36 @@ pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
 /// without needing the StringInterner.
 fn idle_hash() -> u64 {
     xxh3_64(b"idle")
+}
+
+/// Count checkpoint events in a snapshot.
+pub fn count_checkpoint_events(snapshot: &Snapshot) -> u8 {
+    snapshot
+        .blocks
+        .iter()
+        .find_map(|b| {
+            if let DataBlock::PgLogEvents(info) = b {
+                Some(info.checkpoint_count.min(255) as u8)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+/// Count autovacuum/autoanalyze events in a snapshot.
+pub fn count_autovacuum_events(snapshot: &Snapshot) -> u8 {
+    snapshot
+        .blocks
+        .iter()
+        .find_map(|b| {
+            if let DataBlock::PgLogEvents(info) = b {
+                Some(info.autovacuum_count.min(255) as u8)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
 }
 
 /// Count total PostgreSQL log errors in a snapshot.
@@ -321,12 +385,18 @@ pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry>
         // PostgreSQL log error count
         let errors = count_error_entries(snap);
 
+        // Checkpoint / autovacuum events
+        let checkpoints = count_checkpoint_events(snap);
+        let autovacuums = count_autovacuum_events(snap);
+
         entries.push(MetricsEntry {
             active_sessions: active,
             cpu_pct_x10: cpu,
             cgroup_cpu_pct_x10: cgroup_cpu,
             cgroup_mem_pct_x10: cgroup_mem,
             error_count: errors,
+            checkpoint_count: checkpoints,
+            autovacuum_count: autovacuums,
         });
 
         prev_cpu = extract_system_cpu(snap);
@@ -363,6 +433,8 @@ pub fn bucket_metrics(
                 cgroup_cpu: 0,
                 cgroup_mem: 0,
                 errors: 0,
+                checkpoints: 0,
+                autovacuums: 0,
             }
         })
         .collect();
@@ -375,6 +447,12 @@ pub fn bucket_metrics(
         buckets[idx].cgroup_cpu = buckets[idx].cgroup_cpu.max(entry.cgroup_cpu_pct_x10);
         buckets[idx].cgroup_mem = buckets[idx].cgroup_mem.max(entry.cgroup_mem_pct_x10);
         buckets[idx].errors = buckets[idx].errors.max(entry.error_count);
+        buckets[idx].checkpoints = buckets[idx]
+            .checkpoints
+            .saturating_add(entry.checkpoint_count);
+        buckets[idx].autovacuums = buckets[idx]
+            .autovacuums
+            .saturating_add(entry.autovacuum_count);
     }
 
     buckets
@@ -393,6 +471,8 @@ mod tests {
                 cgroup_cpu_pct_x10: 300,
                 cgroup_mem_pct_x10: 750,
                 error_count: 3,
+                checkpoint_count: 1,
+                autovacuum_count: 2,
             },
             MetricsEntry {
                 active_sessions: 0,
@@ -400,6 +480,8 @@ mod tests {
                 cgroup_cpu_pct_x10: 0,
                 cgroup_mem_pct_x10: 0,
                 error_count: 0,
+                checkpoint_count: 0,
+                autovacuum_count: 0,
             },
             MetricsEntry {
                 active_sessions: 100,
@@ -407,9 +489,11 @@ mod tests {
                 cgroup_cpu_pct_x10: 500,
                 cgroup_mem_pct_x10: 950,
                 error_count: 42,
+                checkpoint_count: 3,
+                autovacuum_count: 7,
             },
         ];
-        let dir = std::env::temp_dir().join("rpglot_test_metrics_v3");
+        let dir = std::env::temp_dir().join("rpglot_test_metrics_v4");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.metrics");
 
@@ -421,11 +505,15 @@ mod tests {
         assert_eq!(loaded[0].cgroup_cpu_pct_x10, 300);
         assert_eq!(loaded[0].cgroup_mem_pct_x10, 750);
         assert_eq!(loaded[0].error_count, 3);
+        assert_eq!(loaded[0].checkpoint_count, 1);
+        assert_eq!(loaded[0].autovacuum_count, 2);
         assert_eq!(loaded[2].active_sessions, 100);
         assert_eq!(loaded[2].cpu_pct_x10, 999);
         assert_eq!(loaded[2].cgroup_cpu_pct_x10, 500);
         assert_eq!(loaded[2].cgroup_mem_pct_x10, 950);
         assert_eq!(loaded[2].error_count, 42);
+        assert_eq!(loaded[2].checkpoint_count, 3);
+        assert_eq!(loaded[2].autovacuum_count, 7);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -471,6 +559,8 @@ mod tests {
                     cgroup_cpu_pct_x10: 100,
                     cgroup_mem_pct_x10: 500,
                     error_count: 0,
+                    checkpoint_count: 1,
+                    autovacuum_count: 0,
                 },
             ),
             (
@@ -481,6 +571,8 @@ mod tests {
                     cgroup_cpu_pct_x10: 400,
                     cgroup_mem_pct_x10: 600,
                     error_count: 5,
+                    checkpoint_count: 0,
+                    autovacuum_count: 2,
                 },
             ),
             (
@@ -491,6 +583,8 @@ mod tests {
                     cgroup_cpu_pct_x10: 50,
                     cgroup_mem_pct_x10: 550,
                     error_count: 2,
+                    checkpoint_count: 1,
+                    autovacuum_count: 3,
                 },
             ),
         ];
@@ -502,12 +596,16 @@ mod tests {
         assert_eq!(buckets[0].cgroup_cpu, 100);
         assert_eq!(buckets[0].cgroup_mem, 500);
         assert_eq!(buckets[0].errors, 0);
-        // Second bucket [150, 200]: entries at 150 and 200
+        assert_eq!(buckets[0].checkpoints, 1);
+        assert_eq!(buckets[0].autovacuums, 0);
+        // Second bucket [150, 200]: entries at 150 and 200 — sum for events
         assert_eq!(buckets[1].active, 10);
         assert_eq!(buckets[1].cpu, 700);
         assert_eq!(buckets[1].cgroup_cpu, 400);
         assert_eq!(buckets[1].cgroup_mem, 600);
         assert_eq!(buckets[1].errors, 5);
+        assert_eq!(buckets[1].checkpoints, 1); // 0 + 1
+        assert_eq!(buckets[1].autovacuums, 5); // 2 + 3
     }
 
     #[test]

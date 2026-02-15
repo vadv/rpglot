@@ -624,3 +624,15 @@ pub struct PgLogEntry {
     /// e.g. `relation "users" does not exist`
     pub sample_hash: u64,
 }
+
+/// Operational event counts from PostgreSQL logs for a snapshot interval.
+///
+/// Tracks checkpoint and autovacuum/autoanalyze events detected from LOG-level
+/// messages in PostgreSQL log files.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgLogEventsInfo {
+    /// Number of checkpoint events (starting + complete) in this interval.
+    pub checkpoint_count: u16,
+    /// Number of autovacuum + autoanalyze events in this interval.
+    pub autovacuum_count: u16,
+}

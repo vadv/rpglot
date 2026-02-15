@@ -461,6 +461,8 @@ export interface HeatmapBucket {
   cgroup_cpu: number;
   cgroup_mem: number;
   errors: number;
+  checkpoints: number;
+  autovacuums: number;
 }
 
 // Tab key type

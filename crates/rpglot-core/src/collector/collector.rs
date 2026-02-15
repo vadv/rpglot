@@ -359,10 +359,18 @@ impl<F: FileSystem + Clone> Collector<F> {
             }
 
             let start = Instant::now();
-            let log_errors = pg_collector.collect_log_errors(self.process_collector.interner_mut());
+            let log_result = pg_collector.collect_log_data(self.process_collector.interner_mut());
             timing.pg_log = start.elapsed();
-            if !log_errors.is_empty() {
-                blocks.push(DataBlock::PgLogErrors(log_errors));
+            if !log_result.errors.is_empty() {
+                blocks.push(DataBlock::PgLogErrors(log_result.errors));
+            }
+            if log_result.checkpoint_count > 0 || log_result.autovacuum_count > 0 {
+                blocks.push(DataBlock::PgLogEvents(
+                    crate::storage::model::PgLogEventsInfo {
+                        checkpoint_count: log_result.checkpoint_count,
+                        autovacuum_count: log_result.autovacuum_count,
+                    },
+                ));
             }
 
             // Store last error for TUI display

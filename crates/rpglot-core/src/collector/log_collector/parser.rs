@@ -1,9 +1,21 @@
 //! PostgreSQL log line parser.
 //!
 //! Supports stderr format with configurable `log_line_prefix`.
-//! Parses only ERROR/FATAL/PANIC severity lines — everything else is skipped.
+//! Parses ERROR/FATAL/PANIC severity lines and selected LOG-level
+//! operational events (checkpoints, autovacuum).
 
 use crate::storage::model::PgLogSeverity;
+
+/// Kind of parsed log event.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LogEventKind {
+    /// Error/Fatal/Panic — existing behavior.
+    Error,
+    /// Checkpoint starting or complete (LOG level).
+    Checkpoint,
+    /// Automatic vacuum or analyze completed (LOG level).
+    Autovacuum,
+}
 
 /// Result of parsing a single log line.
 #[derive(Debug, Clone)]
@@ -12,6 +24,8 @@ pub struct ParsedLogLine {
     pub severity: PgLogSeverity,
     /// The error message (after severity prefix).
     pub message: String,
+    /// Kind of event detected.
+    pub event_kind: LogEventKind,
 }
 
 /// Compiled parser for stderr format with a specific `log_line_prefix`.
@@ -69,6 +83,31 @@ impl StderrParser {
                 return Some(ParsedLogLine {
                     severity,
                     message: message.to_string(),
+                    event_kind: LogEventKind::Error,
+                });
+            }
+        }
+
+        // Check for LOG-level operational events (checkpoint, autovacuum).
+        const LOG_PREFIX: &str = "LOG:  ";
+        if let Some(pos) = line.find(LOG_PREFIX) {
+            let message = &line[pos + LOG_PREFIX.len()..];
+            if message.starts_with("checkpoint starting:")
+                || message.starts_with("checkpoint complete:")
+            {
+                return Some(ParsedLogLine {
+                    severity: PgLogSeverity::Error,
+                    message: message.to_string(),
+                    event_kind: LogEventKind::Checkpoint,
+                });
+            }
+            if message.starts_with("automatic vacuum of table")
+                || message.starts_with("automatic analyze of table")
+            {
+                return Some(ParsedLogLine {
+                    severity: PgLogSeverity::Error,
+                    message: message.to_string(),
+                    event_kind: LogEventKind::Autovacuum,
                 });
             }
         }
@@ -101,6 +140,28 @@ impl CsvlogParser {
             "ERROR" => PgLogSeverity::Error,
             "FATAL" => PgLogSeverity::Fatal,
             "PANIC" => PgLogSeverity::Panic,
+            "LOG" => {
+                let message = fields[13].clone();
+                if message.starts_with("checkpoint starting:")
+                    || message.starts_with("checkpoint complete:")
+                {
+                    return Some(ParsedLogLine {
+                        severity: PgLogSeverity::Error,
+                        message,
+                        event_kind: LogEventKind::Checkpoint,
+                    });
+                }
+                if message.starts_with("automatic vacuum of table")
+                    || message.starts_with("automatic analyze of table")
+                {
+                    return Some(ParsedLogLine {
+                        severity: PgLogSeverity::Error,
+                        message,
+                        event_kind: LogEventKind::Autovacuum,
+                    });
+                }
+                return None;
+            }
             _ => return None,
         };
 
@@ -109,7 +170,11 @@ impl CsvlogParser {
             return None;
         }
 
-        Some(ParsedLogLine { severity, message })
+        Some(ParsedLogLine {
+            severity,
+            message,
+            event_kind: LogEventKind::Error,
+        })
     }
 }
 
@@ -192,9 +257,9 @@ mod tests {
     }
 
     #[test]
-    fn test_stderr_parser_log_ignored() {
+    fn test_stderr_parser_log_other_ignored() {
         let parser = StderrParser::new("%t [%p]: ");
-        let line = "2024-01-15 14:30:00 UTC [12345]: LOG:  checkpoint starting: time";
+        let line = "2024-01-15 14:30:00 UTC [12345]: LOG:  database system is ready";
         assert!(parser.parse_line(line).is_none());
     }
 
@@ -203,6 +268,48 @@ mod tests {
         let parser = StderrParser::new("%t [%p]: ");
         let line = "2024-01-15 14:30:00 UTC [12345]: WARNING:  some warning message";
         assert!(parser.parse_line(line).is_none());
+    }
+
+    #[test]
+    fn test_stderr_checkpoint_starting() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: LOG:  checkpoint starting: time";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Checkpoint);
+        assert!(parsed.message.starts_with("checkpoint starting:"));
+    }
+
+    #[test]
+    fn test_stderr_checkpoint_complete() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line =
+            "2024-01-15 14:30:00 UTC [12345]: LOG:  checkpoint complete: wrote 123 buffers (0.1%)";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Checkpoint);
+    }
+
+    #[test]
+    fn test_stderr_autovacuum_detected() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = r#"2024-01-15 14:30:00 UTC [12345]: LOG:  automatic vacuum of table "mydb.public.users": index scans: 1"#;
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Autovacuum);
+    }
+
+    #[test]
+    fn test_stderr_autoanalyze_detected() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = r#"2024-01-15 14:30:00 UTC [12345]: LOG:  automatic analyze of table "mydb.public.users""#;
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Autovacuum);
+    }
+
+    #[test]
+    fn test_stderr_error_event_kind() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: ERROR:  relation \"users\" does not exist";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Error);
     }
 
     #[test]
@@ -233,10 +340,26 @@ mod tests {
     }
 
     #[test]
-    fn test_csvlog_parser_log_ignored() {
+    fn test_csvlog_parser_log_other_ignored() {
+        let parser = CsvlogParser;
+        let line = r#"2024-01-15 14:30:00.123 UTC,"","",12345,"","6789",1,"","2024-01-15 14:00:00 UTC","",0,LOG,00000,"database system is ready",,,,,"",,"#;
+        assert!(parser.parse_line(line).is_none());
+    }
+
+    #[test]
+    fn test_csvlog_checkpoint_detected() {
         let parser = CsvlogParser;
         let line = r#"2024-01-15 14:30:00.123 UTC,"","",12345,"","6789",1,"","2024-01-15 14:00:00 UTC","",0,LOG,00000,"checkpoint starting: time",,,,,"",,"#;
-        assert!(parser.parse_line(line).is_none());
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Checkpoint);
+    }
+
+    #[test]
+    fn test_csvlog_autovacuum_detected() {
+        let parser = CsvlogParser;
+        let line = r#"2024-01-15 14:30:00.123 UTC,"","",12345,"","6789",1,"","2024-01-15 14:00:00 UTC","",0,LOG,00000,"automatic vacuum of table ""mydb.public.users""",,,,,"",,"#;
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Autovacuum);
     }
 
     #[test]

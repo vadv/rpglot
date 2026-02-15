@@ -18,8 +18,19 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::PgLogSeverity;
 
 use normalize::{MAX_LOG_MESSAGE_LEN, normalize_error};
-use parser::{CsvlogParser, ParsedLogLine, StderrParser};
+use parser::{CsvlogParser, LogEventKind, ParsedLogLine, StderrParser};
 use tailer::FileTailer;
+
+/// Result of a log collection cycle.
+#[derive(Default)]
+pub struct LogCollectResult {
+    /// Grouped error entries (ERROR/FATAL/PANIC).
+    pub errors: Vec<crate::storage::model::PgLogEntry>,
+    /// Number of checkpoint events detected in this interval.
+    pub checkpoint_count: u16,
+    /// Number of autovacuum/autoanalyze events detected in this interval.
+    pub autovacuum_count: u16,
+}
 
 /// Maximum number of unique error patterns kept per snapshot interval.
 const MAX_LOG_PATTERNS_PER_SNAPSHOT: usize = 32;
@@ -62,6 +73,10 @@ pub struct LogCollector {
     rotation_last_check: Option<Instant>,
     /// Accumulated errors between snapshot collections
     pending_errors: HashMap<(String, PgLogSeverity), PendingError>,
+    /// Accumulated checkpoint event count between snapshots.
+    pending_checkpoints: u16,
+    /// Accumulated autovacuum/autoanalyze event count between snapshots.
+    pending_autovacuums: u16,
     /// Last initialization error (for diagnostics)
     last_error: Option<String>,
 }
@@ -86,6 +101,8 @@ impl LogCollector {
             settings_last_check: None,
             rotation_last_check: None,
             pending_errors: HashMap::new(),
+            pending_checkpoints: 0,
+            pending_autovacuums: 0,
             last_error: None,
         }
     }
@@ -148,7 +165,7 @@ impl LogCollector {
         &mut self,
         client: &mut Client,
         interner: &mut StringInterner,
-    ) -> Vec<crate::storage::model::PgLogEntry> {
+    ) -> LogCollectResult {
         // Periodic rotation check
         if let Some(last) = self.rotation_last_check
             && last.elapsed().as_secs() >= LOG_ROTATION_CHECK_SECS
@@ -168,12 +185,12 @@ impl LogCollector {
         let lines = match &mut self.tailer {
             Some(tailer) => match tailer.read_new_lines() {
                 Ok(lines) => lines,
-                Err(_) => return Vec::new(),
+                Err(_) => return LogCollectResult::default(),
             },
-            None => return Vec::new(),
+            None => return LogCollectResult::default(),
         };
 
-        // Parse and accumulate errors
+        // Parse and accumulate
         for line in &lines {
             let parsed = self.parse_line(line);
             if let Some(parsed) = parsed {
@@ -181,8 +198,17 @@ impl LogCollector {
             }
         }
 
-        // Drain accumulated errors into PgLogEntry vec
-        self.drain_pending(interner)
+        // Drain accumulated data
+        let errors = self.drain_pending(interner);
+        let checkpoint_count = self.pending_checkpoints;
+        let autovacuum_count = self.pending_autovacuums;
+        self.pending_checkpoints = 0;
+        self.pending_autovacuums = 0;
+        LogCollectResult {
+            errors,
+            checkpoint_count,
+            autovacuum_count,
+        }
     }
 
     /// Parse a single line using the appropriate parser.
@@ -194,21 +220,31 @@ impl LogCollector {
         }
     }
 
-    /// Accumulate a parsed error into pending_errors.
+    /// Accumulate a parsed log line into the appropriate pending store.
     fn accumulate(&mut self, parsed: ParsedLogLine) {
-        let normalized = normalize_error(&parsed.message);
-        let key = (normalized, parsed.severity);
+        match parsed.event_kind {
+            LogEventKind::Error => {
+                let normalized = normalize_error(&parsed.message);
+                let key = (normalized, parsed.severity);
 
-        let entry = self.pending_errors.entry(key).or_insert(PendingError {
-            count: 0,
-            sample: String::new(),
-        });
-        entry.count += 1;
-        // Keep first sample only
-        if entry.sample.is_empty() {
-            let mut sample = parsed.message;
-            sample.truncate(MAX_LOG_MESSAGE_LEN);
-            entry.sample = sample;
+                let entry = self.pending_errors.entry(key).or_insert(PendingError {
+                    count: 0,
+                    sample: String::new(),
+                });
+                entry.count += 1;
+                // Keep first sample only
+                if entry.sample.is_empty() {
+                    let mut sample = parsed.message;
+                    sample.truncate(MAX_LOG_MESSAGE_LEN);
+                    entry.sample = sample;
+                }
+            }
+            LogEventKind::Checkpoint => {
+                self.pending_checkpoints = self.pending_checkpoints.saturating_add(1);
+            }
+            LogEventKind::Autovacuum => {
+                self.pending_autovacuums = self.pending_autovacuums.saturating_add(1);
+            }
         }
     }
 
@@ -319,6 +355,7 @@ fn query_current_logfile(client: &mut Client, format: Option<LogFormat>) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parser::LogEventKind;
 
     #[test]
     fn test_accumulate_and_drain() {
@@ -329,14 +366,17 @@ mod tests {
         collector.accumulate(ParsedLogLine {
             severity: PgLogSeverity::Error,
             message: "relation \"users\" does not exist".to_string(),
+            event_kind: LogEventKind::Error,
         });
         collector.accumulate(ParsedLogLine {
             severity: PgLogSeverity::Error,
             message: "relation \"orders\" does not exist".to_string(),
+            event_kind: LogEventKind::Error,
         });
         collector.accumulate(ParsedLogLine {
             severity: PgLogSeverity::Fatal,
             message: "database \"mydb\" does not exist".to_string(),
+            event_kind: LogEventKind::Error,
         });
 
         let entries = collector.drain_pending(&mut interner);
@@ -368,6 +408,7 @@ mod tests {
             collector.accumulate(ParsedLogLine {
                 severity: PgLogSeverity::Error,
                 message: format!("unique error number {}", i),
+                event_kind: LogEventKind::Error,
             });
         }
 
@@ -383,6 +424,7 @@ mod tests {
         collector.accumulate(ParsedLogLine {
             severity: PgLogSeverity::Error,
             message: "some error".to_string(),
+            event_kind: LogEventKind::Error,
         });
 
         let entries = collector.drain_pending(&mut interner);
