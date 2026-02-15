@@ -1430,6 +1430,25 @@ function TabContent({
       filtered = filtered.filter(isPgProcess);
     }
 
+    if (activeTab === "pge") {
+      if (activeView === "errors") {
+        filtered = filtered.filter((row) => {
+          const t = row.event_type as string;
+          return t === "error" || t === "fatal" || t === "panic";
+        });
+      } else if (activeView === "checkpoints") {
+        filtered = filtered.filter((row) => {
+          const t = row.event_type as string;
+          return t === "checkpoint_starting" || t === "checkpoint_complete";
+        });
+      } else if (activeView === "autovacuum") {
+        filtered = filtered.filter((row) => {
+          const t = row.event_type as string;
+          return t === "autovacuum" || t === "autoanalyze";
+        });
+      }
+    }
+
     if (activeTab === "pgt" && problemsOnly) {
       filtered = filtered.filter((row) => isPgtProblematic(row, activeView));
     }
