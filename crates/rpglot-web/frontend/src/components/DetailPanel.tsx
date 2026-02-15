@@ -7,7 +7,12 @@ import {
   Check,
   ExternalLink,
 } from "lucide-react";
-import type { TabKey, ColumnSchema, DrillDown } from "../api/types";
+import type {
+  TabKey,
+  ColumnSchema,
+  DrillDown,
+  ColumnOverride,
+} from "../api/types";
 import { formatValue } from "../utils/formatters";
 import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
 import { Tooltip } from "./Tooltip";
@@ -16,6 +21,7 @@ interface DetailPanelProps {
   tab: TabKey;
   row: Record<string, unknown>;
   columns: ColumnSchema[];
+  columnOverrides?: ColumnOverride[];
   drillDown?: DrillDown;
   onClose: () => void;
   onDrillDown: (drillDown: DrillDown, value: unknown) => void;
@@ -342,6 +348,7 @@ export function DetailPanel({
   tab,
   row,
   columns,
+  columnOverrides,
   drillDown,
   onClose,
   onDrillDown,
@@ -349,6 +356,7 @@ export function DetailPanel({
 }: DetailPanelProps) {
   const sections = TAB_SECTIONS[tab];
   const colMap = new Map(columns.map((c) => [c.key, c]));
+  const overrideMap = new Map((columnOverrides ?? []).map((o) => [o.key, o]));
 
   const drillDownValue = drillDown ? row[drillDown.via] : undefined;
   const hasDrillDown =
@@ -377,6 +385,7 @@ export function DetailPanel({
             section={section}
             row={row}
             colMap={colMap}
+            overrideMap={overrideMap}
             snapshotTimestamp={snapshotTimestamp}
           />
         ))}
@@ -402,11 +411,13 @@ function DetailSection({
   section,
   row,
   colMap,
+  overrideMap,
   snapshotTimestamp,
 }: {
   section: Section;
   row: Record<string, unknown>;
   colMap: Map<string, ColumnSchema>;
+  overrideMap: Map<string, ColumnOverride>;
   snapshotTimestamp?: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -453,13 +464,21 @@ function DetailSection({
         <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
           {fields.map((key) => {
             const col = colMap.get(key);
-            const label = col?.label ?? key;
+            const ovr = overrideMap.get(key);
+            const label = ovr?.label ?? col?.label ?? key;
+            const effectiveUnit = ovr?.unit ?? col?.unit;
+            const effectiveFormat = ovr?.format ?? col?.format;
             const val = row[key];
             const formatted =
               val == null
                 ? "-"
                 : col
-                  ? formatValue(val, col.unit, col.format, snapshotTimestamp)
+                  ? formatValue(
+                      val,
+                      effectiveUnit,
+                      effectiveFormat,
+                      snapshotTimestamp,
+                    )
                   : String(val);
 
             return (

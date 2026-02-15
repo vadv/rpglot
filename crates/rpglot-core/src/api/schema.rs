@@ -130,6 +130,21 @@ pub struct ViewSchema {
     /// Whether default sort is descending.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub default_sort_desc: bool,
+    /// Per-view overrides for column label/unit/format.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub column_overrides: Vec<ColumnOverride>,
+}
+
+/// Per-view override for a column's label, unit, or format.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ColumnOverride {
+    pub key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<Unit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<Format>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -188,6 +203,9 @@ pub enum Unit {
     BlksPerSec,
     #[serde(rename = "MB/s")]
     MbPerSec,
+    /// PostgreSQL buffer/page (8192 bytes each).
+    #[serde(rename = "buffers")]
+    Buffers,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
@@ -981,6 +999,7 @@ fn generate_prc_schema() -> TabSchema {
                 default: true,
                 default_sort: Some("cpu_pct".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "command".into(),
@@ -994,6 +1013,7 @@ fn generate_prc_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("cpu_pct".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "memory".into(),
@@ -1022,6 +1042,7 @@ fn generate_prc_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("mem_pct".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "disk".into(),
@@ -1042,6 +1063,7 @@ fn generate_prc_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("read_bytes_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "pg".into(),
@@ -1060,6 +1082,7 @@ fn generate_prc_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("cpu_pct".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
         ],
         drill_down: Some(DrillDown {
@@ -1314,6 +1337,7 @@ fn generate_pga_schema() -> TabSchema {
                 default: true,
                 default_sort: Some("query_duration_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "stats".into(),
@@ -1336,6 +1360,7 @@ fn generate_pga_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("query_duration_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
         ],
         drill_down: Some(DrillDown {
@@ -1593,6 +1618,7 @@ fn generate_pgs_schema() -> TabSchema {
                 default: true,
                 default_sort: Some("exec_time_ms_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "calls".into(),
@@ -1612,6 +1638,7 @@ fn generate_pgs_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("calls_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "io".into(),
@@ -1632,6 +1659,7 @@ fn generate_pgs_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("shared_blks_read_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "temp".into(),
@@ -1652,6 +1680,7 @@ fn generate_pgs_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("temp_mb_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
         ],
         drill_down: None,
@@ -1995,6 +2024,7 @@ fn generate_pgt_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("tot_tup_read_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "writes".into(),
@@ -2017,6 +2047,7 @@ fn generate_pgt_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("n_tup_ins_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "scans".into(),
@@ -2038,6 +2069,7 @@ fn generate_pgt_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("seq_pct".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "maintenance".into(),
@@ -2058,6 +2090,7 @@ fn generate_pgt_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("dead_pct".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "io".into(),
@@ -2078,6 +2111,7 @@ fn generate_pgt_schema() -> TabSchema {
                 default: true,
                 default_sort: Some("heap_blks_read_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
         ],
         drill_down: Some(DrillDown {
@@ -2227,6 +2261,7 @@ fn generate_pgi_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("idx_tup_read_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "unused".into(),
@@ -2238,6 +2273,7 @@ fn generate_pgi_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("idx_scan".into()),
                 default_sort_desc: false,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "io".into(),
@@ -2257,6 +2293,7 @@ fn generate_pgi_schema() -> TabSchema {
                 default: true,
                 default_sort: Some("idx_blks_read_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
         ],
         drill_down: None,
@@ -2471,6 +2508,7 @@ fn generate_pge_schema() -> TabSchema {
                 default: true,
                 default_sort: Some("count".into()),
                 default_sort_desc: true,
+                column_overrides: vec![],
             },
             ViewSchema {
                 key: "checkpoints".into(),
@@ -2497,6 +2535,50 @@ fn generate_pge_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("event_id".into()),
                 default_sort_desc: true,
+                column_overrides: vec![
+                    ColumnOverride {
+                        key: "extra_num1".into(),
+                        label: Some("Buf Written".into()),
+                        unit: Some(Unit::Buffers),
+                        format: Some(Format::Bytes),
+                    },
+                    ColumnOverride {
+                        key: "extra_num2".into(),
+                        label: Some("Distance".into()),
+                        unit: Some(Unit::Kb),
+                        format: Some(Format::Bytes),
+                    },
+                    ColumnOverride {
+                        key: "extra_num3".into(),
+                        label: Some("Estimate".into()),
+                        unit: Some(Unit::Kb),
+                        format: Some(Format::Bytes),
+                    },
+                    ColumnOverride {
+                        key: "buffer_hits".into(),
+                        label: Some("Sync Files".into()),
+                        unit: None,
+                        format: None,
+                    },
+                    ColumnOverride {
+                        key: "wal_records".into(),
+                        label: Some("WAL Added".into()),
+                        unit: None,
+                        format: None,
+                    },
+                    ColumnOverride {
+                        key: "wal_fpi".into(),
+                        label: Some("WAL Removed".into()),
+                        unit: None,
+                        format: None,
+                    },
+                    ColumnOverride {
+                        key: "wal_bytes".into(),
+                        label: Some("WAL Recycled".into()),
+                        unit: None,
+                        format: None,
+                    },
+                ],
             },
             ViewSchema {
                 key: "autovacuum".into(),
@@ -2524,6 +2606,38 @@ fn generate_pge_schema() -> TabSchema {
                 default: false,
                 default_sort: Some("elapsed_s".into()),
                 default_sort_desc: true,
+                column_overrides: vec![
+                    ColumnOverride {
+                        key: "extra_num1".into(),
+                        label: Some("Tuples Rm".into()),
+                        unit: None,
+                        format: Some(Format::Rate),
+                    },
+                    ColumnOverride {
+                        key: "extra_num2".into(),
+                        label: Some("Pages Rm".into()),
+                        unit: Some(Unit::Buffers),
+                        format: Some(Format::Bytes),
+                    },
+                    ColumnOverride {
+                        key: "buffer_hits".into(),
+                        label: Some("Buf Hits".into()),
+                        unit: Some(Unit::Buffers),
+                        format: Some(Format::Bytes),
+                    },
+                    ColumnOverride {
+                        key: "buffer_misses".into(),
+                        label: Some("Buf Misses".into()),
+                        unit: Some(Unit::Buffers),
+                        format: Some(Format::Bytes),
+                    },
+                    ColumnOverride {
+                        key: "buffer_dirtied".into(),
+                        label: Some("Buf Dirtied".into()),
+                        unit: Some(Unit::Buffers),
+                        format: Some(Format::Bytes),
+                    },
+                ],
             },
         ],
         drill_down: None,
@@ -2668,6 +2782,7 @@ fn generate_pgl_schema() -> TabSchema {
             default: true,
             default_sort: None,
             default_sort_desc: false,
+            column_overrides: vec![],
         }],
         drill_down: Some(DrillDown {
             target: "pga".into(),

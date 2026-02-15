@@ -1607,6 +1607,9 @@ function TabContent({
           tab={activeTab}
           row={selectedRow}
           columns={tabSchema.columns}
+          columnOverrides={
+            effectiveViews.find((v) => v.key === activeView)?.column_overrides
+          }
           drillDown={tabSchema.drill_down}
           onClose={handleCloseDetail}
           onDrillDown={handleDrillDown}

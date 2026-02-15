@@ -444,6 +444,14 @@ export interface ViewSchema {
   default?: boolean;
   default_sort?: string;
   default_sort_desc?: boolean;
+  column_overrides?: ColumnOverride[];
+}
+
+export interface ColumnOverride {
+  key: string;
+  label?: string;
+  unit?: Unit;
+  format?: Format;
 }
 
 export interface DrillDown {
@@ -464,7 +472,8 @@ export type Unit =
   | "/s"
   | "/min"
   | "blks/s"
-  | "MB/s";
+  | "MB/s"
+  | "buffers";
 export type Format = "bytes" | "duration" | "rate" | "percent" | "age";
 
 // ============================================================

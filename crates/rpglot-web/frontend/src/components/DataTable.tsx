@@ -12,7 +12,12 @@ import {
 import { Search, Inbox, ChevronUp, ChevronDown } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import { RichTooltip } from "./RichTooltip";
-import type { ColumnSchema, ViewSchema, TabKey } from "../api/types";
+import type {
+  ColumnSchema,
+  ColumnOverride,
+  ViewSchema,
+  TabKey,
+} from "../api/types";
 import { formatValue } from "../utils/formatters";
 import { getThresholdClass } from "../utils/thresholds";
 import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
@@ -94,6 +99,13 @@ export function DataTable({
     containerRef.current?.focus();
   }, []);
 
+  // Per-view column overrides (label, unit, format)
+  const overrideMap = useMemo(() => {
+    const m = new Map<string, ColumnOverride>();
+    for (const o of currentView?.column_overrides ?? []) m.set(o.key, o);
+    return m;
+  }, [currentView]);
+
   const columnDefs = useMemo(() => {
     const colMap = new Map(allColumns.map((c) => [c.key, c]));
     const defs: ColumnDef<Record<string, unknown>>[] = [];
@@ -101,12 +113,17 @@ export function DataTable({
       const schema = colMap.get(key);
       if (!schema) continue;
 
+      const ovr = overrideMap.get(key);
+      const effectiveLabel = ovr?.label ?? schema.label;
+      const effectiveUnit = ovr?.unit ?? schema.unit;
+      const effectiveFormat = ovr?.format ?? schema.format;
+
       const isPglPid = isLockTree && key === "pid";
 
       defs.push({
         id: key,
         accessorFn: (row) => row[key],
-        header: schema.label,
+        header: effectiveLabel,
         cell: isPglPid
           ? (info) => {
               const depth = (info.row.original["depth"] as number) ?? 1;
@@ -127,8 +144,8 @@ export function DataTable({
           : (info) => {
               const formatted = formatValue(
                 info.getValue(),
-                schema.unit,
-                schema.format,
+                effectiveUnit,
+                effectiveFormat,
                 snapshotTimestamp,
               );
               const colorClass = getThresholdClass(
@@ -148,7 +165,7 @@ export function DataTable({
       });
     }
     return defs;
-  }, [allColumns, visibleKeys, isLockTree, snapshotTimestamp]);
+  }, [allColumns, visibleKeys, isLockTree, snapshotTimestamp, overrideMap]);
 
   const table = useReactTable({
     data,

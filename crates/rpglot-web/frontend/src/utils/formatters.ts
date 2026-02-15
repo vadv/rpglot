@@ -66,7 +66,10 @@ export function formatValue(
   if (isNaN(num)) return String(value);
 
   if (format === "bytes") {
-    const base = unit === "kb" ? num * 1024 : num;
+    let base: number;
+    if (unit === "kb") base = num * 1024;
+    else if (unit === "buffers") base = num * 8192;
+    else base = num;
     return formatBytes(base);
   }
   if (format === "duration") {
