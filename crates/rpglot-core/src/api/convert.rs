@@ -1466,6 +1466,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 wal_bytes: 0,
                 message: resolve(interner, e.pattern_hash),
                 sample: resolve(interner, e.sample_hash),
+                statement: resolve(interner, e.statement_hash),
             });
         }
     }
@@ -1508,6 +1509,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 wal_bytes: ev.wal_bytes,
                 message: ev.message.clone(),
                 sample: String::new(),
+                statement: String::new(),
             });
         }
     }

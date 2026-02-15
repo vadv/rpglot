@@ -2441,12 +2441,21 @@ fn generate_pge_schema() -> TabSchema {
                 false,
                 true,
             ),
+            col(
+                "statement",
+                "Statement",
+                DataType::String,
+                None,
+                None,
+                false,
+                true,
+            ),
         ],
         views: vec![
             ViewSchema {
                 key: "errors".into(),
                 label: "Errors".into(),
-                columns: vec!["severity", "count", "message", "sample"]
+                columns: vec!["severity", "count", "message", "sample", "statement"]
                     .into_iter()
                     .map(String::from)
                     .collect(),

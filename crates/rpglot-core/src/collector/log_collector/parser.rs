@@ -15,6 +15,10 @@ pub enum LogEventKind {
     Checkpoint,
     /// Automatic vacuum or analyze completed (LOG level).
     Autovacuum,
+    /// STATEMENT: line following an error (contains the SQL that caused it).
+    Statement,
+    /// DETAIL: or CONTEXT: continuation line (skipped but recognized).
+    DetailContext,
 }
 
 /// Extracted structured data from checkpoint/autovacuum LOG messages.
@@ -102,6 +106,19 @@ const SEVERITIES: &[(&str, PgLogSeverity)] = &[
 /// LOG-level prefixes (English + Russian locale).
 const LOG_PREFIXES: &[&str] = &["LOG:  ", "СООБЩЕНИЕ:  "];
 
+/// STATEMENT-level prefixes (English + Russian locale).
+const STATEMENT_PREFIXES: &[&str] = &["STATEMENT:  ", "ОПЕРАТОР:  "];
+
+/// DETAIL/CONTEXT prefixes — recognized to keep last_error_key alive.
+const DETAIL_CONTEXT_PREFIXES: &[&str] = &[
+    "DETAIL:  ",
+    "CONTEXT:  ",
+    "HINT:  ",
+    "ПОДРОБНОСТИ:  ",
+    "КОНТЕКСТ:  ",
+    "ПОДСКАЗКА:  ",
+];
+
 /// Checkpoint starting message prefixes (English + Russian).
 const CHECKPOINT_STARTING: &[&str] = &["checkpoint starting:", "начата контрольная точка:"];
 
@@ -161,6 +178,31 @@ impl StderrParser {
             if let Some(pos) = line.find(prefix) {
                 let message = &line[pos + prefix.len()..];
                 return classify_log_message(message);
+            }
+        }
+
+        // Check for STATEMENT: line (SQL that caused the preceding error).
+        for prefix in STATEMENT_PREFIXES {
+            if let Some(pos) = line.find(prefix) {
+                let message = &line[pos + prefix.len()..];
+                return Some(ParsedLogLine {
+                    severity: PgLogSeverity::Error, // placeholder, not used for grouping
+                    message: message.trim().to_string(),
+                    event_kind: LogEventKind::Statement,
+                    event_data: None,
+                });
+            }
+        }
+
+        // Check for DETAIL/CONTEXT/HINT lines — recognized to keep error association alive.
+        for prefix in DETAIL_CONTEXT_PREFIXES {
+            if line.contains(prefix) {
+                return Some(ParsedLogLine {
+                    severity: PgLogSeverity::Error, // placeholder
+                    message: String::new(),
+                    event_kind: LogEventKind::DetailContext,
+                    event_data: None,
+                });
             }
         }
 

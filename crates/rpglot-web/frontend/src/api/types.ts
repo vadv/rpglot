@@ -339,6 +339,7 @@ export interface PgEventsRow {
   wal_bytes: number;
   message: string;
   sample: string;
+  statement: string;
 }
 
 export interface PgLocksRow {

@@ -596,6 +596,8 @@ pub struct PgEventsRow {
     pub message: String,
     /// Concrete error sample (errors only), empty for events.
     pub sample: String,
+    /// SQL statement that caused the error (from STATEMENT: line), empty if not available.
+    pub statement: String,
 }
 
 /// pg_locks blocking tree row (flat with depth).

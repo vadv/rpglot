@@ -623,6 +623,10 @@ pub struct PgLogEntry {
     /// One concrete sample of the original message (through StringInterner).
     /// e.g. `relation "users" does not exist`
     pub sample_hash: u64,
+    /// SQL statement that caused the error (from STATEMENT: log line, through StringInterner).
+    /// 0 if not available.
+    #[serde(default)]
+    pub statement_hash: u64,
 }
 
 /// Operational event counts from PostgreSQL logs for a snapshot interval.

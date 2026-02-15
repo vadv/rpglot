@@ -47,6 +47,8 @@ const SETTINGS_REFRESH_SECS: u64 = 600;
 struct PendingError {
     count: u32,
     sample: String,
+    /// SQL statement from STATEMENT: line (first seen).
+    statement: String,
 }
 
 /// Log format detected from `log_destination` setting.
@@ -85,6 +87,10 @@ pub struct LogCollector {
     /// Used to patch-in metrics from continuation lines (stderr multiline messages).
     /// Reset to None when a non-continuation line arrives.
     last_event_idx: Option<usize>,
+    /// Key of the last error in pending_errors.
+    /// Used to attach STATEMENT: lines to the preceding error.
+    /// Reset to None when a non-DETAIL/CONTEXT/STATEMENT line arrives.
+    last_error_key: Option<(String, PgLogSeverity)>,
     /// Last initialization error (for diagnostics)
     last_error: Option<String>,
 }
@@ -113,6 +119,7 @@ impl LogCollector {
             pending_autovacuums: 0,
             pending_events: Vec::new(),
             last_event_idx: None,
+            last_error_key: None,
             last_error: None,
         }
     }
@@ -216,18 +223,22 @@ impl LogCollector {
             self.last_event_idx = None;
 
             let parsed = self.parse_line(line);
-            if let Some(parsed) = parsed {
-                // Remember index for events that have multiline continuations
-                let will_have_continuations = matches!(
-                    parsed.event_kind,
-                    LogEventKind::Autovacuum | LogEventKind::Checkpoint
-                );
+            let Some(parsed) = parsed else {
+                // Unrecognized line (WARNING, NOTICE, other LOG, etc.) — reset error tracking
+                self.last_error_key = None;
+                continue;
+            };
 
-                self.accumulate(parsed);
+            // Remember index for events that have multiline continuations
+            let will_have_continuations = matches!(
+                parsed.event_kind,
+                LogEventKind::Autovacuum | LogEventKind::Checkpoint
+            );
 
-                if will_have_continuations {
-                    self.last_event_idx = Some(self.pending_events.len() - 1);
-                }
+            self.accumulate(parsed);
+
+            if will_have_continuations {
+                self.last_event_idx = Some(self.pending_events.len() - 1);
             }
         }
 
@@ -239,6 +250,7 @@ impl LogCollector {
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
         self.last_event_idx = None;
+        self.last_error_key = None;
         LogCollectResult {
             errors,
             checkpoint_count,
@@ -263,10 +275,14 @@ impl LogCollector {
                 let normalized = normalize_error(&parsed.message);
                 let key = (normalized, parsed.severity);
 
-                let entry = self.pending_errors.entry(key).or_insert(PendingError {
-                    count: 0,
-                    sample: String::new(),
-                });
+                let entry = self
+                    .pending_errors
+                    .entry(key.clone())
+                    .or_insert(PendingError {
+                        count: 0,
+                        sample: String::new(),
+                        statement: String::new(),
+                    });
                 entry.count += 1;
                 // Keep first sample only
                 if entry.sample.is_empty() {
@@ -274,8 +290,25 @@ impl LogCollector {
                     sample.truncate(MAX_LOG_MESSAGE_LEN);
                     entry.sample = sample;
                 }
+                self.last_error_key = Some(key);
+            }
+            LogEventKind::Statement => {
+                // Attach SQL statement to the preceding error
+                if let Some(ref key) = self.last_error_key
+                    && let Some(entry) = self.pending_errors.get_mut(key)
+                    && entry.statement.is_empty()
+                {
+                    let mut stmt = parsed.message;
+                    stmt.truncate(MAX_LOG_MESSAGE_LEN);
+                    entry.statement = stmt;
+                }
+                self.last_error_key = None;
+            }
+            LogEventKind::DetailContext => {
+                // Keep last_error_key alive — STATEMENT may follow after DETAIL/CONTEXT
             }
             LogEventKind::Checkpoint => {
+                self.last_error_key = None;
                 self.pending_checkpoints = self.pending_checkpoints.saturating_add(1);
                 if let Some(event_data) = parsed.event_data {
                     self.pending_events
@@ -283,6 +316,7 @@ impl LogCollector {
                 }
             }
             LogEventKind::Autovacuum => {
+                self.last_error_key = None;
                 self.pending_autovacuums = self.pending_autovacuums.saturating_add(1);
                 if let Some(event_data) = parsed.event_data {
                     self.pending_events
@@ -313,11 +347,17 @@ impl LogCollector {
                 let mut pattern_str = pattern;
                 pattern_str.truncate(MAX_LOG_MESSAGE_LEN);
 
+                let statement_hash = if pending.statement.is_empty() {
+                    0
+                } else {
+                    interner.intern(&pending.statement)
+                };
                 crate::storage::model::PgLogEntry {
                     pattern_hash: interner.intern(&pattern_str),
                     severity,
                     count: pending.count,
                     sample_hash: interner.intern(&pending.sample),
+                    statement_hash,
                 }
             })
             .collect()
