@@ -42,6 +42,7 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::Snapshot;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
+use tracing::warn;
 
 const MAGIC: [u8; 4] = *b"RPG3";
 const VERSION: u16 = 3;
@@ -162,7 +163,17 @@ impl ChunkReader {
             zstd::bulk::Decompressor::with_prepared_dictionary(&self.decoder_dict)?;
         let decompressed =
             decompressor.decompress(&self.data[start..end], uncompressed_len as usize)?;
-        let snapshot: Snapshot = bincode::deserialize(&decompressed).map_err(io::Error::other)?;
+        let snapshot: Snapshot = bincode::deserialize(&decompressed).map_err(|e| {
+            warn!(
+                idx,
+                compressed_len = compressed_len,
+                uncompressed_len,
+                decompressed_len = decompressed.len(),
+                error = %e,
+                "chunk: snapshot bincode deserialization failed"
+            );
+            io::Error::other(e)
+        })?;
 
         Ok(snapshot)
     }
@@ -177,8 +188,14 @@ impl ChunkReader {
         }
 
         let decompressed = zstd::decode_all(&self.data[start..end])?;
-        let interner: StringInterner =
-            bincode::deserialize(&decompressed).map_err(io::Error::other)?;
+        let interner: StringInterner = bincode::deserialize(&decompressed).map_err(|e| {
+            warn!(
+                decompressed_len = decompressed.len(),
+                error = %e,
+                "chunk: interner bincode deserialization failed"
+            );
+            io::Error::other(e)
+        })?;
 
         Ok(interner)
     }

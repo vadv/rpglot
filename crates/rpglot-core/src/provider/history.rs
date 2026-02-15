@@ -428,7 +428,10 @@ impl HistoryProvider {
                     .and_then(|w| w.load_snapshot_with_interner(wal_idx))
                 {
                     Some((s, i)) => (Some(s), Some(i)),
-                    None => (None, None),
+                    None => {
+                        warn!(position, wal_idx, "failed to load snapshot from WAL");
+                        (None, None)
+                    }
                 }
             }
             Some(SnapshotLocation::Chunk {
@@ -449,7 +452,10 @@ impl HistoryProvider {
                     }
                 }
             }
-            None => (None, None),
+            None => {
+                warn!(position, "load_into_buffer: position out of range");
+                (None, None)
+            }
         };
 
         self.current_buffer = snapshot;
@@ -460,7 +466,14 @@ impl HistoryProvider {
     fn snapshot_cloned(&mut self, position: usize) -> Option<Snapshot> {
         match self.resolve_position(position) {
             Some(SnapshotLocation::Wal(wal_idx)) => {
-                self.wal.as_ref().and_then(|w| w.load_snapshot(wal_idx))
+                let result = self.wal.as_ref().and_then(|w| w.load_snapshot(wal_idx));
+                if result.is_none() {
+                    warn!(
+                        position,
+                        wal_idx, "snapshot_cloned: failed to load from WAL"
+                    );
+                }
+                result
             }
             Some(SnapshotLocation::Chunk {
                 chunk_idx,
@@ -814,7 +827,15 @@ impl HistoryProvider {
         for i in 0..count {
             match reader.read_snapshot(i) {
                 Ok(snap) => snapshots.push(snap),
-                Err(_) => return None,
+                Err(e) => {
+                    warn!(
+                        snapshot_idx = i,
+                        total = count,
+                        error = %e,
+                        "heatmap fallback: failed to read snapshot from chunk"
+                    );
+                    return None;
+                }
             }
         }
         Some(heatmap::build_heatmap_from_snapshots(&snapshots))

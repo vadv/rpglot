@@ -556,6 +556,8 @@ fn advance_and_convert(inner: &mut WebAppInner) {
         None => {
             if let Some(e) = inner.provider.last_error() {
                 warn!(error = %e, "failed to collect snapshot");
+            } else {
+                warn!("advance() returned None with no error (snapshot buffer empty?)");
             }
             return;
         }
@@ -677,7 +679,13 @@ fn reconvert_current(inner: &mut WebAppInner) {
         (snap, prev, pos, prev_ts, next_ts)
     };
 
-    let Some(snapshot) = snapshot else { return };
+    let Some(snapshot) = snapshot else {
+        warn!(
+            position,
+            "reconvert_current: failed to load snapshot at position"
+        );
+        return;
+    };
 
     // Reset rate tracking state
     inner.pgs_rates.clear();

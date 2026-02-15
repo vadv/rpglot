@@ -109,11 +109,33 @@ impl StorageManager {
         let mut cursor = std::io::Cursor::new(&data);
         let mut valid_end_position = 0u64;
         let mut recovered_count = 0usize;
+        let mut last_error: Option<String> = None;
 
         // Count valid WAL entries and find valid end position
-        while let Ok(_entry) = bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
-            valid_end_position = cursor.position();
-            recovered_count += 1;
+        loop {
+            let pos_before = cursor.position();
+            match bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
+                Ok(_entry) => {
+                    valid_end_position = cursor.position();
+                    recovered_count += 1;
+                }
+                Err(e) => {
+                    if pos_before < data.len() as u64 {
+                        last_error = Some(format!("{}", e));
+                    }
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref err) = last_error {
+            warn!(
+                recovered_count,
+                position = valid_end_position,
+                file_size = data.len(),
+                error = %err,
+                "WAL deserialization stopped at entry boundary"
+            );
         }
 
         self.wal_entries_count = recovered_count;
@@ -404,9 +426,26 @@ impl StorageManager {
             && !data.is_empty()
         {
             let mut cursor = std::io::Cursor::new(&data);
-            while let Ok(entry) = bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
-                merged_interner.merge(&entry.interner);
-                snapshots.push(entry.snapshot);
+            loop {
+                let pos_before = cursor.position();
+                match bincode::deserialize_from::<_, WalEntry>(&mut cursor) {
+                    Ok(entry) => {
+                        merged_interner.merge(&entry.interner);
+                        snapshots.push(entry.snapshot);
+                    }
+                    Err(e) => {
+                        if pos_before < data.len() as u64 {
+                            warn!(
+                                loaded = snapshots.len(),
+                                position = pos_before,
+                                file_size = data.len(),
+                                error = %e,
+                                "WAL load: deserialization failed, remaining data skipped"
+                            );
+                        }
+                        break;
+                    }
+                }
             }
         }
 
@@ -443,7 +482,16 @@ impl StorageManager {
                     entries.push((start, end - start, ts));
                     // entry (snapshot + interner) dropped here — RAM freed
                 }
-                Err(_) => break,
+                Err(e) => {
+                    warn!(
+                        loaded = entries.len(),
+                        position = start,
+                        file_size = file_len,
+                        error = %e,
+                        "WAL scan: deserialization failed, remaining data skipped"
+                    );
+                    break;
+                }
             }
         }
 
