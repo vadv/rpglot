@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
-use crate::storage::chunk_v2::ChunkReader;
+use crate::storage::chunk::ChunkReader;
 use crate::storage::model::Snapshot;
-use crate::storage::{ChunkMetadata, StorageManager, StringInterner};
+use crate::storage::{StorageManager, StringInterner};
 
 use super::{ProviderError, SnapshotProvider};
 
@@ -251,39 +251,13 @@ impl HistoryProvider {
         let mut all_timestamps: Vec<i64> = Vec::new();
         let mut global_offset: usize = 0;
 
-        // Scan each chunk file: prefer .meta sidecar, fallback to ChunkReader
+        // Scan each chunk file: read header + index (no decompression needed)
         for path in chunk_paths {
-            let meta_path = ChunkMetadata::meta_path(&path);
-            let (snapshot_count, chunk_timestamps) =
-                if let Ok(meta) = ChunkMetadata::load(&meta_path) {
-                    // Fast path: read compact .meta file (tens of bytes)
-                    (meta.snapshot_count, meta.timestamps)
-                } else {
-                    // Fallback: open ChunkReader and extract timestamps
-                    let reader = ChunkReader::open(&path).map_err(|e| {
-                        ProviderError::Io(format!("Failed to open chunk {}: {}", path.display(), e))
-                    })?;
-                    let count = reader.snapshot_count();
-                    let mut ts = Vec::with_capacity(count);
-                    for i in 0..count {
-                        let snap = reader.read_snapshot(i).map_err(|e| {
-                            ProviderError::Io(format!(
-                                "Failed to read snapshot {} from {}: {}",
-                                i,
-                                path.display(),
-                                e
-                            ))
-                        })?;
-                        ts.push(snap.timestamp);
-                    }
-                    // Write .meta for future starts
-                    let meta = ChunkMetadata {
-                        snapshot_count: count,
-                        timestamps: ts.clone(),
-                    };
-                    let _ = meta.save(&meta_path);
-                    (count, ts)
-                };
+            let reader = ChunkReader::open(&path).map_err(|e| {
+                ProviderError::Io(format!("Failed to open chunk {}: {}", path.display(), e))
+            })?;
+            let snapshot_count = reader.snapshot_count();
+            let chunk_timestamps = reader.timestamps();
 
             if snapshot_count == 0 {
                 continue;
@@ -586,43 +560,16 @@ impl HistoryProvider {
                 continue;
             }
 
-            // New chunk file discovered — prefer .meta sidecar
-            let meta_path = ChunkMetadata::meta_path(path);
-            let (snapshot_count, chunk_timestamps) = if let Ok(meta) =
-                ChunkMetadata::load(&meta_path)
-            {
-                (meta.snapshot_count, meta.timestamps)
-            } else {
-                let reader = match ChunkReader::open(path) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        warn!(path = %path.display(), error = %e, "failed to open new chunk");
-                        continue;
-                    }
-                };
-                let count = reader.snapshot_count();
-                let mut ts = Vec::with_capacity(count);
-                let mut failed = false;
-                for i in 0..count {
-                    match reader.read_snapshot(i) {
-                        Ok(snap) => ts.push(snap.timestamp),
-                        Err(e) => {
-                            warn!(path = %path.display(), index = i, error = %e, "failed to read snapshot from new chunk");
-                            failed = true;
-                            break;
-                        }
-                    }
-                }
-                if failed {
+            // New chunk file discovered — read header + index (no decompression)
+            let reader = match ChunkReader::open(path) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(path = %path.display(), error = %e, "failed to open new chunk");
                     continue;
                 }
-                let meta = ChunkMetadata {
-                    snapshot_count: count,
-                    timestamps: ts.clone(),
-                };
-                let _ = meta.save(&meta_path);
-                (count, ts)
             };
+            let snapshot_count = reader.snapshot_count();
+            let chunk_timestamps = reader.timestamps();
 
             if snapshot_count == 0 {
                 continue;

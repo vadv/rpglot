@@ -5,24 +5,12 @@
 //! - [`process`]: Per-process metrics from `/proc/[pid]/`
 //! - [`postgres`]: PostgreSQL database metrics from system views
 //! - [`system`]: System-wide metrics from `/proc/` filesystem
-//! - [`snapshot`]: Storage structures (Snapshot, Delta, DataBlock)
+//! - [`snapshot`]: Storage structures (Snapshot, DataBlock)
 //!
 //! # Architecture
 //!
-//! The storage system uses a hierarchical approach:
-//!
-//! ```text
-//! Chunk (compressed file on disk)
-//!   └── Delta[]
-//!         ├── Full(Snapshot)     <- first in chunk
-//!         └── Diff { blocks[] }  <- subsequent entries
-//!               └── DataBlockDiff
-//!                     ├── updates: Vec<T>
-//!                     └── removals: Vec<ID>
-//! ```
-//!
-//! This delta-encoding approach significantly reduces storage size
-//! by only storing changes between snapshots.
+//! Each snapshot is stored as an independent zstd frame within a chunk file,
+//! enabling O(1) random access. String interning eliminates duplicate string storage.
 
 mod cgroup;
 mod postgres;
@@ -38,7 +26,7 @@ pub use postgres::{
 };
 #[allow(unused_imports)]
 pub use process::{ProcessCpuInfo, ProcessDskInfo, ProcessInfo, ProcessMemInfo};
-pub use snapshot::{DataBlock, DataBlockDiff, Delta, Snapshot};
+pub use snapshot::{DataBlock, Snapshot};
 pub use system::{
     SystemCpuInfo, SystemDiskInfo, SystemFileInfo, SystemInterruptInfo, SystemLoadInfo,
     SystemMemInfo, SystemNetInfo, SystemNetSnmpInfo, SystemPsiInfo, SystemSoftirqInfo,

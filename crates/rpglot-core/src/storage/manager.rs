@@ -87,7 +87,6 @@ impl StorageManager {
         };
 
         manager.recover_from_wal();
-        manager.ensure_metadata_files();
         manager
     }
 
@@ -135,42 +134,6 @@ impl StorageManager {
                 .and_then(|f| f.set_len(valid_end_position))
             {
                 warn!("Failed to truncate WAL: {}", e);
-            }
-        }
-    }
-
-    /// Scans existing .zst files and creates missing .meta sidecar files.
-    /// Handles both v2 (per-snapshot frames) and legacy (monolithic zstd) formats.
-    fn ensure_metadata_files(&self) {
-        let Ok(entries) = std::fs::read_dir(&self.base_path) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "zst") {
-                let meta_path = crate::storage::ChunkMetadata::meta_path(&path);
-                if meta_path.exists() {
-                    continue;
-                }
-                // Try v2 format first (header has snapshot count and per-frame offsets)
-                if let Ok(reader) = crate::storage::chunk_v2::ChunkReader::open(&path) {
-                    let count = reader.snapshot_count();
-                    let mut timestamps = Vec::with_capacity(count);
-                    for i in 0..count {
-                        if let Ok(snap) = reader.read_snapshot(i) {
-                            timestamps.push(snap.timestamp);
-                        }
-                    }
-                    let meta = crate::storage::ChunkMetadata {
-                        snapshot_count: count,
-                        timestamps,
-                    };
-                    if let Err(e) = meta.save(&meta_path) {
-                        warn!("failed to create metadata for {}: {}", path.display(), e);
-                    }
-                }
-                // Legacy format files without .meta are silently skipped
-                // (they can't be read by the new history provider anyway)
             }
         }
     }
@@ -401,22 +364,7 @@ impl StorageManager {
         };
 
         // Write chunk in new format (atomic via .tmp rename)
-        crate::storage::chunk_v2::write_chunk(&final_path, &snapshots, &filtered_interner)?;
-
-        // Write .meta sidecar file for fast startup indexing
-        let timestamps: Vec<i64> = snapshots.iter().map(|s| s.timestamp).collect();
-        let meta = crate::storage::ChunkMetadata {
-            snapshot_count: snapshots.len(),
-            timestamps,
-        };
-        let meta_path = crate::storage::ChunkMetadata::meta_path(&final_path);
-        if let Err(e) = meta.save(&meta_path) {
-            warn!(
-                "failed to write chunk metadata {}: {}",
-                meta_path.display(),
-                e
-            );
-        }
+        crate::storage::chunk::write_chunk(&final_path, &snapshots, &filtered_interner)?;
 
         // Truncate WAL
         self.wal_file.set_len(0)?;
@@ -543,7 +491,7 @@ impl StorageManager {
         let mut merged_interner = StringInterner::new();
 
         for path in &chunk_paths {
-            let reader = crate::storage::chunk_v2::ChunkReader::open(path)?;
+            let reader = crate::storage::chunk::ChunkReader::open(path)?;
             let interner = reader.read_interner()?;
             merged_interner.merge(&interner);
             for i in 0..reader.snapshot_count() {
@@ -609,8 +557,6 @@ impl StorageManager {
                 && file_date < retention_limit
             {
                 std::fs::remove_file(&file.path)?;
-                // Also remove .meta sidecar if it exists
-                let _ = std::fs::remove_file(crate::storage::ChunkMetadata::meta_path(&file.path));
                 result.files_removed_by_age += 1;
                 result.bytes_freed += file.size;
                 continue;
@@ -625,8 +571,6 @@ impl StorageManager {
         while total_size > config.max_total_size && !remaining_files.is_empty() {
             let file = remaining_files.remove(0);
             std::fs::remove_file(&file.path)?;
-            // Also remove .meta sidecar if it exists
-            let _ = std::fs::remove_file(crate::storage::ChunkMetadata::meta_path(&file.path));
             result.files_removed_by_size += 1;
             result.bytes_freed += file.size;
             total_size -= file.size;
@@ -689,7 +633,7 @@ pub struct RotationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::chunk_v2::ChunkReader;
+    use crate::storage::chunk::ChunkReader;
     use crate::storage::model::ProcessInfo;
     use tempfile::tempdir;
 

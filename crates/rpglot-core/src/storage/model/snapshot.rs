@@ -1,8 +1,8 @@
-//! Snapshot and delta structures for efficient storage.
+//! Snapshot structures for storage.
 //!
 //! These structures define how metrics data is organized for storage.
-//! The storage system uses delta-encoding: only the first snapshot in a chunk
-//! is stored fully, subsequent snapshots store only changes (deltas).
+//! Each snapshot is stored as an independent zstd frame within a chunk file,
+//! enabling O(1) random access to any snapshot.
 
 use serde::{Deserialize, Serialize};
 
@@ -112,132 +112,6 @@ pub enum DataBlock {
     Cgroup(CgroupInfo),
 }
 
-/// Delta representation of a DataBlock for efficient storage.
-///
-/// Instead of storing full data on every snapshot, we store only
-/// the changes (updates and removals) compared to the previous snapshot.
-/// This significantly reduces storage size when most data remains unchanged.
-///
-/// For collection types (Processes, Networks, etc.), we track:
-/// - `updates`: new or modified entries
-/// - `removals`: IDs/hashes of removed entries
-///
-/// For singleton types (SystemLoad, SystemMem, etc.), we store the full value
-/// since there's only one instance and changes are typically expected.
-#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
-pub enum DataBlockDiff {
-    /// Process changes.
-    /// `removals` contains PIDs of terminated processes.
-    Processes {
-        updates: Vec<ProcessInfo>,
-        removals: Vec<u32>,
-    },
-
-    /// PostgreSQL activity changes.
-    /// `removals` contains PIDs of disconnected backends.
-    PgStatActivity {
-        updates: Vec<PgStatActivityInfo>,
-        removals: Vec<i32>,
-    },
-
-    /// PostgreSQL statements changes.
-    /// `removals` contains queryids of evicted statements.
-    PgStatStatements {
-        updates: Vec<PgStatStatementsInfo>,
-        removals: Vec<i64>,
-    },
-
-    /// PostgreSQL database stats changes.
-    /// `removals` contains datids of dropped databases.
-    PgStatDatabase {
-        updates: Vec<PgStatDatabaseInfo>,
-        removals: Vec<u32>,
-    },
-
-    /// PostgreSQL per-table stats changes.
-    /// `removals` contains relids of dropped/removed tables.
-    PgStatUserTables {
-        updates: Vec<PgStatUserTablesInfo>,
-        removals: Vec<u32>,
-    },
-
-    /// PostgreSQL per-index stats changes.
-    /// `removals` contains indexrelids of dropped/removed indexes.
-    PgStatUserIndexes {
-        updates: Vec<PgStatUserIndexesInfo>,
-        removals: Vec<u32>,
-    },
-
-    /// PostgreSQL lock tree changes.
-    /// `removals` contains PIDs of sessions no longer in blocking chains.
-    PgLockTree {
-        updates: Vec<PgLockTreeNode>,
-        removals: Vec<i32>,
-    },
-
-    /// CPU statistics changes (per-core).
-    /// `removals` contains cpu_ids of removed CPUs (rare, hot-plug).
-    SystemCpu {
-        updates: Vec<SystemCpuInfo>,
-        removals: Vec<i16>,
-    },
-
-    /// Full load average (always changes).
-    SystemLoad(SystemLoadInfo),
-
-    /// Full memory stats (always changes).
-    SystemMem(SystemMemInfo),
-
-    /// Network interface changes.
-    /// `removals` contains name_hashes of removed interfaces.
-    SystemNet {
-        updates: Vec<SystemNetInfo>,
-        removals: Vec<u64>,
-    },
-
-    /// Disk device changes.
-    /// `removals` contains device_hashes of removed devices.
-    SystemDisk {
-        updates: Vec<SystemDiskInfo>,
-        removals: Vec<u64>,
-    },
-
-    /// Full PSI data (always reported for all resources).
-    SystemPsi(Vec<SystemPsiInfo>),
-
-    /// Full vmstat counters.
-    SystemVmstat(SystemVmstatInfo),
-
-    /// Full file descriptor stats.
-    SystemFile(SystemFileInfo),
-
-    /// Interrupt counter changes.
-    /// `removals` contains irq_hashes of removed IRQs.
-    SystemInterrupts {
-        updates: Vec<SystemInterruptInfo>,
-        removals: Vec<u64>,
-    },
-
-    /// Softirq counter changes.
-    /// `removals` contains name_hashes of removed softirqs.
-    SystemSoftirqs {
-        updates: Vec<SystemSoftirqInfo>,
-        removals: Vec<u64>,
-    },
-
-    /// Full system stats.
-    SystemStat(SystemStatInfo),
-
-    /// Full network SNMP stats.
-    SystemNetSnmp(SystemNetSnmpInfo),
-
-    /// Full cgroup metrics (container only).
-    Cgroup(CgroupInfo),
-
-    /// Full bgwriter stats (singleton, always stored fully).
-    PgStatBgwriter(PgStatBgwriterInfo),
-}
-
 /// A point-in-time capture of all collected metrics.
 ///
 /// Snapshot represents a complete picture of the system state at a given moment.
@@ -245,7 +119,7 @@ pub enum DataBlockDiff {
 /// of metrics (processes, system stats, database stats, etc.).
 ///
 /// Snapshots are taken periodically (e.g., every 10 seconds) and stored
-/// using delta-encoding for efficiency.
+/// as independent zstd frames within chunk files for efficient random access.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Snapshot {
     /// Unix timestamp (seconds since epoch) when this snapshot was taken.
@@ -256,40 +130,4 @@ pub struct Snapshot {
     /// Each block represents a different category of metrics.
     /// Not all block types need to be present in every snapshot.
     pub blocks: Vec<DataBlock>,
-}
-
-/// Represents either a full snapshot or incremental changes.
-///
-/// Delta is the fundamental unit of storage. Within a chunk:
-/// - The first entry is always `Delta::Full` (complete baseline)
-/// - Subsequent entries are `Delta::Diff` (only changes)
-///
-/// This approach dramatically reduces storage size because:
-/// - Most processes don't change between snapshots
-/// - System counters often have small deltas
-/// - String interning eliminates duplicate string storage
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Delta {
-    /// Complete snapshot data (used as baseline).
-    /// Stored at the beginning of each chunk for random access.
-    Full(Snapshot),
-
-    /// Incremental changes from previous snapshot.
-    /// Contains only modified/removed data blocks.
-    Diff {
-        /// Timestamp of this snapshot.
-        timestamp: i64,
-        /// Changed data blocks since previous snapshot.
-        blocks: Vec<DataBlockDiff>,
-    },
-}
-
-impl Delta {
-    /// Returns the timestamp of this delta.
-    pub fn timestamp(&self) -> i64 {
-        match self {
-            Delta::Full(s) => s.timestamp,
-            Delta::Diff { timestamp, .. } => *timestamp,
-        }
-    }
 }
