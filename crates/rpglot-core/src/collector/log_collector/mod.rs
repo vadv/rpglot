@@ -353,6 +353,13 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             elapsed_s: 0.0,
             extra_num1: 0,
             extra_num2: 0,
+            buffer_hits: 0,
+            buffer_misses: 0,
+            buffer_dirtied: 0,
+            avg_read_rate_mbs: 0.0,
+            avg_write_rate_mbs: 0.0,
+            cpu_user_s: 0.0,
+            cpu_system_s: 0.0,
         },
         EventData::CheckpointComplete {
             buffers_written,
@@ -366,6 +373,13 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             elapsed_s: total_time_ms / 1000.0,
             extra_num1: buffers_written,
             extra_num2: distance_kb,
+            buffer_hits: 0,
+            buffer_misses: 0,
+            buffer_dirtied: 0,
+            avg_read_rate_mbs: 0.0,
+            avg_write_rate_mbs: 0.0,
+            cpu_user_s: 0.0,
+            cpu_system_s: 0.0,
         },
         EventData::Autovacuum {
             table_name,
@@ -373,6 +387,13 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             tuples_removed,
             pages_removed,
             elapsed_s,
+            buffer_hits,
+            buffer_misses,
+            buffer_dirtied,
+            avg_read_rate_mbs,
+            avg_write_rate_mbs,
+            cpu_user_s,
+            cpu_system_s,
         } => PgLogEventEntry {
             event_type: if is_analyze {
                 PgLogEventType::Autoanalyze
@@ -384,6 +405,13 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             elapsed_s,
             extra_num1: tuples_removed,
             extra_num2: pages_removed,
+            buffer_hits,
+            buffer_misses,
+            buffer_dirtied,
+            avg_read_rate_mbs,
+            avg_write_rate_mbs,
+            cpu_user_s,
+            cpu_system_s,
         },
     }
 }

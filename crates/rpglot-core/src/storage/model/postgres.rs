@@ -665,4 +665,25 @@ pub struct PgLogEventEntry {
     pub extra_num1: i64,
     /// Extra numeric field 2: checkpoint distance_kb / autovacuum pages_removed.
     pub extra_num2: i64,
+    /// Buffer cache hits (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub buffer_hits: i64,
+    /// Buffer cache misses (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub buffer_misses: i64,
+    /// Buffers dirtied (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub buffer_dirtied: i64,
+    /// Average read rate in MB/s (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub avg_read_rate_mbs: f64,
+    /// Average write rate in MB/s (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub avg_write_rate_mbs: f64,
+    /// CPU user time in seconds (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub cpu_user_s: f64,
+    /// CPU system time in seconds (autovacuum/autoanalyze).
+    #[serde(default)]
+    pub cpu_system_s: f64,
 }

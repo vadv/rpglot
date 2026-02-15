@@ -572,6 +572,20 @@ pub struct PgEventsRow {
     pub extra_num1: i64,
     /// Extra numeric 2: distance_kb (checkpoint) / pages_removed (vacuum).
     pub extra_num2: i64,
+    /// Buffer cache hits (autovacuum/autoanalyze).
+    pub buffer_hits: i64,
+    /// Buffer cache misses (autovacuum/autoanalyze).
+    pub buffer_misses: i64,
+    /// Buffers dirtied (autovacuum/autoanalyze).
+    pub buffer_dirtied: i64,
+    /// Average read rate in MB/s (autovacuum/autoanalyze).
+    pub avg_read_rate_mbs: f64,
+    /// Average write rate in MB/s (autovacuum/autoanalyze).
+    pub avg_write_rate_mbs: f64,
+    /// CPU user time in seconds (autovacuum/autoanalyze).
+    pub cpu_user_s: f64,
+    /// CPU system time in seconds (autovacuum/autoanalyze).
+    pub cpu_system_s: f64,
     /// Error pattern or event message.
     pub message: String,
     /// Concrete error sample (errors only), empty for events.

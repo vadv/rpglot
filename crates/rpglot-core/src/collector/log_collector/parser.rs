@@ -37,6 +37,20 @@ pub enum EventData {
         tuples_removed: i64,
         pages_removed: i64,
         elapsed_s: f64,
+        /// Buffer cache hits.
+        buffer_hits: i64,
+        /// Buffer cache misses (reads from disk).
+        buffer_misses: i64,
+        /// Buffers dirtied during operation.
+        buffer_dirtied: i64,
+        /// Average read rate in MB/s.
+        avg_read_rate_mbs: f64,
+        /// Average write rate in MB/s.
+        avg_write_rate_mbs: f64,
+        /// CPU user time in seconds.
+        cpu_user_s: f64,
+        /// CPU system time in seconds.
+        cpu_system_s: f64,
     },
 }
 
@@ -316,12 +330,48 @@ fn parse_autovacuum(message: &str, is_analyze: bool) -> EventData {
         .or_else(|| extract_f64_after(message, "прошло: "))
         .unwrap_or(0.0);
 
+    // Buffer usage: "456 hits, 78 misses, 9 dirtied"
+    // RU: "буферов: 456 попаданий, 78 промахов, 9 загрязнено"
+    let buffer_hits = extract_i64_after(message, "buffer usage: ")
+        .or_else(|| extract_i64_after(message, "буферов: "))
+        .unwrap_or(0);
+
+    let buffer_misses = extract_i64_after(message, " hits, ")
+        .or_else(|| extract_i64_after(message, " попаданий, "))
+        .unwrap_or(0);
+
+    let buffer_dirtied = extract_i64_after(message, " misses, ")
+        .or_else(|| extract_i64_after(message, " промахов, "))
+        .unwrap_or(0);
+
+    // Avg read/write rate: "avg read rate: 1.234 MB/s, avg write rate: 5.678 MB/s"
+    // RU: "средняя скорость чтения: 1.234 МБ/с, средняя скорость записи: 5.678 МБ/с"
+    let avg_read_rate_mbs = extract_f64_after(message, "avg read rate: ")
+        .or_else(|| extract_f64_after(message, "средняя скорость чтения: "))
+        .unwrap_or(0.0);
+
+    let avg_write_rate_mbs = extract_f64_after(message, "avg write rate: ")
+        .or_else(|| extract_f64_after(message, "средняя скорость записи: "))
+        .unwrap_or(0.0);
+
+    // CPU: "user: 0.12 s, system: 0.34 s"
+    // Note: for CPU we look for "user: " after "CPU:" to avoid ambiguity
+    let cpu_user_s = extract_cpu_field(message, "user: ");
+    let cpu_system_s = extract_cpu_field(message, "system: ");
+
     EventData::Autovacuum {
         table_name,
         is_analyze,
         tuples_removed,
         pages_removed,
         elapsed_s,
+        buffer_hits,
+        buffer_misses,
+        buffer_dirtied,
+        avg_read_rate_mbs,
+        avg_write_rate_mbs,
+        cpu_user_s,
+        cpu_system_s,
     }
 }
 
@@ -347,6 +397,15 @@ fn extract_f64_after(text: &str, marker: &str) -> Option<f64> {
         .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
         .unwrap_or(rest.len());
     rest[..end].parse().ok()
+}
+
+/// Extract CPU time field (user/system) from autovacuum message.
+/// Looks for the field after "CPU:" marker to avoid ambiguity with other "user:" occurrences.
+fn extract_cpu_field(text: &str, field: &str) -> f64 {
+    // Find "CPU:" first, then look for the field after it
+    let cpu_pos = text.find("CPU:").or_else(|| text.find("ЦП:")).unwrap_or(0);
+    let rest = &text[cpu_pos..];
+    extract_f64_after(rest, field).unwrap_or(0.0)
 }
 
 /// Extract first double-quoted string from `text`.
@@ -595,12 +654,16 @@ mod tests {
                 is_analyze,
                 tuples_removed,
                 elapsed_s,
+                cpu_user_s,
+                cpu_system_s,
                 ..
             }) => {
                 assert_eq!(table_name, "mydb.public.users");
                 assert!(!is_analyze);
                 assert_eq!(tuples_removed, 1234);
                 assert!((elapsed_s - 5.67).abs() < 0.01);
+                assert!((cpu_user_s - 0.12).abs() < 0.01);
+                assert!((cpu_system_s - 0.34).abs() < 0.01);
             }
             other => panic!("expected Autovacuum, got {:?}", other),
         }
@@ -617,11 +680,15 @@ mod tests {
                 table_name,
                 is_analyze,
                 elapsed_s,
+                cpu_user_s,
+                cpu_system_s,
                 ..
             }) => {
                 assert_eq!(table_name, "mydb.public.users");
                 assert!(is_analyze);
                 assert!((elapsed_s - 0.12).abs() < 0.01);
+                assert!((cpu_user_s - 0.01).abs() < 0.01);
+                assert!((cpu_system_s - 0.00).abs() < 0.01);
             }
             other => panic!("expected Autovacuum (analyze), got {:?}", other),
         }
@@ -667,12 +734,64 @@ system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
                 tuples_removed,
                 pages_removed,
                 elapsed_s,
+                buffer_hits,
+                buffer_misses,
+                buffer_dirtied,
+                avg_read_rate_mbs,
+                avg_write_rate_mbs,
+                cpu_user_s,
+                cpu_system_s,
             } => {
                 assert_eq!(table_name, "mydb.public.orders");
                 assert!(!is_analyze);
                 assert_eq!(tuples_removed, 1234);
                 assert_eq!(pages_removed, 10);
                 assert!((elapsed_s - 5.67).abs() < 0.01);
+                assert_eq!(buffer_hits, 456);
+                assert_eq!(buffer_misses, 78);
+                assert_eq!(buffer_dirtied, 9);
+                assert!((avg_read_rate_mbs - 1.234).abs() < 0.001);
+                assert!((avg_write_rate_mbs - 5.678).abs() < 0.001);
+                assert!((cpu_user_s - 0.12).abs() < 0.01);
+                assert!((cpu_system_s - 0.34).abs() < 0.01);
+            }
+            other => panic!("expected Autovacuum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_autoanalyze_fields_en() {
+        let msg = r#"automatic analyze of table "tpl-service.bucket_90.posting_sender"
+avg read rate: 64.717 MB/s, avg write rate: 2.678 MB/s
+buffer usage: 1843 hits, 29896 misses, 1237 dirtied
+system usage: CPU: user: 1.14 s, system: 0.68 s, elapsed: 3.60 s"#;
+        match parse_autovacuum(msg, true) {
+            EventData::Autovacuum {
+                table_name,
+                is_analyze,
+                tuples_removed,
+                pages_removed,
+                elapsed_s,
+                buffer_hits,
+                buffer_misses,
+                buffer_dirtied,
+                avg_read_rate_mbs,
+                avg_write_rate_mbs,
+                cpu_user_s,
+                cpu_system_s,
+            } => {
+                assert_eq!(table_name, "tpl-service.bucket_90.posting_sender");
+                assert!(is_analyze);
+                assert_eq!(tuples_removed, 0);
+                assert_eq!(pages_removed, 0);
+                assert!((elapsed_s - 3.60).abs() < 0.01);
+                assert_eq!(buffer_hits, 1843);
+                assert_eq!(buffer_misses, 29896);
+                assert_eq!(buffer_dirtied, 1237);
+                assert!((avg_read_rate_mbs - 64.717).abs() < 0.001);
+                assert!((avg_write_rate_mbs - 2.678).abs() < 0.001);
+                assert!((cpu_user_s - 1.14).abs() < 0.01);
+                assert!((cpu_system_s - 0.68).abs() < 0.01);
             }
             other => panic!("expected Autovacuum, got {:?}", other),
         }

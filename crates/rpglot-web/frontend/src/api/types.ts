@@ -327,6 +327,13 @@ export interface PgEventsRow {
   elapsed_s: number;
   extra_num1: number;
   extra_num2: number;
+  buffer_hits: number;
+  buffer_misses: number;
+  buffer_dirtied: number;
+  avg_read_rate_mbs: number;
+  avg_write_rate_mbs: number;
+  cpu_user_s: number;
+  cpu_system_s: number;
   message: string;
   sample: string;
 }
