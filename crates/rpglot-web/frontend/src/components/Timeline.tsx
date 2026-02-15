@@ -21,7 +21,7 @@ import { ActivityHeatmap } from "./ActivityHeatmap";
 
 interface TimelineProps {
   timeline: TimelineInfo;
-  onTimestampJump: (timestamp: number) => void;
+  onTimestampJump: (timestamp: number, direction?: "floor" | "ceil") => void;
   timestamp?: number;
   prevTimestamp?: number;
   nextTimestamp?: number;

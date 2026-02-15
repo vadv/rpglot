@@ -55,10 +55,12 @@ export async function fetchSchema(): Promise<ApiSchema> {
 
 export async function fetchSnapshot(params?: {
   timestamp?: number;
+  direction?: "floor" | "ceil";
 }): Promise<ApiSnapshot> {
   const url = new URL(`${BASE}/snapshot`, window.location.origin);
   if (params?.timestamp != null)
     url.searchParams.set("timestamp", String(params.timestamp));
+  if (params?.direction) url.searchParams.set("direction", params.direction);
   const res = await authFetch(url.toString());
   if (!res.ok) throw new Error(`snapshot: ${res.status}`);
   return res.json();

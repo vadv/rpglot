@@ -310,8 +310,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   }, []);
 
   const handleTimestampJump = useCallback(
-    (ts: number) => {
-      jumpToTimestamp(ts);
+    (ts: number, direction?: "floor" | "ceil") => {
+      jumpToTimestamp(ts, direction);
       urlSync({ timestamp: ts });
     },
     [jumpToTimestamp, urlSync],
@@ -648,7 +648,7 @@ function Header({
   themeHook: ThemeHook;
   timezoneHook: TimezoneHookType;
   timeline?: TimelineInfo;
-  onTimestampJump?: (ts: number) => void;
+  onTimestampJump?: (ts: number, direction?: "floor" | "ceil") => void;
   onHelpOpen?: () => void;
   snapshot?: ApiSnapshot | null;
   currentHour?: number;
@@ -697,7 +697,7 @@ function Header({
         0,
         tz,
       );
-      onTimestampJump(epoch);
+      onTimestampJump(epoch, "ceil");
     },
     [ts, tz, onTimestampJump],
   );

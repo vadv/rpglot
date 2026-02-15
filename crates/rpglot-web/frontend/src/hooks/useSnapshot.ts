@@ -50,18 +50,21 @@ export function useHistorySnapshot() {
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const jumpToTimestamp = useCallback((timestamp: number) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    setLoading(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const snap = await fetchSnapshot({ timestamp });
-        setSnapshot(snap);
-      } finally {
-        setLoading(false);
-      }
-    }, 50);
-  }, []);
+  const jumpToTimestamp = useCallback(
+    (timestamp: number, direction?: "floor" | "ceil") => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      setLoading(true);
+      debounceRef.current = setTimeout(async () => {
+        try {
+          const snap = await fetchSnapshot({ timestamp, direction });
+          setSnapshot(snap);
+        } finally {
+          setLoading(false);
+        }
+      }, 50);
+    },
+    [],
+  );
 
   // Load first snapshot on mount
   useEffect(() => {

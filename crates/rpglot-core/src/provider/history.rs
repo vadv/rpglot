@@ -831,6 +831,27 @@ impl HistoryProvider {
         self.load_into_buffer(position);
         self.current_buffer.as_ref()
     }
+
+    /// Jumps to the earliest snapshot with timestamp >= `target_ts`.
+    pub fn jump_to_timestamp_ceil(&mut self, target_ts: i64) -> Option<&Snapshot> {
+        if self.timestamps.is_empty() {
+            return None;
+        }
+
+        let idx = self.timestamps.partition_point(|&ts| ts < target_ts);
+
+        if idx >= self.timestamps.len() {
+            // All timestamps are before target — jump to last.
+            let position = self.total_snapshots.saturating_sub(1);
+            self.cursor = position;
+            self.load_into_buffer(position);
+            return self.current_buffer.as_ref();
+        }
+
+        self.cursor = idx;
+        self.load_into_buffer(idx);
+        self.current_buffer.as_ref()
+    }
 }
 
 enum SnapshotLocation {

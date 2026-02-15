@@ -598,20 +598,28 @@ fn advance_and_convert(inner: &mut WebAppInner) {
 }
 
 /// Navigate history provider to timestamp and reconvert.
-fn history_jump_to_timestamp(inner: &mut WebAppInner, timestamp: i64) -> bool {
+fn history_jump_to_timestamp(inner: &mut WebAppInner, timestamp: i64, ceil: bool) -> bool {
     let provider = inner
         .provider
         .as_any_mut()
         .and_then(|a| a.downcast_mut::<HistoryProvider>());
-    if let Some(hp) = provider
-        && hp.jump_to_timestamp_floor(timestamp).is_some()
-    {
+    let found = if let Some(hp) = provider {
+        if ceil {
+            hp.jump_to_timestamp_ceil(timestamp).is_some()
+        } else {
+            hp.jump_to_timestamp_floor(timestamp).is_some()
+        }
+    } else {
+        false
+    };
+    if found {
         reconvert_current(inner);
-        info!(timestamp, "history: jumped to timestamp");
-        return true;
+        info!(timestamp, ceil, "history: jumped to timestamp");
+        true
+    } else {
+        warn!(timestamp, "history: invalid timestamp");
+        false
     }
-    warn!(timestamp, "history: invalid timestamp");
-    false
 }
 
 /// Extract collected_at timestamp from PgStatStatements block.
@@ -1025,8 +1033,11 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
 
 #[derive(Deserialize, utoipa::IntoParams)]
 struct SnapshotQuery {
-    /// Unix timestamp to navigate to (history mode, nearest floor).
+    /// Unix timestamp to navigate to (history mode).
     timestamp: Option<i64>,
+    /// Direction for timestamp lookup: "floor" (default, latest snapshot <= ts)
+    /// or "ceil" (earliest snapshot >= ts).
+    direction: Option<String>,
 }
 
 #[utoipa::path(
@@ -1051,9 +1062,11 @@ async fn handle_snapshot(
         // History navigation via query params
         if inner.mode == Mode::History
             && let Some(ts) = query.timestamp
-            && !history_jump_to_timestamp(&mut inner, ts)
         {
-            return Err(StatusCode::BAD_REQUEST);
+            let use_ceil = query.direction.as_deref() == Some("ceil");
+            if !history_jump_to_timestamp(&mut inner, ts, use_ceil) {
+                return Err(StatusCode::BAD_REQUEST);
+            }
         }
 
         inner
