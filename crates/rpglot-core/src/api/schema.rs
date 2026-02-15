@@ -9,6 +9,8 @@ use utoipa::ToSchema;
 /// Top-level API schema returned by `GET /api/v1/schema`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiSchema {
+    /// Server version including git SHA (e.g. "0.1.9-abc1234").
+    pub version: String,
     /// Operating mode.
     pub mode: ApiMode,
     /// Timeline info (only in history mode).
@@ -231,6 +233,7 @@ impl ApiSchema {
     /// Generate the full schema for a given mode.
     pub fn generate(mode: ApiMode, timeline: Option<TimelineInfo>) -> Self {
         Self {
+            version: crate::VERSION.to_string(),
             mode,
             timeline,
             summary: generate_summary_schema(),

@@ -18,6 +18,9 @@
 //! - `tui` — TUI rendering (ratatui/crossterm), state, input, widgets
 //! - `view` — view models (depends on tui state)
 
+/// Version string including short git SHA, e.g. `"0.1.9-abc1234"`.
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-", env!("GIT_SHA"));
+
 pub mod collector;
 pub mod fmt;
 pub mod models;

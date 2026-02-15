@@ -75,7 +75,7 @@ struct FrontendAssets;
 // ============================================================
 
 #[derive(Parser)]
-#[command(name = "rpglot-web", about = "rpglot web API server")]
+#[command(name = "rpglot-web", about = "rpglot web API server", version = rpglot_core::VERSION)]
 struct Args {
     /// Listen address.
     #[arg(long, default_value = "0.0.0.0:8080", env = "RPGLOT_LISTEN")]
@@ -220,7 +220,7 @@ async fn async_main(args: Args) {
         Option<i64>,
         Option<i64>,
     ) = if let Some(ref history_path) = args.history {
-        info!(version = env!("CARGO_PKG_VERSION"), path = %history_path.display(), "starting in history mode");
+        info!(version = rpglot_core::VERSION, path = %history_path.display(), "starting in history mode");
         let hp = match HistoryProvider::from_path(history_path) {
             Ok(hp) => hp,
             Err(e) => {
@@ -241,7 +241,7 @@ async fn async_main(args: Args) {
             Some(end),
         )
     } else {
-        info!(version = env!("CARGO_PKG_VERSION"), "starting in live mode");
+        info!(version = rpglot_core::VERSION, "starting in live mode");
         let provider = create_live_provider(&args);
         (provider, Mode::Live, None, None, None)
     };

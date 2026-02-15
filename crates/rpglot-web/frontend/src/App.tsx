@@ -203,6 +203,7 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         timezoneHook={timezoneHook}
         onHelpOpen={() => tabState.setHelpOpen(true)}
         snapshot={snapshot}
+        version={schema.version}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -380,6 +381,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         onTimestampJump={handleTimestampJump}
         snapshot={snapshot}
         currentHour={hourRange?.hour}
+        version={schema.version}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -644,6 +646,7 @@ function Header({
   onHelpOpen,
   snapshot,
   currentHour,
+  version,
 }: {
   mode: string;
   timestamp?: number;
@@ -657,6 +660,7 @@ function Header({
   onHelpOpen?: () => void;
   snapshot?: ApiSnapshot | null;
   currentHour?: number;
+  version?: string;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -724,6 +728,11 @@ function Header({
           <span className="text-sm font-semibold text-[var(--text-primary)]">
             rpglot
           </span>
+          {version && (
+            <span className="text-[10px] font-mono text-[var(--text-tertiary)]">
+              {version}
+            </span>
+          )}
         </div>
         <span
           className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${

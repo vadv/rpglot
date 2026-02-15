@@ -14,7 +14,7 @@ use crate::tui::style::Styles;
 pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
     let chunks = Layout::horizontal([
         Constraint::Length(22), // Time
-        Constraint::Length(12), // Mode
+        Constraint::Length(26), // Mode + version
         Constraint::Min(20),    // Tabs
         Constraint::Length(16), // PIDs (container)
         Constraint::Length(42), // Position/Filter/Status
@@ -35,13 +35,17 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
     let time = Paragraph::new(time_str).style(Styles::header());
     frame.render_widget(time, chunks[0]);
 
-    // Mode
+    // Mode + version
     let mode_str = if state.is_live {
         if state.paused { " PAUSED " } else { " LIVE " }
     } else {
         " HISTORY "
     };
-    let mode = Paragraph::new(mode_str).style(Styles::header());
+    let mode_line = Line::from(vec![
+        Span::styled(mode_str, Styles::header()),
+        Span::styled(format!(" {}", crate::VERSION), Styles::dim()),
+    ]);
+    let mode = Paragraph::new(mode_line);
     frame.render_widget(mode, chunks[1]);
 
     // Tabs

@@ -45,7 +45,7 @@ use rpglot_core::util::is_container;
 
 /// System metrics collector daemon.
 #[derive(Parser)]
-#[command(name = "rpglotd", about = "System metrics collector daemon", version)]
+#[command(name = "rpglotd", about = "System metrics collector daemon", version = rpglot_core::VERSION)]
 struct Args {
     /// Collection interval in seconds.
     #[arg(short, long, default_value = "10")]
@@ -193,7 +193,7 @@ fn main() {
 
     let rotation_config = RotationConfig::new(args.max_size, args.max_days);
 
-    info!("rpglotd {} starting", env!("CARGO_PKG_VERSION"));
+    info!("rpglotd {} starting", rpglot_core::VERSION);
     info!(
         "Config: interval={}s, output={}, proc={}",
         args.interval, args.output_dir, args.proc_path

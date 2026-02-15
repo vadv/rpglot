@@ -371,6 +371,7 @@ export interface PgLocksRow {
 // ============================================================
 
 export interface ApiSchema {
+  version: string;
   mode: "live" | "history";
   timeline?: TimelineInfo;
   summary: SummarySchema;
