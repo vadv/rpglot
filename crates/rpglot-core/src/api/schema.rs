@@ -2397,6 +2397,33 @@ fn generate_pge_schema() -> TabSchema {
                 false,
             ),
             col(
+                "wal_records",
+                "WAL Rec",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "wal_fpi",
+                "WAL FPI",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "wal_bytes",
+                "WAL Bytes",
+                DataType::Integer,
+                Some(Unit::Bytes),
+                Some(Format::Bytes),
+                true,
+                false,
+            ),
+            col(
                 "message",
                 "Message",
                 DataType::String,
@@ -2454,6 +2481,9 @@ fn generate_pge_schema() -> TabSchema {
                     "buffer_dirtied",
                     "extra_num1",
                     "extra_num2",
+                    "wal_records",
+                    "wal_fpi",
+                    "wal_bytes",
                 ]
                 .into_iter()
                 .map(String::from)

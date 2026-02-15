@@ -334,6 +334,9 @@ export interface PgEventsRow {
   avg_write_rate_mbs: number;
   cpu_user_s: number;
   cpu_system_s: number;
+  wal_records: number;
+  wal_fpi: number;
+  wal_bytes: number;
   message: string;
   sample: string;
 }

@@ -1457,6 +1457,9 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 avg_write_rate_mbs: 0.0,
                 cpu_user_s: 0.0,
                 cpu_system_s: 0.0,
+                wal_records: 0,
+                wal_fpi: 0,
+                wal_bytes: 0,
                 message: resolve(interner, e.pattern_hash),
                 sample: resolve(interner, e.sample_hash),
             });
@@ -1496,6 +1499,9 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 avg_write_rate_mbs: ev.avg_write_rate_mbs,
                 cpu_user_s: ev.cpu_user_s,
                 cpu_system_s: ev.cpu_system_s,
+                wal_records: ev.wal_records,
+                wal_fpi: ev.wal_fpi,
+                wal_bytes: ev.wal_bytes,
                 message: ev.message.clone(),
                 sample: String::new(),
             });

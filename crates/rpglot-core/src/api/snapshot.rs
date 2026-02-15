@@ -586,6 +586,12 @@ pub struct PgEventsRow {
     pub cpu_user_s: f64,
     /// CPU system time in seconds (autovacuum/autoanalyze).
     pub cpu_system_s: f64,
+    /// WAL records generated (autovacuum).
+    pub wal_records: i64,
+    /// WAL full page images (autovacuum).
+    pub wal_fpi: i64,
+    /// WAL bytes written (autovacuum).
+    pub wal_bytes: i64,
     /// Error pattern or event message.
     pub message: String,
     /// Concrete error sample (errors only), empty for events.

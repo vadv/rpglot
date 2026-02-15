@@ -81,6 +81,10 @@ pub struct LogCollector {
     pending_autovacuums: u16,
     /// Accumulated detailed event entries between snapshots.
     pending_events: Vec<PgLogEventEntry>,
+    /// Index of the last autovacuum/checkpoint event in pending_events.
+    /// Used to patch-in metrics from continuation lines (stderr multiline messages).
+    /// Reset to None when a non-continuation line arrives.
+    last_event_idx: Option<usize>,
     /// Last initialization error (for diagnostics)
     last_error: Option<String>,
 }
@@ -108,6 +112,7 @@ impl LogCollector {
             pending_checkpoints: 0,
             pending_autovacuums: 0,
             pending_events: Vec::new(),
+            last_event_idx: None,
             last_error: None,
         }
     }
@@ -197,9 +202,32 @@ impl LogCollector {
 
         // Parse and accumulate
         for line in &lines {
+            // Continuation line (starts with whitespace): try to patch last event in-place
+            if is_continuation_line(line) {
+                if let Some(idx) = self.last_event_idx
+                    && let Some(entry) = self.pending_events.get_mut(idx)
+                {
+                    patch_event_from_continuation(entry, line);
+                }
+                continue;
+            }
+
+            // New primary line — reset continuation tracking
+            self.last_event_idx = None;
+
             let parsed = self.parse_line(line);
             if let Some(parsed) = parsed {
+                // Remember index for events that have multiline continuations
+                let will_have_continuations = matches!(
+                    parsed.event_kind,
+                    LogEventKind::Autovacuum | LogEventKind::Checkpoint
+                );
+
                 self.accumulate(parsed);
+
+                if will_have_continuations {
+                    self.last_event_idx = Some(self.pending_events.len() - 1);
+                }
             }
         }
 
@@ -210,6 +238,7 @@ impl LogCollector {
         let events = std::mem::take(&mut self.pending_events);
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
+        self.last_event_idx = None;
         LogCollectResult {
             errors,
             checkpoint_count,
@@ -343,6 +372,87 @@ impl LogCollector {
     }
 }
 
+/// Check if a line is a continuation of a previous multiline LOG message.
+/// PostgreSQL continuation lines start with whitespace (tab or spaces).
+fn is_continuation_line(line: &str) -> bool {
+    line.starts_with(['\t', ' '])
+}
+
+/// Patch an existing event entry in-place from a continuation line.
+///
+/// Checks for known markers (buffer usage, avg rate, CPU, pages, tuples, WAL)
+/// and updates the corresponding fields. Unknown lines are silently ignored
+/// (zero allocations for garbage like DETAIL, CONTEXT, STATEMENT, long queries).
+fn patch_event_from_continuation(entry: &mut PgLogEventEntry, line: &str) {
+    let trimmed = line.trim_start();
+
+    // "buffer usage: 78 hits, 5 misses, 0 dirtied"
+    // "буферов: 78 попаданий, 5 промахов, 0 загрязнено"
+    if trimmed.starts_with("buffer usage:") || trimmed.starts_with("буферов:") {
+        entry.buffer_hits = parser::extract_i64_after(trimmed, "buffer usage: ")
+            .or_else(|| parser::extract_i64_after(trimmed, "буферов: "))
+            .unwrap_or(0);
+        entry.buffer_misses = parser::extract_i64_after(trimmed, " hits, ")
+            .or_else(|| parser::extract_i64_after(trimmed, " попаданий, "))
+            .unwrap_or(0);
+        entry.buffer_dirtied = parser::extract_i64_after(trimmed, " misses, ")
+            .or_else(|| parser::extract_i64_after(trimmed, " промахов, "))
+            .unwrap_or(0);
+        return;
+    }
+
+    // "avg read rate: 0.653 MB/s, avg write rate: 0.000 MB/s"
+    // "средняя скорость чтения: 0.653 МБ/с, средняя скорость записи: 0.000 МБ/с"
+    if trimmed.starts_with("avg read rate:") || trimmed.starts_with("средняя скорость чтения:")
+    {
+        entry.avg_read_rate_mbs = parser::extract_f64_after(trimmed, "avg read rate: ")
+            .or_else(|| parser::extract_f64_after(trimmed, "средняя скорость чтения: "))
+            .unwrap_or(0.0);
+        entry.avg_write_rate_mbs = parser::extract_f64_after(trimmed, "avg write rate: ")
+            .or_else(|| parser::extract_f64_after(trimmed, "средняя скорость записи: "))
+            .unwrap_or(0.0);
+        return;
+    }
+
+    // "system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.05 s"
+    // "системное использование: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"
+    if trimmed.starts_with("system usage:") || trimmed.starts_with("системное") {
+        entry.cpu_user_s = parser::extract_cpu_field(trimmed, "user: ");
+        entry.cpu_system_s = parser::extract_cpu_field(trimmed, "system: ");
+        entry.elapsed_s = parser::extract_f64_after(trimmed, "elapsed: ")
+            .or_else(|| parser::extract_f64_after(trimmed, "прошло: "))
+            .unwrap_or(entry.elapsed_s);
+        return;
+    }
+
+    // "tuples: 50 removed, ..."
+    // "кортежей: 50 удалено, ..."
+    if trimmed.starts_with("tuples:") || trimmed.starts_with("кортежей:") {
+        entry.extra_num1 = parser::extract_i64_after(trimmed, "tuples: ")
+            .or_else(|| parser::extract_i64_after(trimmed, "кортежей: "))
+            .unwrap_or(0);
+        return;
+    }
+
+    // "pages: 1 removed, ..."
+    // "страниц: 1 удалено, ..."
+    if trimmed.starts_with("pages:") || trimmed.starts_with("страниц:") {
+        entry.extra_num2 = parser::extract_i64_after(trimmed, "pages: ")
+            .or_else(|| parser::extract_i64_after(trimmed, "страниц: "))
+            .unwrap_or(0);
+        return;
+    }
+
+    // "WAL usage: 15 records, 2 full page images, 1617 bytes"
+    if trimmed.starts_with("WAL usage:") {
+        entry.wal_records = parser::extract_i64_after(trimmed, "WAL usage: ").unwrap_or(0);
+        entry.wal_fpi = parser::extract_i64_after(trimmed, " records, ").unwrap_or(0);
+        entry.wal_bytes = parser::extract_i64_after(trimmed, " images, ").unwrap_or(0);
+    }
+
+    // Anything else — ignore (DETAIL, CONTEXT, STATEMENT, etc.)
+}
+
 /// Convert parser `EventData` into storage `PgLogEventEntry`.
 fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
     match data {
@@ -360,6 +470,9 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             avg_write_rate_mbs: 0.0,
             cpu_user_s: 0.0,
             cpu_system_s: 0.0,
+            wal_records: 0,
+            wal_fpi: 0,
+            wal_bytes: 0,
         },
         EventData::CheckpointComplete {
             buffers_written,
@@ -380,6 +493,9 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             avg_write_rate_mbs: 0.0,
             cpu_user_s: 0.0,
             cpu_system_s: 0.0,
+            wal_records: 0,
+            wal_fpi: 0,
+            wal_bytes: 0,
         },
         EventData::Autovacuum {
             table_name,
@@ -394,6 +510,9 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             avg_write_rate_mbs,
             cpu_user_s,
             cpu_system_s,
+            wal_records,
+            wal_fpi,
+            wal_bytes,
         } => PgLogEventEntry {
             event_type: if is_analyze {
                 PgLogEventType::Autoanalyze
@@ -412,6 +531,9 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             avg_write_rate_mbs,
             cpu_user_s,
             cpu_system_s,
+            wal_records,
+            wal_fpi,
+            wal_bytes,
         },
     }
 }

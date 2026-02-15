@@ -686,4 +686,13 @@ pub struct PgLogEventEntry {
     /// CPU system time in seconds (autovacuum/autoanalyze).
     #[serde(default)]
     pub cpu_system_s: f64,
+    /// WAL records generated (autovacuum).
+    #[serde(default)]
+    pub wal_records: i64,
+    /// WAL full page images (autovacuum).
+    #[serde(default)]
+    pub wal_fpi: i64,
+    /// WAL bytes written (autovacuum).
+    #[serde(default)]
+    pub wal_bytes: i64,
 }

@@ -51,6 +51,12 @@ pub enum EventData {
         cpu_user_s: f64,
         /// CPU system time in seconds.
         cpu_system_s: f64,
+        /// WAL records generated.
+        wal_records: i64,
+        /// WAL full page images.
+        wal_fpi: i64,
+        /// WAL bytes written.
+        wal_bytes: i64,
     },
 }
 
@@ -359,6 +365,19 @@ fn parse_autovacuum(message: &str, is_analyze: bool) -> EventData {
     let cpu_user_s = extract_cpu_field(message, "user: ");
     let cpu_system_s = extract_cpu_field(message, "system: ");
 
+    // WAL usage: "15 records, 2 full page images, 1617 bytes"
+    let wal_records = extract_i64_after(message, "WAL usage: ").unwrap_or(0);
+    let wal_fpi = if message.contains("WAL usage:") {
+        extract_i64_after(message, " records, ").unwrap_or(0)
+    } else {
+        0
+    };
+    let wal_bytes = if message.contains("WAL usage:") {
+        extract_i64_after(message, " images, ").unwrap_or(0)
+    } else {
+        0
+    };
+
     EventData::Autovacuum {
         table_name,
         is_analyze,
@@ -372,6 +391,9 @@ fn parse_autovacuum(message: &str, is_analyze: bool) -> EventData {
         avg_write_rate_mbs,
         cpu_user_s,
         cpu_system_s,
+        wal_records,
+        wal_fpi,
+        wal_bytes,
     }
 }
 
@@ -380,7 +402,7 @@ fn parse_autovacuum(message: &str, is_analyze: bool) -> EventData {
 // ============================================================
 
 /// Extract first i64 value immediately after `marker` in `text`.
-fn extract_i64_after(text: &str, marker: &str) -> Option<i64> {
+pub(super) fn extract_i64_after(text: &str, marker: &str) -> Option<i64> {
     let pos = text.find(marker)? + marker.len();
     let rest = &text[pos..];
     let end = rest
@@ -390,7 +412,7 @@ fn extract_i64_after(text: &str, marker: &str) -> Option<i64> {
 }
 
 /// Extract first f64 value immediately after `marker` in `text`.
-fn extract_f64_after(text: &str, marker: &str) -> Option<f64> {
+pub(super) fn extract_f64_after(text: &str, marker: &str) -> Option<f64> {
     let pos = text.find(marker)? + marker.len();
     let rest = &text[pos..];
     let end = rest
@@ -401,7 +423,7 @@ fn extract_f64_after(text: &str, marker: &str) -> Option<f64> {
 
 /// Extract CPU time field (user/system) from autovacuum message.
 /// Looks for the field after "CPU:" marker to avoid ambiguity with other "user:" occurrences.
-fn extract_cpu_field(text: &str, field: &str) -> f64 {
+pub(super) fn extract_cpu_field(text: &str, field: &str) -> f64 {
     // Find "CPU:" first, then look for the field after it
     let cpu_pos = text.find("CPU:").or_else(|| text.find("ЦП:")).unwrap_or(0);
     let rest = &text[cpu_pos..];
@@ -741,6 +763,9 @@ system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
                 avg_write_rate_mbs,
                 cpu_user_s,
                 cpu_system_s,
+                wal_records,
+                wal_fpi,
+                wal_bytes,
             } => {
                 assert_eq!(table_name, "mydb.public.orders");
                 assert!(!is_analyze);
@@ -754,6 +779,9 @@ system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
                 assert!((avg_write_rate_mbs - 5.678).abs() < 0.001);
                 assert!((cpu_user_s - 0.12).abs() < 0.01);
                 assert!((cpu_system_s - 0.34).abs() < 0.01);
+                assert_eq!(wal_records, 0);
+                assert_eq!(wal_fpi, 0);
+                assert_eq!(wal_bytes, 0);
             }
             other => panic!("expected Autovacuum, got {:?}", other),
         }
@@ -779,6 +807,9 @@ system usage: CPU: user: 1.14 s, system: 0.68 s, elapsed: 3.60 s"#;
                 avg_write_rate_mbs,
                 cpu_user_s,
                 cpu_system_s,
+                wal_records,
+                wal_fpi,
+                wal_bytes,
             } => {
                 assert_eq!(table_name, "tpl-service.bucket_90.posting_sender");
                 assert!(is_analyze);
@@ -792,6 +823,33 @@ system usage: CPU: user: 1.14 s, system: 0.68 s, elapsed: 3.60 s"#;
                 assert!((avg_write_rate_mbs - 2.678).abs() < 0.001);
                 assert!((cpu_user_s - 1.14).abs() < 0.01);
                 assert!((cpu_system_s - 0.68).abs() < 0.01);
+                assert_eq!(wal_records, 0);
+                assert_eq!(wal_fpi, 0);
+                assert_eq!(wal_bytes, 0);
+            }
+            other => panic!("expected Autovacuum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_autovacuum_with_wal_usage() {
+        let msg = r#"automatic vacuum of table "mydb.public.orders": index scans: 1
+pages: 10 removed, 500 remain, 0 skipped due to pins, 0 skipped frozen
+tuples: 1234 removed, 5678 remain, 100 are dead but not yet removable
+buffer usage: 456 hits, 78 misses, 9 dirtied
+avg read rate: 1.234 MB/s, avg write rate: 5.678 MB/s
+WAL usage: 15 records, 2 full page images, 1617 bytes
+system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
+        match parse_autovacuum(msg, false) {
+            EventData::Autovacuum {
+                wal_records,
+                wal_fpi,
+                wal_bytes,
+                ..
+            } => {
+                assert_eq!(wal_records, 15);
+                assert_eq!(wal_fpi, 2);
+                assert_eq!(wal_bytes, 1617);
             }
             other => panic!("expected Autovacuum, got {:?}", other),
         }
