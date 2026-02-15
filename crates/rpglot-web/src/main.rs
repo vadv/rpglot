@@ -169,7 +169,7 @@ struct WebAppInner {
     history_end: Option<i64>,
     // Heatmap cache: per-date ("YYYY-MM-DD" → bucketed data).
     // Past dates are immutable — cached forever. Today invalidated on refresh.
-    heatmap_cache: HashMap<String, Vec<rpglot_core::storage::metrics::HeatmapBucket>>,
+    heatmap_cache: HashMap<String, Vec<rpglot_core::storage::heatmap::HeatmapBucket>>,
 }
 
 type SharedState = Arc<Mutex<WebAppInner>>;
@@ -1195,7 +1195,7 @@ struct HeatmapQuery {
 async fn handle_heatmap(
     State(state_tuple): AppState,
     axum::extract::Query(query): axum::extract::Query<HeatmapQuery>,
-) -> Result<Json<Vec<rpglot_core::storage::metrics::HeatmapBucket>>, StatusCode> {
+) -> Result<Json<Vec<rpglot_core::storage::heatmap::HeatmapBucket>>, StatusCode> {
     let num_buckets = query.buckets.unwrap_or(400).min(1000);
 
     if query.end <= query.start {
@@ -1235,8 +1235,8 @@ async fn handle_heatmap(
             .and_then(|a| a.downcast_mut::<HistoryProvider>())
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-        let raw = hp.load_metrics_range(query.start, query.end);
-        let buckets = rpglot_core::storage::metrics::bucket_metrics(
+        let raw = hp.load_heatmap_range(query.start, query.end);
+        let buckets = rpglot_core::storage::heatmap::bucket_heatmap(
             &raw,
             query.start,
             query.end,

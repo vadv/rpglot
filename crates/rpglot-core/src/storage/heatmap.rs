@@ -1,17 +1,14 @@
-//! Lightweight per-snapshot metrics for timeline heatmap visualization.
+//! Lightweight per-snapshot heatmap data for timeline visualization.
 //!
-//! Each snapshot produces a 12-byte `MetricsEntry` (active_sessions, host CPU%,
+//! Each snapshot produces a 12-byte `HeatmapEntry` (active_sessions, host CPU%,
 //! cgroup CPU%, cgroup memory%, error_count, checkpoint_count, autovacuum_count).
-//! These are stored in `.metrics` sidecar files alongside `.zst` chunk files
+//! These are stored in `.heatmap` sidecar files alongside `.zst` chunk files
 //! and read without decompressing snapshots — enabling O(1) access to activity
 //! data for arbitrary time ranges.
 //!
 //! ## File format
 //!
-//! **V4** (current): 4-byte magic `b"MET4"` followed by 12-byte entries.
-//! **V3** (legacy): 4-byte magic `b"MET3"` followed by 10-byte entries (checkpoint/autovacuum = 0).
-//! **V2** (legacy): 4-byte magic `b"MET2"` followed by 8-byte entries (error + event fields = 0).
-//! **V1** (legacy): no header, 4-byte entries. Read with cgroup + error + event fields = 0.
+//! 4-byte magic `b"HM01"` followed by 12-byte little-endian entries.
 
 use std::path::{Path, PathBuf};
 
@@ -20,20 +17,14 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use super::model::{CgroupCpuInfo, CgroupMemoryInfo, DataBlock, Snapshot, SystemCpuInfo};
 
-/// Magic bytes identifying V2 metrics files.
-const METRICS_MAGIC_V2: &[u8; 4] = b"MET2";
+/// Magic bytes identifying heatmap sidecar files.
+const HEATMAP_MAGIC: &[u8; 4] = b"HM01";
 
-/// Magic bytes identifying V3 metrics files (adds error_count).
-const METRICS_MAGIC_V3: &[u8; 4] = b"MET3";
-
-/// Magic bytes identifying V4 metrics files (adds checkpoint/autovacuum counts).
-const METRICS_MAGIC_V4: &[u8; 4] = b"MET4";
-
-/// Lightweight per-snapshot metrics for timeline heatmap.
-/// V4: 12 bytes per entry.
+/// Lightweight per-snapshot heatmap entry.
+/// 12 bytes per entry.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
-pub struct MetricsEntry {
+pub struct HeatmapEntry {
     /// Number of pg_stat_activity rows where state != "idle".
     pub active_sessions: u16,
     /// Host CPU utilization * 10 (0..1000 = 0.0%..100.0%).
@@ -75,16 +66,16 @@ pub struct HeatmapBucket {
 // File I/O
 // ---------------------------------------------------------------------------
 
-/// Derives `.metrics` path from `.zst` path: `"foo.zst"` -> `"foo.metrics"`.
-pub fn metrics_path(chunk_path: &Path) -> PathBuf {
-    chunk_path.with_extension("metrics")
+/// Derives `.heatmap` path from `.zst` path: `"foo.zst"` -> `"foo.heatmap"`.
+pub fn heatmap_path(chunk_path: &Path) -> PathBuf {
+    chunk_path.with_extension("heatmap")
 }
 
-/// Writes metrics entries to a V4 `.metrics` sidecar file.
-/// Format: 4-byte magic `b"MET4"` + 12-byte little-endian entries.
-pub fn write_metrics(path: &Path, entries: &[MetricsEntry]) -> std::io::Result<()> {
+/// Writes heatmap entries to a `.heatmap` sidecar file.
+/// Format: 4-byte magic `b"HM01"` + 12-byte little-endian entries.
+pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> std::io::Result<()> {
     let mut buf = Vec::with_capacity(4 + entries.len() * 12);
-    buf.extend_from_slice(METRICS_MAGIC_V4);
+    buf.extend_from_slice(HEATMAP_MAGIC);
     for e in entries {
         buf.extend_from_slice(&e.active_sessions.to_le_bytes());
         buf.extend_from_slice(&e.cpu_pct_x10.to_le_bytes());
@@ -97,100 +88,37 @@ pub fn write_metrics(path: &Path, entries: &[MetricsEntry]) -> std::io::Result<(
     std::fs::write(path, buf)
 }
 
-/// Reads metrics entries from a `.metrics` sidecar file.
-/// Supports V4 (12 bytes/entry), V3 (10 bytes/entry), V2 (8 bytes/entry),
-/// and V1 (no header, 4 bytes/entry) formats transparently.
-pub fn read_metrics(path: &Path) -> std::io::Result<Vec<MetricsEntry>> {
+/// Reads heatmap entries from a `.heatmap` sidecar file.
+pub fn read_heatmap(path: &Path) -> std::io::Result<Vec<HeatmapEntry>> {
     let data = std::fs::read(path)?;
 
-    if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V4 {
-        // V4 format: 4-byte header + 12-byte entries
-        let payload = &data[4..];
-        if payload.len() % 12 != 0 {
-            return Err(std::io::Error::other("invalid v4 metrics file size"));
-        }
-        let count = payload.len() / 12;
-        let mut entries = Vec::with_capacity(count);
-        for i in 0..count {
-            let off = i * 12;
-            entries.push(MetricsEntry {
-                active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
-                cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
-                cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
-                cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
-                error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
-                checkpoint_count: payload[off + 10],
-                autovacuum_count: payload[off + 11],
-            });
-        }
-        Ok(entries)
-    } else if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V3 {
-        // V3 format: 4-byte header + 10-byte entries
-        let payload = &data[4..];
-        if payload.len() % 10 != 0 {
-            return Err(std::io::Error::other("invalid v3 metrics file size"));
-        }
-        let count = payload.len() / 10;
-        let mut entries = Vec::with_capacity(count);
-        for i in 0..count {
-            let off = i * 10;
-            entries.push(MetricsEntry {
-                active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
-                cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
-                cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
-                cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
-                error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
-                checkpoint_count: 0,
-                autovacuum_count: 0,
-            });
-        }
-        Ok(entries)
-    } else if data.len() >= 4 && data[0..4] == *METRICS_MAGIC_V2 {
-        // V2 format: 4-byte header + 8-byte entries
-        let payload = &data[4..];
-        if payload.len() % 8 != 0 {
-            return Err(std::io::Error::other("invalid v2 metrics file size"));
-        }
-        let count = payload.len() / 8;
-        let mut entries = Vec::with_capacity(count);
-        for i in 0..count {
-            let off = i * 8;
-            entries.push(MetricsEntry {
-                active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
-                cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
-                cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
-                cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
-                error_count: 0,
-                checkpoint_count: 0,
-                autovacuum_count: 0,
-            });
-        }
-        Ok(entries)
-    } else {
-        // V1 format: no header, 4-byte entries (legacy)
-        if data.len() % 4 != 0 {
-            return Err(std::io::Error::other("invalid metrics file size"));
-        }
-        let count = data.len() / 4;
-        let mut entries = Vec::with_capacity(count);
-        for i in 0..count {
-            let off = i * 4;
-            entries.push(MetricsEntry {
-                active_sessions: u16::from_le_bytes([data[off], data[off + 1]]),
-                cpu_pct_x10: u16::from_le_bytes([data[off + 2], data[off + 3]]),
-                cgroup_cpu_pct_x10: 0,
-                cgroup_mem_pct_x10: 0,
-                error_count: 0,
-                checkpoint_count: 0,
-                autovacuum_count: 0,
-            });
-        }
-        Ok(entries)
+    if data.len() < 4 || data[0..4] != *HEATMAP_MAGIC {
+        return Err(std::io::Error::other("invalid heatmap file magic"));
     }
+
+    let payload = &data[4..];
+    if payload.len() % 12 != 0 {
+        return Err(std::io::Error::other("invalid heatmap file size"));
+    }
+    let count = payload.len() / 12;
+    let mut entries = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = i * 12;
+        entries.push(HeatmapEntry {
+            active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
+            cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
+            cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
+            cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
+            error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
+            checkpoint_count: payload[off + 10],
+            autovacuum_count: payload[off + 11],
+        });
+    }
+    Ok(entries)
 }
 
 // ---------------------------------------------------------------------------
-// Metric extraction from raw snapshots
+// Data extraction from raw snapshots
 // ---------------------------------------------------------------------------
 
 /// Precomputed xxh3 hash of "idle" for fast state comparison
@@ -350,10 +278,10 @@ fn compute_cgroup_mem_pct(mem: &CgroupMemoryInfo) -> u16 {
     pct_x10.min(1000)
 }
 
-/// Build MetricsEntry array from a sequence of snapshots.
+/// Build HeatmapEntry array from a sequence of snapshots.
 /// Host CPU% and cgroup CPU% are computed as deltas between consecutive snapshots.
 /// First snapshot gets cpu values = 0 (no previous data).
-pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry> {
+pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry> {
     let mut entries = Vec::with_capacity(snapshots.len());
     let mut prev_cpu: Option<&SystemCpuInfo> = None;
     let mut prev_cgroup_cpu: Option<&CgroupCpuInfo> = None;
@@ -389,7 +317,7 @@ pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry>
         let checkpoints = count_checkpoint_events(snap);
         let autovacuums = count_autovacuum_events(snap);
 
-        entries.push(MetricsEntry {
+        entries.push(HeatmapEntry {
             active_sessions: active,
             cpu_pct_x10: cpu,
             cgroup_cpu_pct_x10: cgroup_cpu,
@@ -410,10 +338,10 @@ pub fn build_metrics_from_snapshots(snapshots: &[Snapshot]) -> Vec<MetricsEntry>
 // Bucketing for frontend display
 // ---------------------------------------------------------------------------
 
-/// Aggregate raw metrics into a fixed number of buckets.
-/// Each bucket = max of each field within that time range.
-pub fn bucket_metrics(
-    entries: &[(i64, MetricsEntry)],
+/// Aggregate raw heatmap entries into a fixed number of buckets.
+/// Each bucket = max of each field within that time range (sum for events).
+pub fn bucket_heatmap(
+    entries: &[(i64, HeatmapEntry)],
     start_ts: i64,
     end_ts: i64,
     num_buckets: usize,
@@ -463,9 +391,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_metrics_roundtrip() {
+    fn test_heatmap_roundtrip() {
         let entries = vec![
-            MetricsEntry {
+            HeatmapEntry {
                 active_sessions: 5,
                 cpu_pct_x10: 450,
                 cgroup_cpu_pct_x10: 300,
@@ -474,7 +402,7 @@ mod tests {
                 checkpoint_count: 1,
                 autovacuum_count: 2,
             },
-            MetricsEntry {
+            HeatmapEntry {
                 active_sessions: 0,
                 cpu_pct_x10: 0,
                 cgroup_cpu_pct_x10: 0,
@@ -483,7 +411,7 @@ mod tests {
                 checkpoint_count: 0,
                 autovacuum_count: 0,
             },
-            MetricsEntry {
+            HeatmapEntry {
                 active_sessions: 100,
                 cpu_pct_x10: 999,
                 cgroup_cpu_pct_x10: 500,
@@ -493,12 +421,12 @@ mod tests {
                 autovacuum_count: 7,
             },
         ];
-        let dir = std::env::temp_dir().join("rpglot_test_metrics_v4");
+        let dir = std::env::temp_dir().join("rpglot_test_heatmap");
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test.metrics");
+        let path = dir.join("test.heatmap");
 
-        write_metrics(&path, &entries).unwrap();
-        let loaded = read_metrics(&path).unwrap();
+        write_heatmap(&path, &entries).unwrap();
+        let loaded = read_heatmap(&path).unwrap();
         assert_eq!(loaded.len(), 3);
         assert_eq!(loaded[0].active_sessions, 5);
         assert_eq!(loaded[0].cpu_pct_x10, 450);
@@ -520,40 +448,11 @@ mod tests {
     }
 
     #[test]
-    fn test_metrics_v1_backward_compat() {
-        // Simulate a V1 file: no magic header, 4-byte entries
-        let dir = std::env::temp_dir().join("rpglot_test_metrics_v1");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("legacy.metrics");
-
-        let mut buf = Vec::new();
-        buf.extend_from_slice(&5u16.to_le_bytes());
-        buf.extend_from_slice(&450u16.to_le_bytes());
-        buf.extend_from_slice(&10u16.to_le_bytes());
-        buf.extend_from_slice(&200u16.to_le_bytes());
-        std::fs::write(&path, &buf).unwrap();
-
-        let loaded = read_metrics(&path).unwrap();
-        assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0].active_sessions, 5);
-        assert_eq!(loaded[0].cpu_pct_x10, 450);
-        assert_eq!(loaded[0].cgroup_cpu_pct_x10, 0);
-        assert_eq!(loaded[0].cgroup_mem_pct_x10, 0);
-        assert_eq!(loaded[1].active_sessions, 10);
-        assert_eq!(loaded[1].cpu_pct_x10, 200);
-        assert_eq!(loaded[1].cgroup_cpu_pct_x10, 0);
-        assert_eq!(loaded[1].cgroup_mem_pct_x10, 0);
-
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir(&dir);
-    }
-
-    #[test]
-    fn test_bucket_metrics() {
+    fn test_bucket_heatmap() {
         let entries = vec![
             (
                 100,
-                MetricsEntry {
+                HeatmapEntry {
                     active_sessions: 3,
                     cpu_pct_x10: 200,
                     cgroup_cpu_pct_x10: 100,
@@ -565,7 +464,7 @@ mod tests {
             ),
             (
                 150,
-                MetricsEntry {
+                HeatmapEntry {
                     active_sessions: 10,
                     cpu_pct_x10: 700,
                     cgroup_cpu_pct_x10: 400,
@@ -577,7 +476,7 @@ mod tests {
             ),
             (
                 200,
-                MetricsEntry {
+                HeatmapEntry {
                     active_sessions: 1,
                     cpu_pct_x10: 100,
                     cgroup_cpu_pct_x10: 50,
@@ -588,7 +487,7 @@ mod tests {
                 },
             ),
         ];
-        let buckets = bucket_metrics(&entries, 100, 200, 2);
+        let buckets = bucket_heatmap(&entries, 100, 200, 2);
         assert_eq!(buckets.len(), 2);
         // First bucket [100, 150): entry at 100
         assert_eq!(buckets[0].active, 3);

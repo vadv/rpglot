@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 use crate::storage::chunk::ChunkReader;
-use crate::storage::metrics::{self, MetricsEntry};
+use crate::storage::heatmap::{self, HeatmapEntry};
 use crate::storage::model::Snapshot;
 use crate::storage::{StorageManager, StringInterner};
 
@@ -688,16 +688,16 @@ impl HistoryProvider {
         (first, last)
     }
 
-    // ========== Metrics / Heatmap ==========
+    // ========== Heatmap ==========
 
-    /// Load lightweight metrics for a timestamp range (for heatmap visualization).
+    /// Load lightweight heatmap data for a timestamp range (for timeline visualization).
     ///
-    /// Reads `.metrics` sidecar files where available (no snapshot decompression).
-    /// Falls back to decompressing snapshots for old chunks without `.metrics`.
+    /// Reads `.heatmap` sidecar files where available (no snapshot decompression).
+    /// Falls back to decompressing snapshots for old chunks without `.heatmap`.
     /// WAL entries are loaded individually (lightweight, ~5ms each).
     ///
-    /// Returns `Vec<(timestamp, MetricsEntry)>` sorted by timestamp.
-    pub fn load_metrics_range(&mut self, start_ts: i64, end_ts: i64) -> Vec<(i64, MetricsEntry)> {
+    /// Returns `Vec<(timestamp, HeatmapEntry)>` sorted by timestamp.
+    pub fn load_heatmap_range(&mut self, start_ts: i64, end_ts: i64) -> Vec<(i64, HeatmapEntry)> {
         let mut result = Vec::new();
 
         // 1. Chunks overlapping the range
@@ -722,15 +722,15 @@ impl HistoryProvider {
                 continue;
             }
 
-            // Try .metrics sidecar file (fast path — no decompression)
-            let mpath = metrics::metrics_path(&self.chunks[chunk_idx].path);
-            let entries = if let Ok(entries) = metrics::read_metrics(&mpath) {
+            // Try .heatmap sidecar file (fast path — no decompression)
+            let hpath = heatmap::heatmap_path(&self.chunks[chunk_idx].path);
+            let entries = if let Ok(entries) = heatmap::read_heatmap(&hpath) {
                 entries
             } else {
-                // Fallback: decompress all snapshots in chunk, build metrics, cache to disk
-                let fallback = Self::build_metrics_fallback(&reader);
+                // Fallback: decompress all snapshots in chunk, build heatmap, cache to disk
+                let fallback = Self::build_heatmap_fallback(&reader);
                 if let Some(ref e) = fallback {
-                    let _ = metrics::write_metrics(&mpath, e);
+                    let _ = heatmap::write_heatmap(&hpath, e);
                 }
                 fallback.unwrap_or_default()
             };
@@ -755,15 +755,15 @@ impl HistoryProvider {
                             && entry_meta.timestamp <= end_ts
                             && let Some(snap) = wal.load_snapshot(wal_idx)
                         {
-                            let active = metrics::count_active_sessions(&snap);
-                            let errors = metrics::count_error_entries(&snap);
-                            let checkpoints = metrics::count_checkpoint_events(&snap);
-                            let autovacuums = metrics::count_autovacuum_events(&snap);
+                            let active = heatmap::count_active_sessions(&snap);
+                            let errors = heatmap::count_error_entries(&snap);
+                            let checkpoints = heatmap::count_checkpoint_events(&snap);
+                            let autovacuums = heatmap::count_autovacuum_events(&snap);
                             // CPU% for WAL: simplified to 0 (WAL entries will be flushed
                             // to chunk with full CPU% soon, < 1 hour of data)
                             result.push((
                                 entry_meta.timestamp,
-                                MetricsEntry {
+                                HeatmapEntry {
                                     active_sessions: active,
                                     cpu_pct_x10: 0,
                                     cgroup_cpu_pct_x10: 0,
@@ -779,13 +779,13 @@ impl HistoryProvider {
                 WalSource::InMemory { snapshots } => {
                     for snap in snapshots {
                         if snap.timestamp >= start_ts && snap.timestamp <= end_ts {
-                            let active = metrics::count_active_sessions(snap);
-                            let errors = metrics::count_error_entries(snap);
-                            let checkpoints = metrics::count_checkpoint_events(snap);
-                            let autovacuums = metrics::count_autovacuum_events(snap);
+                            let active = heatmap::count_active_sessions(snap);
+                            let errors = heatmap::count_error_entries(snap);
+                            let checkpoints = heatmap::count_checkpoint_events(snap);
+                            let autovacuums = heatmap::count_autovacuum_events(snap);
                             result.push((
                                 snap.timestamp,
-                                MetricsEntry {
+                                HeatmapEntry {
                                     active_sessions: active,
                                     cpu_pct_x10: 0,
                                     cgroup_cpu_pct_x10: 0,
@@ -805,10 +805,10 @@ impl HistoryProvider {
         result
     }
 
-    /// Fallback: decompress all snapshots in a chunk to build metrics.
+    /// Fallback: decompress all snapshots in a chunk to build heatmap data.
     /// This is expensive (~100-500ms per chunk) but happens only once
-    /// for old chunks without `.metrics` files.
-    fn build_metrics_fallback(reader: &ChunkReader) -> Option<Vec<MetricsEntry>> {
+    /// for old chunks without `.heatmap` files.
+    fn build_heatmap_fallback(reader: &ChunkReader) -> Option<Vec<HeatmapEntry>> {
         let count = reader.snapshot_count();
         let mut snapshots = Vec::with_capacity(count);
         for i in 0..count {
@@ -817,7 +817,7 @@ impl HistoryProvider {
                 Err(_) => return None,
             }
         }
-        Some(metrics::build_metrics_from_snapshots(&snapshots))
+        Some(heatmap::build_heatmap_from_snapshots(&snapshots))
     }
 
     /// Jumps to the latest snapshot with timestamp <= `target_ts`.
