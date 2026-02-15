@@ -309,9 +309,11 @@ impl HistoryProvider {
 
         let total = global_offset;
 
-        // Sort and dedup timestamps
+        // Sort timestamps — do NOT dedup, timestamps[i] must correspond to global position i.
+        // Duplicate timestamps are possible (daemon writes snapshots every ~10s, two may
+        // land on the same second). Dedup would break the 1:1 mapping between
+        // timestamps index and global position.
         all_timestamps.sort();
-        all_timestamps.dedup();
 
         Ok((chunks, wal, total, all_timestamps))
     }
@@ -627,12 +629,19 @@ impl HistoryProvider {
 
         self.total_snapshots = global_offset;
 
-        // Update timestamps index
-        if !new_timestamps.is_empty() {
-            self.timestamps.extend(new_timestamps);
-            self.timestamps.sort();
-            self.timestamps.dedup();
+        // Rebuild timestamps from scratch — WAL is fully rescanned each refresh,
+        // so incremental extend would duplicate WAL timestamps.
+        let mut all_timestamps: Vec<i64> = Vec::new();
+        for chunk in &self.chunks {
+            if chunk.available
+                && let Ok(reader) = ChunkReader::open(&chunk.path)
+            {
+                all_timestamps.extend_from_slice(&reader.timestamps());
+            }
         }
+        all_timestamps.extend(new_timestamps);
+        all_timestamps.sort();
+        self.timestamps = all_timestamps;
 
         Ok(self.total_snapshots - old_total)
     }
@@ -641,6 +650,31 @@ impl HistoryProvider {
     /// Useful for building date indices without loading snapshot data.
     pub fn timestamps(&self) -> &[i64] {
         &self.timestamps
+    }
+
+    /// Returns the timestamp at the current cursor position.
+    pub fn current_timestamp(&self) -> Option<i64> {
+        self.timestamps.get(self.cursor).copied()
+    }
+
+    /// Returns timestamp of the previous snapshot relative to current cursor.
+    /// Used by the web API to provide step-back navigation to the frontend.
+    pub fn prev_timestamp(&self) -> Option<i64> {
+        if self.cursor > 0 {
+            self.timestamps.get(self.cursor - 1).copied()
+        } else {
+            None
+        }
+    }
+
+    /// Returns timestamp of the next snapshot relative to current cursor.
+    /// Used by the web API to provide step-forward navigation to the frontend.
+    pub fn next_timestamp(&self) -> Option<i64> {
+        if self.cursor + 1 < self.total_snapshots {
+            self.timestamps.get(self.cursor + 1).copied()
+        } else {
+            None
+        }
     }
 
     /// Returns the timestamp range as (first, last).
@@ -870,5 +904,28 @@ mod tests {
         assert!(provider.can_rewind());
         assert!(!provider.is_live());
         assert!(provider.last_error().is_none());
+    }
+
+    #[test]
+    fn test_history_provider_nav_timestamps() {
+        let snapshots = create_test_snapshots();
+        let mut provider = HistoryProvider::from_snapshots(snapshots).unwrap();
+
+        // At position 0: no prev, next=110
+        assert_eq!(provider.current_timestamp(), Some(100));
+        assert_eq!(provider.prev_timestamp(), None);
+        assert_eq!(provider.next_timestamp(), Some(110));
+
+        // Advance to position 1: prev=100, next=120
+        provider.advance();
+        assert_eq!(provider.current_timestamp(), Some(110));
+        assert_eq!(provider.prev_timestamp(), Some(100));
+        assert_eq!(provider.next_timestamp(), Some(120));
+
+        // Advance to position 2: prev=110, no next
+        provider.advance();
+        assert_eq!(provider.current_timestamp(), Some(120));
+        assert_eq!(provider.prev_timestamp(), Some(110));
+        assert_eq!(provider.next_timestamp(), None);
     }
 }

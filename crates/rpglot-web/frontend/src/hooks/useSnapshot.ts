@@ -50,19 +50,6 @@ export function useHistorySnapshot() {
   const [loading, setLoading] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const jumpTo = useCallback((position: number) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    setLoading(true);
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const snap = await fetchSnapshot({ position });
-        setSnapshot(snap);
-      } finally {
-        setLoading(false);
-      }
-    }, 50);
-  }, []);
-
   const jumpToTimestamp = useCallback((timestamp: number) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     setLoading(true);
@@ -90,5 +77,5 @@ export function useHistorySnapshot() {
     };
   }, []);
 
-  return { snapshot, loading, jumpTo, jumpToTimestamp };
+  return { snapshot, loading, jumpToTimestamp };
 }

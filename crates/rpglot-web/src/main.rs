@@ -553,6 +553,18 @@ fn advance_and_convert(inner: &mut WebAppInner) {
     update_pgi_rates(inner, &snapshot);
 
     // Convert to API snapshot (interner borrowed here, after rates are done)
+    // For history mode, extract prev/next timestamps for navigation
+    let (prev_ts, next_ts) = if inner.mode == Mode::History {
+        let hp = inner
+            .provider
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<HistoryProvider>());
+        hp.map(|hp| (hp.prev_timestamp(), hp.next_timestamp()))
+            .unwrap_or((None, None))
+    } else {
+        (None, None)
+    };
+
     let ctx = ConvertContext {
         snapshot: &snapshot,
         prev_snapshot: inner.prev_snapshot.as_ref(),
@@ -561,29 +573,14 @@ fn advance_and_convert(inner: &mut WebAppInner) {
         pgt_rates: &inner.pgt_rates,
         pgi_rates: &inner.pgi_rates,
     };
-    let api_snapshot = convert(&ctx);
+    let mut api_snapshot = convert(&ctx);
+    api_snapshot.prev_timestamp = prev_ts;
+    api_snapshot.next_timestamp = next_ts;
 
     // Rotate snapshots
     inner.prev_snapshot = inner.raw_snapshot.take();
     inner.raw_snapshot = Some(snapshot);
     inner.current_snapshot = Some(Arc::new(api_snapshot));
-}
-
-/// Navigate history provider to position and reconvert.
-fn history_jump_to(inner: &mut WebAppInner, position: usize) -> bool {
-    let provider = inner
-        .provider
-        .as_any_mut()
-        .and_then(|a| a.downcast_mut::<HistoryProvider>());
-    if let Some(hp) = provider
-        && hp.jump_to(position).is_some()
-    {
-        reconvert_current(inner);
-        info!(position, "history: jumped to position");
-        return true;
-    }
-    warn!(position, "history: invalid position");
-    false
 }
 
 /// Navigate history provider to timestamp and reconvert.
@@ -640,7 +637,7 @@ fn find_pgs_prev_snapshot(
 /// Uses the adjacent previous snapshot (position-1) to compute rates and system deltas.
 fn reconvert_current(inner: &mut WebAppInner) {
     // Extract snapshots from provider (mutable borrow for lazy loading)
-    let (snapshot, prev_adjacent, position) = {
+    let (snapshot, prev_adjacent, position, prev_ts, next_ts) = {
         let provider = inner
             .provider
             .as_any_mut()
@@ -653,7 +650,9 @@ fn reconvert_current(inner: &mut WebAppInner) {
         } else {
             None
         };
-        (snap, prev, pos)
+        let prev_ts = hp.prev_timestamp();
+        let next_ts = hp.next_timestamp();
+        (snap, prev, pos, prev_ts, next_ts)
     };
 
     let Some(snapshot) = snapshot else { return };
@@ -705,7 +704,8 @@ fn reconvert_current(inner: &mut WebAppInner) {
         pgi_rates: &inner.pgi_rates,
     };
     let mut api_snapshot = convert(&ctx);
-    api_snapshot.position = Some(position);
+    api_snapshot.prev_timestamp = prev_ts;
+    api_snapshot.next_timestamp = next_ts;
 
     inner.prev_snapshot = prev_adjacent;
     inner.raw_snapshot = Some(snapshot);
@@ -1011,8 +1011,6 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
 
 #[derive(Deserialize, utoipa::IntoParams)]
 struct SnapshotQuery {
-    /// Snapshot position index (history mode).
-    position: Option<usize>,
     /// Unix timestamp to navigate to (history mode, nearest floor).
     timestamp: Option<i64>,
 }
@@ -1037,16 +1035,11 @@ async fn handle_snapshot(
         let mut inner = state.lock().unwrap();
 
         // History navigation via query params
-        if inner.mode == Mode::History {
-            if let Some(pos) = query.position {
-                if !history_jump_to(&mut inner, pos) {
-                    return Err(StatusCode::BAD_REQUEST);
-                }
-            } else if let Some(ts) = query.timestamp
-                && !history_jump_to_timestamp(&mut inner, ts)
-            {
-                return Err(StatusCode::BAD_REQUEST);
-            }
+        if inner.mode == Mode::History
+            && let Some(ts) = query.timestamp
+            && !history_jump_to_timestamp(&mut inner, ts)
+        {
+            return Err(StatusCode::BAD_REQUEST);
         }
 
         inner
@@ -1099,14 +1092,13 @@ fn compute_dates_index(hp: &HistoryProvider) -> Vec<DateInfo> {
     use std::collections::BTreeMap;
 
     struct DateAcc {
-        first_position: usize,
         count: usize,
         first_timestamp: i64,
         last_timestamp: i64,
     }
 
     let mut map: BTreeMap<String, DateAcc> = BTreeMap::new();
-    for (pos, &ts) in hp.timestamps().iter().enumerate() {
+    for &ts in hp.timestamps() {
         let days = ts / 86400;
         let date_str = {
             let d = chrono_free_date(days);
@@ -1118,7 +1110,6 @@ fn compute_dates_index(hp: &HistoryProvider) -> Vec<DateInfo> {
                 acc.last_timestamp = ts;
             })
             .or_insert(DateAcc {
-                first_position: pos,
                 count: 1,
                 first_timestamp: ts,
                 last_timestamp: ts,
@@ -1127,7 +1118,6 @@ fn compute_dates_index(hp: &HistoryProvider) -> Vec<DateInfo> {
     map.into_iter()
         .map(|(date, acc)| DateInfo {
             date,
-            first_position: acc.first_position,
             count: acc.count,
             first_timestamp: acc.first_timestamp,
             last_timestamp: acc.last_timestamp,

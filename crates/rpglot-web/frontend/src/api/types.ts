@@ -6,7 +6,8 @@
 
 export interface ApiSnapshot {
   timestamp: number;
-  position?: number;
+  prev_timestamp?: number;
+  next_timestamp?: number;
   system: SystemSummary;
   pg: PgSummary;
   prc: ApiProcessRow[];
@@ -324,7 +325,6 @@ export interface TimelineInfo {
 
 export interface DateInfo {
   date: string;
-  first_position: number;
   count: number;
   first_timestamp: number;
   last_timestamp: number;

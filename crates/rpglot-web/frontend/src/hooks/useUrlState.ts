@@ -7,7 +7,6 @@ export interface UrlState {
   tab: TabKey;
   view: string | null;
   filter: string | null;
-  position: number | null;
   timestamp: number | null;
 }
 
@@ -22,9 +21,6 @@ export function readUrlState(): UrlState {
   const view = params.get("view") || null;
   const filter = params.get("filter") || null;
 
-  const rawPos = params.get("pos");
-  const position = rawPos != null ? parseInt(rawPos, 10) : null;
-
   const rawTs = params.get("ts");
   const timestamp = rawTs != null ? parseInt(rawTs, 10) : null;
 
@@ -32,7 +28,6 @@ export function readUrlState(): UrlState {
     tab,
     view,
     filter,
-    position: Number.isNaN(position) ? null : position,
     timestamp: Number.isNaN(timestamp) ? null : timestamp,
   };
 }
@@ -63,14 +58,6 @@ export function useUrlSync() {
         params.set("filter", updates.filter);
       } else {
         params.delete("filter");
-      }
-    }
-
-    if (updates.position !== undefined) {
-      if (updates.position != null && updates.position > 0) {
-        params.set("pos", String(updates.position));
-      } else {
-        params.delete("pos");
       }
     }
 

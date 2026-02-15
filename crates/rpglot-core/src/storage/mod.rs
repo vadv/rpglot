@@ -1,6 +1,7 @@
 pub mod chunk;
 pub mod interner;
 pub mod manager;
+pub mod metrics;
 pub mod model;
 
 pub use chunk::ChunkReader;

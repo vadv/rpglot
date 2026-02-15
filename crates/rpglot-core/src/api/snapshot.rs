@@ -11,9 +11,12 @@ use utoipa::ToSchema;
 pub struct ApiSnapshot {
     /// Unix timestamp (seconds since epoch).
     pub timestamp: i64,
-    /// Snapshot position in history (0-indexed). Present only in history mode.
+    /// Timestamp of the previous snapshot in history. Absent for the first snapshot and in live mode.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub position: Option<usize>,
+    pub prev_timestamp: Option<i64>,
+    /// Timestamp of the next snapshot in history. Absent for the last snapshot and in live mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_timestamp: Option<i64>,
     /// System-level summary metrics.
     pub system: SystemSummary,
     /// PostgreSQL instance-level summary metrics.

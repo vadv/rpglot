@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   Database,
   Radio,
@@ -9,6 +9,8 @@ import {
   Moon,
   Monitor,
   ShieldX,
+  HelpCircle,
+  HeartPulse,
 } from "lucide-react";
 import { fetchTimeline, fetchAuthConfig } from "./api/client";
 import { useSchema } from "./hooks/useSchema";
@@ -23,6 +25,13 @@ import { SummaryPanel } from "./components/SummaryPanel";
 import { DataTable } from "./components/DataTable";
 import { DetailPanel } from "./components/DetailPanel";
 import { Timeline, CalendarPopover, TimeInput } from "./components/Timeline";
+import { HelpModal } from "./components/HelpModal";
+import { RichTooltip } from "./components/RichTooltip";
+import {
+  computeHealthScore,
+  healthColor,
+  healthBgColor,
+} from "./utils/healthScore";
 import {
   captureTokenFromUrl,
   getToken,
@@ -181,6 +190,8 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         onTogglePause={togglePause}
         themeHook={themeHook}
         timezoneHook={timezoneHook}
+        onHelpOpen={() => tabState.setHelpOpen(true)}
+        snapshot={snapshot}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -203,28 +214,32 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
         paused={paused}
       />
+      {tabState.helpOpen && (
+        <HelpModal
+          tab={tabState.activeTab}
+          view={tabState.activeView}
+          onClose={() => tabState.setHelpOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 function HistoryApp({ schema }: { schema: ApiSchema }) {
-  const { snapshot, loading, jumpTo, jumpToTimestamp } = useHistorySnapshot();
+  const { snapshot, loading, jumpToTimestamp } = useHistorySnapshot();
   const urlSync = useUrlSync();
   const urlState = readUrlState();
   const tabState = useTabState(schema, snapshot);
   const themeHook = useTheme();
   const timezoneHook = useTimezone();
-  const [position, setPosition] = useState(() => urlState.position ?? 0);
   const [timeline, setTimeline] = useState(schema.timeline ?? null);
-  const positionRef = useRef(position);
-  positionRef.current = position;
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
-  // On mount: jump to URL position
+  // On mount: jump to URL timestamp
   useEffect(() => {
-    if (urlState.position != null && urlState.position > 0) {
-      jumpTo(urlState.position);
+    if (urlState.timestamp != null) {
+      jumpToTimestamp(urlState.timestamp);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -248,32 +263,12 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     };
   }, []);
 
-  // Sync position from snapshot.position (after backend jump)
-  useEffect(() => {
-    if (
-      snapshot?.position != null &&
-      snapshot.position !== positionRef.current
-    ) {
-      setPosition(snapshot.position);
-    }
-  }, [snapshot]);
-
-  const totalSnapshots = timeline?.total_snapshots ?? 0;
-
-  const handlePositionChange = useCallback(
-    (pos: number) => {
-      setPosition(pos);
-      jumpTo(pos);
-      urlSync({ position: pos });
-    },
-    [jumpTo, urlSync],
-  );
-
   const handleTimestampJump = useCallback(
     (ts: number) => {
       jumpToTimestamp(ts);
+      urlSync({ timestamp: ts });
     },
-    [jumpToTimestamp],
+    [jumpToTimestamp, urlSync],
   );
 
   // Keyboard: Left/Right to step, Shift+Left/Right to step ±1 hour
@@ -299,20 +294,20 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         if (ts) handleTimestampJump(ts + 3600);
         return;
       }
-      // Arrow: step ±1 snapshot
+      // Arrow: step ±1 snapshot via prev/next timestamp
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        const cur = positionRef.current;
-        if (cur > 0) handlePositionChange(cur - 1);
+        const prevTs = snapshotRef.current?.prev_timestamp;
+        if (prevTs != null) handleTimestampJump(prevTs);
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        const cur = positionRef.current;
-        if (cur < totalSnapshots - 1) handlePositionChange(cur + 1);
+        const nextTs = snapshotRef.current?.next_timestamp;
+        if (nextTs != null) handleTimestampJump(nextTs);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handlePositionChange, handleTimestampJump, totalSnapshots]);
+  }, [handleTimestampJump]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -322,9 +317,10 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         loading={loading}
         themeHook={themeHook}
         timezoneHook={timezoneHook}
+        onHelpOpen={() => tabState.setHelpOpen(true)}
         timeline={timeline ?? undefined}
         onTimestampJump={handleTimestampJump}
-        onDateSelect={handlePositionChange}
+        snapshot={snapshot}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -346,13 +342,20 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         hasSelection={tabState.selectedId != null}
         hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
       />
+      {tabState.helpOpen && (
+        <HelpModal
+          tab={tabState.activeTab}
+          view={tabState.activeView}
+          onClose={() => tabState.setHelpOpen(false)}
+        />
+      )}
       {timeline && (
         <Timeline
           timeline={timeline}
-          position={position}
-          onPositionChange={handlePositionChange}
           onTimestampJump={handleTimestampJump}
           timestamp={snapshot?.timestamp}
+          prevTimestamp={snapshot?.prev_timestamp}
+          nextTimestamp={snapshot?.next_timestamp}
           timezone={timezoneHook.timezone}
         />
       )}
@@ -368,6 +371,8 @@ interface TabState {
   activeTab: TabKey;
   selectedId: string | number | null;
   detailOpen: boolean;
+  helpOpen: boolean;
+  activeView: string;
   initialView: string | null;
   initialFilter: string | null;
   handleTabChange: (tab: TabKey) => void;
@@ -377,6 +382,7 @@ interface TabState {
   handleDrillDown: (drillDown: DrillDown, value: unknown) => void;
   handleViewChange: (view: string) => void;
   handleFilterChange: (filter: string) => void;
+  setHelpOpen: (open: boolean) => void;
 }
 
 function useTabState(
@@ -389,6 +395,8 @@ function useTabState(
   const [activeTab, setActiveTab] = useState<TabKey>(urlState.tab);
   const [selectedId, setSelectedId] = useState<string | number | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [activeView, setActiveView] = useState("");
   const [drillDownTarget, setDrillDownTarget] = useState<{
     tab: TabKey;
     targetField?: string;
@@ -471,6 +479,7 @@ function useTabState(
 
   const handleViewChange = useCallback(
     (view: string) => {
+      setActiveView(view);
       urlSync({ view });
     },
     [urlSync],
@@ -488,6 +497,13 @@ function useTabState(
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+
+      // ?: toggle help modal
+      if (e.key === "?") {
+        e.preventDefault();
+        setHelpOpen((prev) => !prev);
+        return;
+      }
 
       // 1-6: switch tabs
       const tabIndex = parseInt(e.key) - 1;
@@ -517,6 +533,8 @@ function useTabState(
     activeTab,
     selectedId,
     detailOpen,
+    helpOpen,
+    activeView,
     initialView,
     initialFilter,
     handleTabChange,
@@ -526,6 +544,7 @@ function useTabState(
     handleDrillDown,
     handleViewChange,
     handleFilterChange,
+    setHelpOpen,
   };
 }
 
@@ -560,7 +579,8 @@ function Header({
   timezoneHook,
   timeline,
   onTimestampJump,
-  onDateSelect,
+  onHelpOpen,
+  snapshot,
 }: {
   mode: string;
   timestamp?: number;
@@ -571,7 +591,8 @@ function Header({
   timezoneHook: TimezoneHookType;
   timeline?: TimelineInfo;
   onTimestampJump?: (ts: number) => void;
-  onDateSelect?: (position: number) => void;
+  onHelpOpen?: () => void;
+  snapshot?: ApiSnapshot | null;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -591,10 +612,10 @@ function Header({
 
   const handleSelectDate = useCallback(
     (dateInfo: DateInfo) => {
-      onDateSelect?.(dateInfo.first_position);
+      onTimestampJump?.(dateInfo.first_timestamp);
       setCalendarOpen(false);
     },
-    [onDateSelect],
+    [onTimestampJump],
   );
 
   const handleTimeSubmit = useCallback(
@@ -645,6 +666,7 @@ function Header({
             {paused ? "resume" : "pause"}
           </button>
         )}
+        {snapshot && <HealthBadge snapshot={snapshot} />}
       </div>
       <div className="flex items-center gap-3">
         {loading && (
@@ -688,6 +710,15 @@ function Header({
         >
           {TZ_DISPLAY[timezoneHook.timezone]}
         </button>
+        {onHelpOpen && (
+          <button
+            onClick={onHelpOpen}
+            className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+            title="Help (?)"
+          >
+            <HelpCircle size={16} />
+          </button>
+        )}
         <button
           onClick={themeHook.cycle}
           className="p-1 rounded text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
@@ -708,6 +739,51 @@ function Header({
         />
       )}
     </div>
+  );
+}
+
+function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
+  const { score, penalties } = useMemo(
+    () => computeHealthScore(snapshot),
+    [snapshot],
+  );
+  const color = healthColor(score);
+  const bgColor = healthBgColor(score);
+
+  const tooltipContent = (
+    <div className="space-y-1">
+      <div className="font-semibold text-[var(--text-primary)]">
+        Health Score: {score}/100
+      </div>
+      {penalties.length > 0 ? (
+        <div className="space-y-0.5 text-xs">
+          {penalties.map((p, i) => (
+            <div key={i} className="flex justify-between gap-3">
+              <span className="text-[var(--text-secondary)]">{p.label}</span>
+              <span className="text-[var(--status-critical)] font-mono">
+                {p.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-xs text-[var(--text-tertiary)]">
+          No penalties — database is healthy
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <RichTooltip content={tooltipContent} side="bottom">
+      <span
+        className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium cursor-default"
+        style={{ backgroundColor: bgColor, color }}
+      >
+        <HeartPulse size={12} />
+        {score}
+      </span>
+    </RichTooltip>
   );
 }
 
@@ -754,6 +830,7 @@ function TabContent({
           onSelectRow={handleSelectRow}
           onOpenDetail={handleOpenDetail}
           isLockTree={activeTab === "pgl"}
+          activeTab={activeTab}
           initialView={initialView}
           initialFilter={initialFilter}
           onViewChange={handleViewChange}
@@ -803,6 +880,7 @@ function HintsBar({
       )}
       {mode === "history" && <Hint keys="←/→" action="step" />}
       {mode === "history" && <Hint keys="Shift+←/→" action="±1h" />}
+      <Hint keys="?" action="help" />
     </div>
   );
 }

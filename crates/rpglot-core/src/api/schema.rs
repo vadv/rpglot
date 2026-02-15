@@ -45,8 +45,6 @@ pub struct TimelineInfo {
 pub struct DateInfo {
     /// Date string in "YYYY-MM-DD" format (UTC).
     pub date: String,
-    /// Position of the first snapshot on this date.
-    pub first_position: usize,
     /// Number of snapshots on this date.
     pub count: usize,
     /// Timestamp of the first snapshot on this date.

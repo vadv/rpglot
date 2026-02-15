@@ -20,19 +20,19 @@ import type { TimelineInfo, DateInfo } from "../api/types";
 
 interface TimelineProps {
   timeline: TimelineInfo;
-  position: number;
-  onPositionChange: (position: number) => void;
   onTimestampJump: (timestamp: number) => void;
   timestamp?: number;
+  prevTimestamp?: number;
+  nextTimestamp?: number;
   timezone: TimezoneMode;
 }
 
 export function Timeline({
   timeline,
-  position,
-  onPositionChange,
   onTimestampJump,
   timestamp,
+  prevTimestamp,
+  nextTimestamp,
   timezone,
 }: TimelineProps) {
   const total = timeline.total_snapshots;
@@ -41,19 +41,21 @@ export function Timeline({
   const ts = timestamp ?? 0;
   const dates = timeline.dates;
 
-  // Find which date the current position belongs to
+  // Find which date the current timestamp belongs to
   const currentDateInfo = useMemo(() => {
-    if (!dates || dates.length === 0) return null;
+    if (!dates || dates.length === 0 || ts <= 0) return null;
     for (let i = dates.length - 1; i >= 0; i--) {
-      if (position >= dates[i].first_position) return dates[i];
+      if (ts >= dates[i].first_timestamp) return dates[i];
     }
     return dates[0];
-  }, [dates, position]);
+  }, [dates, ts]);
 
-  const sliderMin = currentDateInfo ? currentDateInfo.first_position : 0;
+  const sliderMin = currentDateInfo
+    ? currentDateInfo.first_timestamp
+    : timeline.start;
   const sliderMax = currentDateInfo
-    ? currentDateInfo.first_position + currentDateInfo.count - 1
-    : total - 1;
+    ? currentDateInfo.last_timestamp
+    : timeline.end;
 
   // Time labels for slider endpoints
   const startTime = currentDateInfo
@@ -66,18 +68,18 @@ export function Timeline({
 
   const handleSliderChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      onPositionChange(Number(e.target.value));
+      onTimestampJump(Number(e.target.value));
     },
-    [onPositionChange],
+    [onTimestampJump],
   );
 
   const handlePrev = useCallback(() => {
-    if (position > 0) onPositionChange(position - 1);
-  }, [position, onPositionChange]);
+    if (prevTimestamp != null) onTimestampJump(prevTimestamp);
+  }, [prevTimestamp, onTimestampJump]);
 
   const handleNext = useCallback(() => {
-    if (position < total - 1) onPositionChange(position + 1);
-  }, [position, total, onPositionChange]);
+    if (nextTimestamp != null) onTimestampJump(nextTimestamp);
+  }, [nextTimestamp, onTimestampJump]);
 
   const handlePrevHour = useCallback(() => {
     if (ts > timeline.start) onTimestampJump(ts - 3600);
@@ -92,7 +94,7 @@ export function Timeline({
       {/* Prev snapshot */}
       <StepButton
         onClick={handlePrev}
-        disabled={position <= 0}
+        disabled={prevTimestamp == null}
         title="Previous snapshot"
       >
         <ChevronLeft size={14} />
@@ -119,7 +121,7 @@ export function Timeline({
         type="range"
         min={sliderMin}
         max={sliderMax}
-        value={Math.min(Math.max(position, sliderMin), sliderMax)}
+        value={Math.min(Math.max(ts, sliderMin), sliderMax)}
         onChange={handleSliderChange}
         className="flex-1 h-1"
         style={{ accentColor: "var(--accent)" }}
@@ -149,7 +151,7 @@ export function Timeline({
       {/* Next snapshot */}
       <StepButton
         onClick={handleNext}
-        disabled={position >= total - 1}
+        disabled={nextTimestamp == null}
         title="Next snapshot"
       >
         <ChevronRight size={14} />

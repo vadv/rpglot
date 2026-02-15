@@ -7,9 +7,12 @@ import {
   Server,
   Gauge,
   BarChart,
+  Info,
 } from "lucide-react";
+import { RichTooltip } from "./RichTooltip";
 import type { ApiSnapshot, SummarySchema } from "../api/types";
 import { formatValue } from "../utils/formatters";
+import { SUMMARY_SECTION_HELP } from "../utils/helpContent";
 
 const SECTION_ICONS: Record<string, typeof Cpu> = {
   cpu: Cpu,
@@ -126,6 +129,21 @@ function SummaryCard({
         >
           {label}
         </span>
+        {SUMMARY_SECTION_HELP[sectionKey] && (
+          <RichTooltip
+            content={
+              <span className="text-[var(--text-secondary)]">
+                {SUMMARY_SECTION_HELP[sectionKey]}
+              </span>
+            }
+            side="bottom"
+          >
+            <Info
+              size={10}
+              className="text-[var(--text-tertiary)] opacity-50 hover:opacity-100 cursor-help"
+            />
+          </RichTooltip>
+        )}
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         {visibleFields.map((f) => (

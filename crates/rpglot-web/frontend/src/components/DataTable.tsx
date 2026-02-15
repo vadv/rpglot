@@ -11,10 +11,12 @@ import {
 } from "@tanstack/react-table";
 import { Search, Inbox, ChevronUp, ChevronDown } from "lucide-react";
 import { Tooltip } from "./Tooltip";
-import type { ColumnSchema, ViewSchema } from "../api/types";
+import { RichTooltip } from "./RichTooltip";
+import type { ColumnSchema, ViewSchema, TabKey } from "../api/types";
 import { formatValue } from "../utils/formatters";
 import { getThresholdClass } from "../utils/thresholds";
 import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
+import { buildColumnTooltip, VIEW_DESCRIPTIONS } from "../utils/columnHelp";
 
 interface DataTableProps {
   data: Record<string, unknown>[];
@@ -25,6 +27,7 @@ interface DataTableProps {
   onSelectRow: (id: string | number | null) => void;
   onOpenDetail: () => void;
   isLockTree?: boolean;
+  activeTab?: TabKey;
   initialView?: string | null;
   initialFilter?: string | null;
   onViewChange?: (view: string) => void;
@@ -41,6 +44,7 @@ export function DataTable({
   onSelectRow,
   onOpenDetail,
   isLockTree,
+  activeTab,
   initialView,
   initialFilter,
   onViewChange,
@@ -264,19 +268,29 @@ export function DataTable({
       <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
         {views.length > 1 && (
           <div className="flex gap-1">
-            {views.map((v) => (
-              <button
-                key={v.key}
-                onClick={() => handleViewSwitch(v)}
-                className={`px-2.5 py-0.5 text-xs rounded font-medium transition-colors ${
-                  activeView === v.key
-                    ? "bg-[var(--accent)] text-[var(--text-inverse)]"
-                    : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
-                }`}
-              >
-                {v.label}
-              </button>
-            ))}
+            {views.map((v) => {
+              const viewDesc =
+                activeTab && VIEW_DESCRIPTIONS[activeTab]?.[v.key];
+              const btn = (
+                <button
+                  onClick={() => handleViewSwitch(v)}
+                  className={`px-2.5 py-0.5 text-xs rounded font-medium transition-colors ${
+                    activeView === v.key
+                      ? "bg-[var(--accent)] text-[var(--text-inverse)]"
+                      : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  }`}
+                >
+                  {v.label}
+                </button>
+              );
+              return viewDesc ? (
+                <Tooltip key={v.key} content={viewDesc} side="bottom">
+                  {btn}
+                </Tooltip>
+              ) : (
+                <span key={v.key}>{btn}</span>
+              );
+            })}
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
@@ -315,7 +329,8 @@ export function DataTable({
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const isSorted = header.column.getIsSorted();
-                  const desc = COLUMN_DESCRIPTIONS[header.id];
+                  const richContent = buildColumnTooltip(header.id);
+                  const simpleDesc = COLUMN_DESCRIPTIONS[header.id];
                   const headerContent = (
                     <span className="flex items-center gap-0.5">
                       {flexRender(
@@ -350,8 +365,12 @@ export function DataTable({
                           : ""
                       } ${isSorted ? "text-[var(--accent-text)]" : "text-[var(--text-secondary)]"}`}
                     >
-                      {desc ? (
-                        <Tooltip content={desc} side="bottom">
+                      {richContent ? (
+                        <RichTooltip content={richContent} side="bottom">
+                          {headerContent}
+                        </RichTooltip>
+                      ) : simpleDesc ? (
+                        <Tooltip content={simpleDesc} side="bottom">
                           {headerContent}
                         </Tooltip>
                       ) : (
