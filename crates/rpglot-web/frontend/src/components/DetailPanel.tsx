@@ -297,6 +297,7 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
     },
     { title: "Message", fields: ["message"], type: "query" },
     { title: "Sample", fields: ["sample"], type: "query" },
+    { title: "Statement", fields: ["statement"], type: "query" },
   ],
   pgl: [
     {

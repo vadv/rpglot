@@ -91,6 +91,9 @@ pub struct LogCollector {
     /// Used to attach STATEMENT: lines to the preceding error.
     /// Reset to None when a non-DETAIL/CONTEXT/STATEMENT line arrives.
     last_error_key: Option<(String, PgLogSeverity)>,
+    /// True if `drain_pending` already held back the last error once.
+    /// Prevents holding back the same error indefinitely.
+    error_held_back: bool,
     /// Last initialization error (for diagnostics)
     last_error: Option<String>,
 }
@@ -120,6 +123,7 @@ impl LogCollector {
             pending_events: Vec::new(),
             last_event_idx: None,
             last_error_key: None,
+            error_held_back: false,
             last_error: None,
         }
     }
@@ -250,7 +254,9 @@ impl LogCollector {
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
         self.last_event_idx = None;
-        self.last_error_key = None;
+        // NOTE: last_error_key is NOT reset here — if the last error is
+        // held back (no STATEMENT yet), the key stays alive so that a
+        // STATEMENT line in the next batch can attach to it.
         LogCollectResult {
             errors,
             checkpoint_count,
@@ -291,6 +297,7 @@ impl LogCollector {
                     entry.sample = sample;
                 }
                 self.last_error_key = Some(key);
+                self.error_held_back = false;
             }
             LogEventKind::Statement => {
                 // Attach SQL statement to the preceding error
@@ -335,7 +342,35 @@ impl LogCollector {
             return Vec::new();
         }
 
+        // If the last error has no STATEMENT yet and we haven't already
+        // held it back once, keep it in pending_errors so that a STATEMENT
+        // line arriving in the next collect() batch can still attach to it.
+        let held_back = if !self.error_held_back {
+            self.last_error_key.as_ref().and_then(|key| {
+                let entry = self.pending_errors.get(key)?;
+                if entry.statement.is_empty() {
+                    Some(key.clone())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+        let held_entry = held_back
+            .as_ref()
+            .and_then(|key| self.pending_errors.remove(key))
+            .map(|entry| (held_back.unwrap(), entry));
+
         let mut entries: Vec<_> = self.pending_errors.drain().collect();
+
+        // Put the held-back entry back for one more cycle.
+        if let Some((key, entry)) = held_entry {
+            self.pending_errors.insert(key, entry);
+            self.error_held_back = true;
+        } else {
+            self.error_held_back = false;
+        }
 
         // Sort by count descending — keep top patterns
         entries.sort_by(|a, b| b.1.count.cmp(&a.1.count));
@@ -644,7 +679,10 @@ mod tests {
             event_data: None,
         });
 
-        let entries = collector.drain_pending(&mut interner);
+        // First drain may hold back the last error (waiting for STATEMENT).
+        // Second drain releases it.
+        let mut entries = collector.drain_pending(&mut interner);
+        entries.extend(collector.drain_pending(&mut interner));
 
         // "relation "..." does not exist" should be grouped (count=2)
         assert_eq!(entries.len(), 2);
@@ -694,10 +732,108 @@ mod tests {
             event_data: None,
         });
 
-        let entries = collector.drain_pending(&mut interner);
+        // First drain holds back (waiting for STATEMENT), second releases
+        let mut entries = collector.drain_pending(&mut interner);
+        entries.extend(collector.drain_pending(&mut interner));
         assert_eq!(entries.len(), 1);
 
-        // Second drain should be empty
+        // Third drain should be empty
+        let entries = collector.drain_pending(&mut interner);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_statement_same_batch() {
+        let mut collector = LogCollector::new();
+        let mut interner = StringInterner::new();
+
+        // ERROR followed by STATEMENT in the same batch
+        collector.accumulate(ParsedLogLine {
+            severity: PgLogSeverity::Error,
+            message: "canceling statement due to statement timeout".to_string(),
+            event_kind: LogEventKind::Error,
+            event_data: None,
+        });
+        collector.accumulate(ParsedLogLine {
+            severity: PgLogSeverity::Error,
+            message: "select pg_sleep(2);".to_string(),
+            event_kind: LogEventKind::Statement,
+            event_data: None,
+        });
+
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].statement_hash != 0,
+            "statement should be attached"
+        );
+    }
+
+    #[test]
+    fn test_statement_cross_batch() {
+        let mut collector = LogCollector::new();
+        let mut interner = StringInterner::new();
+
+        // Batch 1: ERROR only
+        collector.accumulate(ParsedLogLine {
+            severity: PgLogSeverity::Error,
+            message: "canceling statement due to statement timeout".to_string(),
+            event_kind: LogEventKind::Error,
+            event_data: None,
+        });
+
+        // First drain — error held back (no STATEMENT yet)
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(
+            entries.len(),
+            0,
+            "error should be held back waiting for STATEMENT"
+        );
+
+        // Batch 2: STATEMENT arrives
+        collector.accumulate(ParsedLogLine {
+            severity: PgLogSeverity::Error,
+            message: "select pg_sleep(2);".to_string(),
+            event_kind: LogEventKind::Statement,
+            event_data: None,
+        });
+
+        // Second drain — error with STATEMENT attached
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(entries.len(), 1);
+        assert!(
+            entries[0].statement_hash != 0,
+            "statement should be attached"
+        );
+    }
+
+    #[test]
+    fn test_statement_not_held_forever() {
+        let mut collector = LogCollector::new();
+        let mut interner = StringInterner::new();
+
+        // ERROR without STATEMENT
+        collector.accumulate(ParsedLogLine {
+            severity: PgLogSeverity::Error,
+            message: "division by zero".to_string(),
+            event_kind: LogEventKind::Error,
+            event_data: None,
+        });
+
+        // First drain — held back
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(entries.len(), 0);
+
+        // Second drain — no STATEMENT came, error should be released
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(
+            entries.len(),
+            1,
+            "error should be released after one hold-back"
+        );
+        assert_eq!(entries[0].statement_hash, 0, "no statement attached");
+
+        // Third drain — should be empty
         let entries = collector.drain_pending(&mut interner);
         assert!(entries.is_empty());
     }
