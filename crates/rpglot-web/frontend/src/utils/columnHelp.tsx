@@ -1006,6 +1006,8 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
     io: "Physical I/O by table \u2014 cache hit ratio",
     schema:
       "Tables aggregated by schema \u2014 identify which schema consumes most I/O",
+    database:
+      "Tables aggregated by database \u2014 compare load across databases",
   },
   pgi: {
     usage: "Active index usage \u2014 scans and tuple fetches",
@@ -1013,6 +1015,8 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
     io: "Index physical I/O \u2014 cache hit ratio",
     schema:
       "Indexes aggregated by schema \u2014 identify which schema consumes most index I/O",
+    database:
+      "Indexes aggregated by database \u2014 compare index load across databases",
   },
   pge: {
     errors: "Grouped PostgreSQL errors by pattern",
