@@ -221,7 +221,14 @@ async fn async_main(args: Args) {
         Option<i64>,
     ) = if let Some(ref history_path) = args.history {
         info!(version = env!("CARGO_PKG_VERSION"), path = %history_path.display(), "starting in history mode");
-        let hp = HistoryProvider::from_path(history_path).expect("failed to open history data");
+        let hp = match HistoryProvider::from_path(history_path) {
+            Ok(hp) => hp,
+            Err(e) => {
+                error!(path = %history_path.display(), error = %e,
+                    "failed to open history data (no snapshots yet? wrong format?)");
+                std::process::exit(1);
+            }
+        };
         release_memory_to_os(); // free chunk decompression buffers from build_index
         let total = hp.len();
         let (start, end) = hp.timestamp_range();
