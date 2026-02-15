@@ -1,4 +1,6 @@
 //! Collector for pg_stat_user_indexes (per-database view).
+//!
+//! Collects from all databases via `db_clients` pool.
 
 use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatUserIndexesInfo;
@@ -6,7 +8,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::PgCollectError;
 use super::PostgresCollector;
-use super::format_postgres_error;
 use super::queries::{build_stat_user_indexes_query, build_statio_user_indexes_query};
 
 /// Cache entry for pg_stat_user_indexes rows.
@@ -14,13 +15,14 @@ use super::queries::{build_stat_user_indexes_query, build_statio_user_indexes_qu
 #[derive(Clone)]
 pub(crate) struct PgStatUserIndexesCacheEntry {
     pub info: PgStatUserIndexesInfo,
+    pub datname: String,
     pub schemaname: String,
     pub relname: String,
     pub indexrelname: String,
 }
 
 impl PostgresCollector {
-    /// Collects pg_stat_user_indexes statistics.
+    /// Collects pg_stat_user_indexes statistics from all connected databases.
     ///
     /// Uses 30-second caching (same interval as pg_stat_statements).
     /// Returns cached data with re-interned strings if cache is fresh.
@@ -39,6 +41,7 @@ impl PostgresCollector {
                 .iter()
                 .map(|entry| {
                     let mut info = entry.info.clone();
+                    info.datname_hash = interner.intern(&entry.datname);
                     info.schemaname_hash = interner.intern(&entry.schemaname);
                     info.relname_hash = interner.intern(&entry.relname);
                     info.indexrelname_hash = interner.intern(&entry.indexrelname);
@@ -47,61 +50,71 @@ impl PostgresCollector {
                 .collect());
         }
 
-        self.ensure_connected()?;
-        let client = self
-            .client
-            .as_mut()
-            .ok_or_else(|| PgCollectError::ConnectionError("not connected".to_string()))?;
-
-        let query = build_stat_user_indexes_query();
-        let rows = client
-            .query(query, &[])
-            .map_err(|e| PgCollectError::QueryError(format_postgres_error(&e)))?;
-
         let collected_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        let mut results = Vec::with_capacity(rows.len());
-        let mut cache = Vec::with_capacity(rows.len());
+        let query = build_stat_user_indexes_query();
+        let statio_query = build_statio_user_indexes_query();
 
-        for row in &rows {
-            let Some(info) = parse_index_row(row, interner, collected_at) else {
-                continue; // skip rows that fail to deserialize
+        let mut all_results = Vec::new();
+        let mut all_cache = Vec::new();
+
+        for db_client in &mut self.db_clients {
+            let datname = db_client.datname.clone();
+
+            let rows = match db_client.client.query(query, &[]) {
+                Ok(rows) => rows,
+                Err(_) => continue, // skip this database on error
             };
 
-            cache.push(PgStatUserIndexesCacheEntry {
-                info: info.0.clone(),
-                schemaname: info.1,
-                relname: info.2,
-                indexrelname: info.3,
-            });
-            results.push(info.0);
+            let mut results = Vec::with_capacity(rows.len());
+            let mut cache = Vec::with_capacity(rows.len());
+
+            for row in &rows {
+                let Some(info) = parse_index_row(row, interner, collected_at, &datname) else {
+                    continue;
+                };
+
+                cache.push(PgStatUserIndexesCacheEntry {
+                    info: info.0.clone(),
+                    datname: datname.clone(),
+                    schemaname: info.1,
+                    relname: info.2,
+                    indexrelname: info.3,
+                });
+                results.push(info.0);
+            }
+
+            // Merge I/O counters from pg_statio_user_indexes (graceful on failure)
+            let statio_rows = db_client
+                .client
+                .query(statio_query, &[])
+                .unwrap_or_default();
+            let statio_map: std::collections::HashMap<u32, IndexStatioRow> = statio_rows
+                .iter()
+                .filter_map(|row| parse_index_statio_row(row).map(|s| (s.indexrelid, s)))
+                .collect();
+            for r in &mut results {
+                if let Some(s) = statio_map.get(&r.indexrelid) {
+                    s.apply(r);
+                }
+            }
+            for c in &mut cache {
+                if let Some(s) = statio_map.get(&c.info.indexrelid) {
+                    s.apply(&mut c.info);
+                }
+            }
+
+            all_results.extend(results);
+            all_cache.extend(cache);
         }
 
-        // Merge I/O counters from pg_statio_user_indexes (graceful on failure)
-        let statio_query = build_statio_user_indexes_query();
-        let statio_rows = client.query(statio_query, &[]).unwrap_or_default();
-        let statio_map: std::collections::HashMap<u32, IndexStatioRow> = statio_rows
-            .iter()
-            .filter_map(|row| parse_index_statio_row(row).map(|s| (s.indexrelid, s)))
-            .collect();
-        for r in &mut results {
-            if let Some(s) = statio_map.get(&r.indexrelid) {
-                s.apply(r);
-            }
-        }
-        for c in &mut cache {
-            if let Some(s) = statio_map.get(&c.info.indexrelid) {
-                s.apply(&mut c.info);
-            }
-        }
-
-        self.indexes_cache = cache;
+        self.indexes_cache = all_cache;
         self.indexes_cache_time = Some(Instant::now());
 
-        Ok(results)
+        Ok(all_results)
     }
 }
 
@@ -111,6 +124,7 @@ fn parse_index_row(
     row: &postgres::Row,
     interner: &mut StringInterner,
     collected_at: i64,
+    datname: &str,
 ) -> Option<(PgStatUserIndexesInfo, String, String, String)> {
     let indexrelid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
     let relid: u32 = row.try_get::<_, i64>(1).ok()? as u32;
@@ -121,6 +135,7 @@ fn parse_index_row(
     let info = PgStatUserIndexesInfo {
         indexrelid,
         relid,
+        datname_hash: interner.intern(datname),
         schemaname_hash: interner.intern(&schemaname),
         relname_hash: interner.intern(&relname),
         indexrelname_hash: interner.intern(&indexrelname),

@@ -337,6 +337,11 @@ pub struct PgStatUserTablesInfo {
     /// Source: `pg_stat_user_tables.relid`
     pub relid: u32,
 
+    /// Hash of database name.
+    /// Source: set by collector from the connected database name — interned via StringInterner.
+    #[serde(default)]
+    pub datname_hash: u64,
+
     /// Hash of schema name.
     /// Source: `pg_stat_user_tables.schemaname` — interned via StringInterner
     pub schemaname_hash: u64,
@@ -485,6 +490,11 @@ pub struct PgStatUserIndexesInfo {
     /// Parent table OID.
     /// Source: `pg_stat_user_indexes.relid`
     pub relid: u32,
+
+    /// Hash of database name.
+    /// Source: set by collector from the connected database name — interned via StringInterner.
+    #[serde(default)]
+    pub datname_hash: u64,
 
     /// Hash of schema name.
     /// Source: `pg_stat_user_indexes.schemaname` — interned via StringInterner

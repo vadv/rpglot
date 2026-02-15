@@ -1,25 +1,24 @@
 //! PostgreSQL metrics collector.
 //!
 //! Collects metrics from PostgreSQL statistics views:
-//! - `pg_stat_activity` — active sessions
-//! - `pg_stat_statements` — query statistics (requires extension)
-//! - `pg_stat_database` — per-database statistics
+//! - `pg_stat_activity` — active sessions (instance-level)
+//! - `pg_stat_statements` — query statistics (instance-level, requires extension)
+//! - `pg_stat_database` — per-database statistics (instance-level)
 //! - `pg_stat_user_tables` — per-database table statistics
 //! - `pg_stat_user_indexes` — per-database index statistics
 //!
-//! ## Target database selection
+//! ## Multi-database collection
 //!
-//! `pg_stat_user_tables` and `pg_stat_user_indexes` are per-database views that only
-//! show data for the currently connected database. To collect meaningful data,
-//! the collector automatically detects the largest non-template database and connects to it.
+//! Instance-level metrics (activity, statements, database, bgwriter, locks, logs) are
+//! collected via a single "main" connection to any database.
 //!
-//! - If `PGDATABASE` is explicitly set, auto-detection is **disabled** — the collector
-//!   always connects to the specified database.
-//! - If `PGDATABASE` is not set (default = `$PGUSER`), auto-detection runs every 10 minutes,
-//!   selecting the largest database by `pg_database_size()`. If the largest database changes,
-//!   the collector reconnects automatically.
+//! Per-database metrics (tables, indexes) require a separate connection to each database.
+//! The collector maintains a pool of `DatabaseClient` connections — one per accessible
+//! non-template database. The pool is refreshed every 10 minutes to pick up newly
+//! created databases and drop connections to removed ones.
 //!
-//! A single connection is used for all views (both cluster-wide and per-database).
+//! If `PGDATABASE` is explicitly set, multi-database collection is **disabled** — only
+//! the specified database is used for both instance-level and per-database metrics.
 
 mod activity;
 mod bgwriter;
@@ -32,14 +31,15 @@ mod tables;
 
 use postgres::{Client, NoTls};
 use std::time::{Duration, Instant};
+use tracing::{debug, info, warn};
 
 use super::log_collector::LogCollector;
 use indexes::PgStatUserIndexesCacheEntry;
 use statements::{PgStatStatementsCacheEntry, STATEMENTS_COLLECT_INTERVAL};
 use tables::PgStatUserTablesCacheEntry;
 
-/// Interval between target database auto-detection checks.
-const TARGET_DATABASE_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
+/// Interval between database pool refresh checks.
+const DB_POOL_REFRESH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// Error type for PostgreSQL collection.
 #[derive(Debug)]
@@ -64,6 +64,12 @@ impl std::fmt::Display for PgCollectError {
 
 impl std::error::Error for PgCollectError {}
 
+/// A connection to a specific database for per-database metric collection.
+pub(crate) struct DatabaseClient {
+    pub datname: String,
+    pub client: Client,
+}
+
 /// PostgreSQL metrics collector.
 ///
 /// Connects to PostgreSQL using standard environment variables:
@@ -74,6 +80,7 @@ impl std::error::Error for PgCollectError {}
 /// - PGDATABASE (default: same as PGUSER)
 pub struct PostgresCollector {
     connection_string: String,
+    /// Main connection for instance-level metrics.
     pub(crate) client: Option<Client>,
     pub(crate) last_error: Option<String>,
     pub(crate) server_version_num: Option<i32>,
@@ -88,12 +95,12 @@ pub struct PostgresCollector {
     pub(crate) tables_cache_time: Option<Instant>,
     pub(crate) indexes_cache: Vec<PgStatUserIndexesCacheEntry>,
     pub(crate) indexes_cache_time: Option<Instant>,
-    /// true if PGDATABASE was explicitly set by the user (disables auto-detection).
+    /// true if PGDATABASE was explicitly set by the user (disables multi-db collection).
     explicit_database: bool,
-    /// Current target database name (from auto-detection or explicit PGDATABASE).
-    pub(crate) target_database: Option<String>,
-    /// Last time we checked for the largest database.
-    target_database_last_check: Option<Instant>,
+    /// Per-database connections for tables/indexes collection.
+    pub(crate) db_clients: Vec<DatabaseClient>,
+    /// Last time we refreshed the database connection pool.
+    db_clients_last_check: Option<Instant>,
     /// PostgreSQL log file collector.
     log_collector: LogCollector,
 }
@@ -140,15 +147,15 @@ impl PostgresCollector {
             indexes_cache: Vec::new(),
             indexes_cache_time: None,
             explicit_database,
-            target_database: None,
-            target_database_last_check: None,
+            db_clients: Vec::new(),
+            db_clients_last_check: None,
             log_collector: LogCollector::new(),
         })
     }
 
     /// Creates a collector with explicit connection string.
     ///
-    /// Auto-detection is disabled (treated as explicit database).
+    /// Multi-database collection is disabled (treated as explicit database).
     pub fn with_connection_string(connection_string: String) -> Self {
         Self {
             connection_string,
@@ -165,8 +172,8 @@ impl PostgresCollector {
             indexes_cache: Vec::new(),
             indexes_cache_time: None,
             explicit_database: true,
-            target_database: None,
-            target_database_last_check: None,
+            db_clients: Vec::new(),
+            db_clients_last_check: None,
             log_collector: LogCollector::new(),
         }
     }
@@ -175,16 +182,6 @@ impl PostgresCollector {
     ///
     /// Default: 30 seconds. Set to `Duration::ZERO` to disable caching
     /// and fetch fresh data on every call.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // TUI live mode: no caching for real-time data
-    /// let collector = PostgresCollector::from_env()?
-    ///     .with_statements_interval(Duration::ZERO);
-    ///
-    /// // Daemon mode: cache for 30 seconds (default)
-    /// let collector = PostgresCollector::from_env()?;
-    /// ```
     pub fn with_statements_interval(mut self, interval: Duration) -> Self {
         self.statements_collect_interval = interval;
         self
@@ -210,41 +207,21 @@ impl PostgresCollector {
         self.statements_collect_interval
     }
 
-    /// Ensures connection is established, reconnecting if needed.
-    ///
-    /// When auto-detection is enabled (`PGDATABASE` not set), periodically checks
-    /// which database is the largest and reconnects if it changed.
+    /// Ensures the main connection is established, reconnecting if needed.
     pub(crate) fn ensure_connected(&mut self) -> Result<(), PgCollectError> {
-        // If already connected, check if we need to re-detect target database.
         if self.client.is_some() {
-            if !self.explicit_database {
-                let should_check = match self.target_database_last_check {
-                    None => true,
-                    Some(t) => t.elapsed() >= TARGET_DATABASE_CHECK_INTERVAL,
-                };
-                if should_check {
-                    self.detect_target_database();
-                    // detect_target_database() may have set client=None to trigger reconnect.
-                    if self.client.is_none() {
-                        return self.ensure_connected();
-                    }
-                }
-            }
             return Ok(());
         }
 
-        // Build connection string: use target_database if auto-detected.
-        let conn_str = match &self.target_database {
-            Some(db) => replace_dbname(&self.connection_string, db),
-            None => self.connection_string.clone(),
-        };
-
-        match Client::connect(&conn_str, NoTls) {
+        match Client::connect(&self.connection_string, NoTls) {
             Ok(client) => {
                 let mut client = client;
 
                 // Clear per-connection caches on (re)connect.
                 self.clear_caches();
+                // Reset db_clients — will be rebuilt on next ensure_db_clients().
+                self.db_clients.clear();
+                self.db_clients_last_check = None;
 
                 // Determine server version once per (re)connect.
                 self.server_version_num = client
@@ -259,15 +236,6 @@ impl PostgresCollector {
                 self.client = Some(client);
                 self.last_error = None;
 
-                // On first connect with auto-detection, detect target database immediately.
-                if !self.explicit_database && self.target_database_last_check.is_none() {
-                    self.detect_target_database();
-                    // detect_target_database() may have set client=None to trigger reconnect.
-                    if self.client.is_none() {
-                        return self.ensure_connected();
-                    }
-                }
-
                 Ok(())
             }
             Err(e) => {
@@ -277,6 +245,129 @@ impl PostgresCollector {
                 self.clear_caches();
                 Err(PgCollectError::ConnectionError(msg))
             }
+        }
+    }
+
+    /// Ensures per-database connections are established for tables/indexes collection.
+    ///
+    /// In explicit database mode (PGDATABASE set), creates a single DatabaseClient
+    /// for the configured database. In auto mode, queries pg_database for all
+    /// accessible non-template databases and maintains connections to each.
+    ///
+    /// Refreshes the connection pool every 10 minutes.
+    pub(crate) fn ensure_db_clients(&mut self) {
+        // Check if refresh is needed.
+        if let Some(last_check) = self.db_clients_last_check
+            && last_check.elapsed() < DB_POOL_REFRESH_INTERVAL
+            && !self.db_clients.is_empty()
+        {
+            return;
+        }
+
+        self.db_clients_last_check = Some(Instant::now());
+
+        if self.explicit_database {
+            // Single database mode — reuse the main connection's database.
+            if self.db_clients.is_empty()
+                && let Some(ref mut main_client) = self.client
+            {
+                // Get current database name from the main connection.
+                if let Ok(row) = main_client.query_one("SELECT current_database()", &[]) {
+                    let datname: String = row.get(0);
+                    let conn_str = replace_dbname(&self.connection_string, &datname);
+                    match Client::connect(&conn_str, NoTls) {
+                        Ok(client) => {
+                            self.db_clients.push(DatabaseClient {
+                                datname: datname.clone(),
+                                client,
+                            });
+                            debug!(database = %datname, "per-database connection established");
+                        }
+                        Err(e) => {
+                            warn!(database = %datname, error = %format_postgres_error(&e),
+                                "failed to connect for per-database metrics");
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // Multi-database mode: discover all accessible databases.
+        let Some(ref mut main_client) = self.client else {
+            return;
+        };
+
+        let databases = match main_client.query(
+            "SELECT datname FROM pg_database \
+             WHERE NOT datistemplate AND datallowconn \
+             ORDER BY datname",
+            &[],
+        ) {
+            Ok(rows) => rows
+                .iter()
+                .map(|row| row.get::<_, String>(0))
+                .collect::<Vec<_>>(),
+            Err(e) => {
+                warn!(error = %format_postgres_error(&e), "failed to list databases");
+                return;
+            }
+        };
+
+        // Build set of currently connected databases (owned to avoid borrow conflicts).
+        let existing: std::collections::HashSet<String> =
+            self.db_clients.iter().map(|c| c.datname.clone()).collect();
+
+        let target_set: std::collections::HashSet<&str> =
+            databases.iter().map(|s| s.as_str()).collect();
+
+        // Remove connections to databases that no longer exist.
+        let before = self.db_clients.len();
+        self.db_clients
+            .retain(|c| target_set.contains(c.datname.as_str()));
+        let removed = before - self.db_clients.len();
+
+        // Add connections to new databases.
+        let mut added = 0;
+        for db in &databases {
+            if existing.contains(db.as_str()) {
+                // Check if existing connection is still alive.
+                let alive = self
+                    .db_clients
+                    .iter_mut()
+                    .find(|c| c.datname == *db)
+                    .map(|c| c.client.simple_query("").is_ok())
+                    .unwrap_or(false);
+                if !alive {
+                    // Remove dead connection, will be re-added below.
+                    self.db_clients.retain(|c| c.datname != *db);
+                } else {
+                    continue;
+                }
+            }
+
+            let conn_str = replace_dbname(&self.connection_string, db);
+            match Client::connect(&conn_str, NoTls) {
+                Ok(client) => {
+                    self.db_clients.push(DatabaseClient {
+                        datname: db.clone(),
+                        client,
+                    });
+                    added += 1;
+                }
+                Err(e) => {
+                    warn!(database = %db, error = %format_postgres_error(&e),
+                        "failed to connect for per-database metrics");
+                }
+            }
+        }
+
+        if added > 0 || removed > 0 {
+            let names: Vec<&str> = self.db_clients.iter().map(|c| c.datname.as_str()).collect();
+            info!(
+                databases = ?names, added, removed,
+                "per-database connection pool updated"
+            );
         }
     }
 
@@ -307,48 +398,6 @@ impl PostgresCollector {
         let result = self.log_collector.collect(&mut client, interner);
         self.client = Some(client);
         result
-    }
-
-    /// Detects the largest non-template database and reconnects if it changed.
-    ///
-    /// Queries `pg_database` for the largest database by size, excluding templates
-    /// and 'postgres'. If the result differs from the current connection, disconnects
-    /// and sets `target_database` so the next `ensure_connected()` call reconnects.
-    fn detect_target_database(&mut self) {
-        self.target_database_last_check = Some(Instant::now());
-
-        let client = match &mut self.client {
-            Some(c) => c,
-            None => return,
-        };
-
-        let result = client.query_one(
-            "SELECT datname FROM pg_database \
-             WHERE NOT datistemplate AND datname NOT IN ('postgres') \
-             ORDER BY pg_database_size(datname) DESC LIMIT 1",
-            &[],
-        );
-
-        let detected_db = match result {
-            Ok(row) => row.get::<_, String>(0),
-            Err(_) => return, // query failed (no permissions etc.) — stay on current DB
-        };
-
-        // Get current database name to compare.
-        let current_db = client
-            .query_one("SELECT current_database()", &[])
-            .ok()
-            .map(|row| row.get::<_, String>(0));
-
-        if current_db.as_deref() == Some(detected_db.as_str()) {
-            // Already connected to the largest DB — update target and return.
-            self.target_database = Some(detected_db);
-            return;
-        }
-
-        // Need to reconnect to the detected database.
-        self.target_database = Some(detected_db);
-        self.client = None; // disconnect — next ensure_connected() will reconnect
     }
 }
 

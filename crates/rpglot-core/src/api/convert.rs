@@ -1234,6 +1234,7 @@ fn extract_pgt(
     tables
         .iter()
         .map(|t| {
+            let database = resolve(interner, t.datname_hash);
             let schema = resolve(interner, t.schemaname_hash);
             let table = resolve(interner, t.relname_hash);
             let display_name = if schema.is_empty() || schema == "public" {
@@ -1313,6 +1314,7 @@ fn extract_pgt(
 
             PgTablesRow {
                 relid: t.relid,
+                database,
                 schema,
                 table,
                 display_name,
@@ -1376,6 +1378,7 @@ fn extract_pgi(
     indexes
         .iter()
         .map(|i| {
+            let database = resolve(interner, i.datname_hash);
             let schema = resolve(interner, i.schemaname_hash);
             let table = resolve(interner, i.relname_hash);
             let index = resolve(interner, i.indexrelname_hash);
@@ -1402,6 +1405,7 @@ fn extract_pgi(
             PgIndexesRow {
                 indexrelid: i.indexrelid,
                 relid: i.relid,
+                database,
                 schema,
                 table,
                 index,

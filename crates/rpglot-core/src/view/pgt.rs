@@ -8,10 +8,10 @@ use crate::tui::state::{PgTablesTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 
 const HEADERS_READS: &[&str] = &[
-    "SEQ_RD/s", "IDX_FT/s", "TOT_RD/s", "SEQ/s", "IDX/s", "HIT%", "DISK/s", "SIZE", "TABLE",
+    "SEQ_RD/s", "IDX_FT/s", "TOT_RD/s", "SEQ/s", "IDX/s", "HIT%", "DISK/s", "SIZE", "DB", "TABLE",
 ];
 const HEADERS_WRITES: &[&str] = &[
-    "INS/s", "UPD/s", "DEL/s", "HOT/s", "LIVE", "DEAD", "HIT%", "DISK/s", "SIZE", "TABLE",
+    "INS/s", "UPD/s", "DEL/s", "HOT/s", "LIVE", "DEAD", "HIT%", "DISK/s", "SIZE", "DB", "TABLE",
 ];
 const HEADERS_SCANS: &[&str] = &[
     "SEQ/s",
@@ -22,6 +22,7 @@ const HEADERS_SCANS: &[&str] = &[
     "HIT%",
     "DISK/s",
     "SIZE",
+    "DB",
     "TABLE",
 ];
 const HEADERS_MAINTENANCE: &[&str] = &[
@@ -32,6 +33,7 @@ const HEADERS_MAINTENANCE: &[&str] = &[
     "AVAC/s",
     "LAST_AVAC",
     "LAST_AANL",
+    "DB",
     "TABLE",
 ];
 const HEADERS_IO: &[&str] = &[
@@ -42,18 +44,20 @@ const HEADERS_IO: &[&str] = &[
     "HIT%",
     "DISK/s",
     "SIZE",
+    "DB",
     "TABLE",
 ];
 
-const WIDTHS_READS: &[u16] = &[10, 10, 10, 10, 10, 6, 8, 10];
-const WIDTHS_WRITES: &[u16] = &[10, 10, 10, 10, 10, 10, 6, 8, 10];
-const WIDTHS_SCANS: &[u16] = &[10, 12, 10, 12, 6, 6, 8, 10];
-const WIDTHS_MAINTENANCE: &[u16] = &[10, 10, 6, 8, 8, 10, 10];
-const WIDTHS_IO: &[u16] = &[10, 10, 10, 10, 6, 8, 10];
+const WIDTHS_READS: &[u16] = &[10, 10, 10, 10, 10, 6, 8, 10, 16];
+const WIDTHS_WRITES: &[u16] = &[10, 10, 10, 10, 10, 10, 6, 8, 10, 16];
+const WIDTHS_SCANS: &[u16] = &[10, 12, 10, 12, 6, 6, 8, 10, 16];
+const WIDTHS_MAINTENANCE: &[u16] = &[10, 10, 6, 8, 8, 10, 10, 16];
+const WIDTHS_IO: &[u16] = &[10, 10, 10, 10, 6, 8, 10, 16];
 
 #[derive(Debug, Clone)]
 struct PgTablesRowData {
     relid: u32,
+    database: String,
     schema: String,
     table: String,
     display_name: String,
@@ -85,6 +89,7 @@ struct PgTablesRowData {
 
 impl PgTablesRowData {
     fn from_table(t: &PgStatUserTablesInfo, interner: Option<&StringInterner>) -> Self {
+        let database = resolve_hash(interner, t.datname_hash);
         let schema = resolve_hash(interner, t.schemaname_hash);
         let table = resolve_hash(interner, t.relname_hash);
         let display_name = if schema.is_empty() || schema == "public" {
@@ -109,6 +114,7 @@ impl PgTablesRowData {
 
         Self {
             relid: t.relid,
+            database,
             schema,
             table,
             display_name,
@@ -150,7 +156,8 @@ impl PgTablesRowData {
                 5 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
                 6 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
                 7 => SortKey::Integer(self.size_bytes),
-                8 => SortKey::String(self.display_name.clone()),
+                8 => SortKey::String(self.database.clone()),
+                9 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgTablesViewMode::Writes => match col {
@@ -163,7 +170,8 @@ impl PgTablesRowData {
                 6 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
                 7 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
                 8 => SortKey::Integer(self.size_bytes),
-                9 => SortKey::String(self.display_name.clone()),
+                9 => SortKey::String(self.database.clone()),
+                10 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgTablesViewMode::Scans => match col {
@@ -175,7 +183,8 @@ impl PgTablesRowData {
                 5 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
                 6 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
                 7 => SortKey::Integer(self.size_bytes),
-                8 => SortKey::String(self.display_name.clone()),
+                8 => SortKey::String(self.database.clone()),
+                9 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgTablesViewMode::Maintenance => match col {
@@ -186,7 +195,8 @@ impl PgTablesRowData {
                 4 => SortKey::Float(self.autovacuum_count_s.unwrap_or(0.0)),
                 5 => SortKey::Integer(self.last_autovacuum),
                 6 => SortKey::Integer(self.last_autoanalyze),
-                7 => SortKey::String(self.display_name.clone()),
+                7 => SortKey::String(self.database.clone()),
+                8 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgTablesViewMode::Io => match col {
@@ -197,7 +207,8 @@ impl PgTablesRowData {
                 4 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
                 5 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
                 6 => SortKey::Integer(self.size_bytes),
-                7 => SortKey::String(self.display_name.clone()),
+                7 => SortKey::String(self.database.clone()),
+                8 => SortKey::String(self.display_name.clone()),
                 _ => SortKey::Integer(0),
             },
         }
@@ -250,6 +261,7 @@ impl PgTablesRowData {
                 ViewCell::plain(format_opt_f64(self.hit_pct, 5, 1)),
                 ViewCell::plain(format_blks_rate(self.disk_read_blks_s, 7)),
                 ViewCell::plain(format_size(self.size_bytes)),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(self.display_name.clone()),
             ],
             PgTablesViewMode::Writes => vec![
@@ -262,6 +274,7 @@ impl PgTablesRowData {
                 ViewCell::plain(format_opt_f64(self.hit_pct, 5, 1)),
                 ViewCell::plain(format_blks_rate(self.disk_read_blks_s, 7)),
                 ViewCell::plain(format_size(self.size_bytes)),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(self.display_name.clone()),
             ],
             PgTablesViewMode::Scans => vec![
@@ -276,6 +289,7 @@ impl PgTablesRowData {
                 ViewCell::plain(format_opt_f64(self.hit_pct, 5, 1)),
                 ViewCell::plain(format_blks_rate(self.disk_read_blks_s, 7)),
                 ViewCell::plain(format_size(self.size_bytes)),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(self.display_name.clone()),
             ],
             PgTablesViewMode::Maintenance => vec![
@@ -286,6 +300,7 @@ impl PgTablesRowData {
                 ViewCell::plain(format_opt_f64(self.autovacuum_count_s, 7, 2)),
                 ViewCell::plain(format!("{:>9}", format_age(self.last_autovacuum))),
                 ViewCell::plain(format!("{:>9}", format_age(self.last_autoanalyze))),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(self.display_name.clone()),
             ],
             PgTablesViewMode::Io => vec![
@@ -296,6 +311,7 @@ impl PgTablesRowData {
                 ViewCell::plain(format_opt_f64(self.hit_pct, 5, 1)),
                 ViewCell::plain(format_blks_rate(self.disk_read_blks_s, 7)),
                 ViewCell::plain(format_size(self.size_bytes)),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(self.display_name.clone()),
             ],
         }
@@ -361,7 +377,8 @@ pub fn build_tables_view(
     if let Some(filter) = &state.filter {
         let f = filter.to_lowercase();
         rows_data.retain(|r| {
-            r.schema.to_lowercase().contains(&f)
+            r.database.to_lowercase().contains(&f)
+                || r.schema.to_lowercase().contains(&f)
                 || r.table.to_lowercase().contains(&f)
                 || r.display_name.to_lowercase().contains(&f)
         });

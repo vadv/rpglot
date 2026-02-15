@@ -1,4 +1,6 @@
 //! Collector for pg_stat_user_tables (per-database view).
+//!
+//! Collects from all databases via `db_clients` pool.
 
 use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatUserTablesInfo;
@@ -6,7 +8,6 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::PgCollectError;
 use super::PostgresCollector;
-use super::format_postgres_error;
 use super::queries::{build_stat_user_tables_query, build_statio_user_tables_query};
 
 /// Cache entry for pg_stat_user_tables rows.
@@ -14,12 +15,13 @@ use super::queries::{build_stat_user_tables_query, build_statio_user_tables_quer
 #[derive(Clone)]
 pub(crate) struct PgStatUserTablesCacheEntry {
     pub info: PgStatUserTablesInfo,
+    pub datname: String,
     pub schemaname: String,
     pub relname: String,
 }
 
 impl PostgresCollector {
-    /// Collects pg_stat_user_tables statistics.
+    /// Collects pg_stat_user_tables statistics from all connected databases.
     ///
     /// Uses 30-second caching (same interval as pg_stat_statements).
     /// Returns cached data with re-interned strings if cache is fresh.
@@ -38,6 +40,7 @@ impl PostgresCollector {
                 .iter()
                 .map(|entry| {
                     let mut info = entry.info.clone();
+                    info.datname_hash = interner.intern(&entry.datname);
                     info.schemaname_hash = interner.intern(&entry.schemaname);
                     info.relname_hash = interner.intern(&entry.relname);
                     info
@@ -45,61 +48,71 @@ impl PostgresCollector {
                 .collect());
         }
 
-        self.ensure_connected()?;
-        let client = self
-            .client
-            .as_mut()
-            .ok_or_else(|| PgCollectError::ConnectionError("not connected".to_string()))?;
-
-        let query = build_stat_user_tables_query();
-        let rows = client
-            .query(query, &[])
-            .map_err(|e| PgCollectError::QueryError(format_postgres_error(&e)))?;
-
         let collected_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
 
-        let mut results = Vec::with_capacity(rows.len());
-        let mut cache = Vec::with_capacity(rows.len());
+        let query = build_stat_user_tables_query();
+        let statio_query = build_statio_user_tables_query();
 
-        for row in &rows {
-            let Some(info) = parse_table_row(row, interner, collected_at) else {
-                continue; // skip rows that fail to deserialize
+        let mut all_results = Vec::new();
+        let mut all_cache = Vec::new();
+
+        for db_client in &mut self.db_clients {
+            let datname = db_client.datname.clone();
+
+            let rows = match db_client.client.query(query, &[]) {
+                Ok(rows) => rows,
+                Err(_) => continue, // skip this database on error
             };
 
-            cache.push(PgStatUserTablesCacheEntry {
-                info: info.0.clone(),
-                schemaname: info.1,
-                relname: info.2,
-            });
-            results.push(info.0);
-        }
+            let mut results = Vec::with_capacity(rows.len());
+            let mut cache = Vec::with_capacity(rows.len());
 
-        // Merge pg_statio_user_tables I/O counters by relid
-        let statio_query = build_statio_user_tables_query();
-        let statio_rows = client.query(statio_query, &[]).unwrap_or_default();
-        let statio_map: std::collections::HashMap<u32, StatioRow> = statio_rows
-            .iter()
-            .filter_map(|row| parse_statio_row(row).map(|s| (s.relid, s)))
-            .collect();
+            for row in &rows {
+                let Some(info) = parse_table_row(row, interner, collected_at, &datname) else {
+                    continue;
+                };
 
-        for info in &mut results {
-            if let Some(s) = statio_map.get(&info.relid) {
-                s.apply(info);
+                cache.push(PgStatUserTablesCacheEntry {
+                    info: info.0.clone(),
+                    datname: datname.clone(),
+                    schemaname: info.1,
+                    relname: info.2,
+                });
+                results.push(info.0);
             }
-        }
-        for entry in &mut cache {
-            if let Some(s) = statio_map.get(&entry.info.relid) {
-                s.apply(&mut entry.info);
+
+            // Merge pg_statio_user_tables I/O counters by relid
+            let statio_rows = db_client
+                .client
+                .query(statio_query, &[])
+                .unwrap_or_default();
+            let statio_map: std::collections::HashMap<u32, StatioRow> = statio_rows
+                .iter()
+                .filter_map(|row| parse_statio_row(row).map(|s| (s.relid, s)))
+                .collect();
+
+            for info in &mut results {
+                if let Some(s) = statio_map.get(&info.relid) {
+                    s.apply(info);
+                }
             }
+            for entry in &mut cache {
+                if let Some(s) = statio_map.get(&entry.info.relid) {
+                    s.apply(&mut entry.info);
+                }
+            }
+
+            all_results.extend(results);
+            all_cache.extend(cache);
         }
 
-        self.tables_cache = cache;
+        self.tables_cache = all_cache;
         self.tables_cache_time = Some(Instant::now());
 
-        Ok(results)
+        Ok(all_results)
     }
 }
 
@@ -150,6 +163,7 @@ fn parse_table_row(
     row: &postgres::Row,
     interner: &mut StringInterner,
     collected_at: i64,
+    datname: &str,
 ) -> Option<(PgStatUserTablesInfo, String, String)> {
     let relid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
     let schemaname: String = row.try_get(1).unwrap_or_default();
@@ -157,6 +171,7 @@ fn parse_table_row(
 
     let info = PgStatUserTablesInfo {
         relid,
+        datname_hash: interner.intern(datname),
         schemaname_hash: interner.intern(&schemaname),
         relname_hash: interner.intern(&relname),
         seq_scan: row.try_get(3).unwrap_or(0),

@@ -469,6 +469,7 @@ pub struct PgStatementsRow {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PgTablesRow {
     pub relid: u32,
+    pub database: String,
     pub schema: String,
     pub table: String,
     /// `schema.table` or just `table` if public.
@@ -531,6 +532,7 @@ pub struct PgIndexesRow {
     pub indexrelid: u32,
     /// Parent table relid.
     pub relid: u32,
+    pub database: String,
     pub schema: String,
     pub table: String,
     pub index: String,

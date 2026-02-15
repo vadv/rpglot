@@ -333,6 +333,9 @@ impl<F: FileSystem + Clone> Collector<F> {
             }
             timing.pg_bgwriter = start.elapsed();
 
+            // Ensure per-database connections are established for tables/indexes.
+            pg_collector.ensure_db_clients();
+
             let start = Instant::now();
             match pg_collector.collect_tables(self.process_collector.interner_mut()) {
                 Ok(tables) if !tables.is_empty() => {

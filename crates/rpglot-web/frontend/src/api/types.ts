@@ -262,6 +262,7 @@ export interface PgStatementsRow {
 
 export interface PgTablesRow {
   relid: number;
+  database: string;
   schema: string;
   table: string;
   display_name: string;
@@ -303,6 +304,7 @@ export interface PgTablesRow {
 export interface PgIndexesRow {
   indexrelid: number;
   relid: number;
+  database: string;
   schema: string;
   table: string;
   index: string;

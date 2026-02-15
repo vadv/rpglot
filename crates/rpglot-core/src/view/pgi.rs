@@ -8,26 +8,28 @@ use crate::tui::state::{PgIndexesTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
 
 const HEADERS_USAGE: &[&str] = &[
-    "IDX/s", "TUP_RD/s", "TUP_FT/s", "HIT%", "DISK/s", "SIZE", "TABLE", "INDEX",
+    "IDX/s", "TUP_RD/s", "TUP_FT/s", "HIT%", "DISK/s", "SIZE", "DB", "TABLE", "INDEX",
 ];
-const HEADERS_UNUSED: &[&str] = &["IDX_SCAN", "SIZE", "TABLE", "INDEX"];
+const HEADERS_UNUSED: &[&str] = &["IDX_SCAN", "SIZE", "DB", "TABLE", "INDEX"];
 const HEADERS_IO: &[&str] = &[
     "IDX_RD/s",
     "IDX_HIT/s",
     "HIT%",
     "DISK/s",
     "SIZE",
+    "DB",
     "TABLE",
     "INDEX",
 ];
 
-const WIDTHS_USAGE: &[u16] = &[10, 10, 10, 6, 8, 10, 20];
-const WIDTHS_UNUSED: &[u16] = &[12, 10, 20];
-const WIDTHS_IO: &[u16] = &[10, 10, 6, 8, 10, 20];
+const WIDTHS_USAGE: &[u16] = &[10, 10, 10, 6, 8, 10, 16, 20];
+const WIDTHS_UNUSED: &[u16] = &[12, 10, 16, 20];
+const WIDTHS_IO: &[u16] = &[10, 10, 6, 8, 10, 16, 20];
 
 #[derive(Debug, Clone)]
 struct PgIndexesRowData {
     indexrelid: u32,
+    database: String,
     schema: String,
     table_name: String,
     index_name: String,
@@ -45,6 +47,7 @@ struct PgIndexesRowData {
 
 impl PgIndexesRowData {
     fn from_index(i: &PgStatUserIndexesInfo, interner: Option<&StringInterner>) -> Self {
+        let database = resolve_hash(interner, i.datname_hash);
         let schema = resolve_hash(interner, i.schemaname_hash);
         let table_name = resolve_hash(interner, i.relname_hash);
         let index_name = resolve_hash(interner, i.indexrelname_hash);
@@ -56,6 +59,7 @@ impl PgIndexesRowData {
 
         Self {
             indexrelid: i.indexrelid,
+            database,
             schema,
             table_name,
             index_name,
@@ -81,15 +85,17 @@ impl PgIndexesRowData {
                 3 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
                 4 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
                 5 => SortKey::Integer(self.size_bytes),
-                6 => SortKey::String(self.display_table.clone()),
-                7 => SortKey::String(self.index_name.clone()),
+                6 => SortKey::String(self.database.clone()),
+                7 => SortKey::String(self.display_table.clone()),
+                8 => SortKey::String(self.index_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgIndexesViewMode::Unused => match col {
                 0 => SortKey::Integer(self.idx_scan),
                 1 => SortKey::Integer(self.size_bytes),
-                2 => SortKey::String(self.display_table.clone()),
-                3 => SortKey::String(self.index_name.clone()),
+                2 => SortKey::String(self.database.clone()),
+                3 => SortKey::String(self.display_table.clone()),
+                4 => SortKey::String(self.index_name.clone()),
                 _ => SortKey::Integer(0),
             },
             PgIndexesViewMode::Io => match col {
@@ -98,8 +104,9 @@ impl PgIndexesRowData {
                 2 => SortKey::Float(self.hit_pct.unwrap_or(0.0)),
                 3 => SortKey::Float(self.disk_read_blks_s.unwrap_or(0.0)),
                 4 => SortKey::Integer(self.size_bytes),
-                5 => SortKey::String(self.display_table.clone()),
-                6 => SortKey::String(self.index_name.clone()),
+                5 => SortKey::String(self.database.clone()),
+                6 => SortKey::String(self.display_table.clone()),
+                7 => SortKey::String(self.index_name.clone()),
                 _ => SortKey::Integer(0),
             },
         }
@@ -144,6 +151,7 @@ impl PgIndexesRowData {
                     "{:>9}",
                     fmt::format_bytes(self.size_bytes as u64, FmtStyle::Detail)
                 )),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(truncate(&self.display_table, 20)),
                 ViewCell::plain(self.index_name.clone()),
             ],
@@ -153,6 +161,7 @@ impl PgIndexesRowData {
                     "{:>9}",
                     fmt::format_bytes(self.size_bytes as u64, FmtStyle::Detail)
                 )),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(truncate(&self.display_table, 20)),
                 ViewCell::plain(self.index_name.clone()),
             ],
@@ -165,6 +174,7 @@ impl PgIndexesRowData {
                     "{:>9}",
                     fmt::format_bytes(self.size_bytes as u64, FmtStyle::Detail)
                 )),
+                ViewCell::plain(self.database.clone()),
                 ViewCell::plain(truncate(&self.display_table, 20)),
                 ViewCell::plain(self.index_name.clone()),
             ],
@@ -220,7 +230,8 @@ pub fn build_indexes_view(
     if let Some(filter) = &state.filter {
         let f = filter.to_lowercase();
         rows_data.retain(|r| {
-            r.schema.to_lowercase().contains(&f)
+            r.database.to_lowercase().contains(&f)
+                || r.schema.to_lowercase().contains(&f)
                 || r.table_name.to_lowercase().contains(&f)
                 || r.index_name.to_lowercase().contains(&f)
                 || r.display_table.to_lowercase().contains(&f)

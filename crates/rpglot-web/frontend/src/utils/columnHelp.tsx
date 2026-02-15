@@ -270,7 +270,8 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   database: {
     label: "Database",
-    description: "Name of the database this backend is connected to.",
+    description:
+      "Name of the PostgreSQL database. For PGA: database the backend is connected to. For PGT/PGI: database containing the table/index.",
     docUrl: PG_STAT_ACTIVITY,
   },
   user: {

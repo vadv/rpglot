@@ -1694,6 +1694,15 @@ fn generate_pgt_schema() -> TabSchema {
         entity_id: "relid".into(),
         columns: vec![
             col("relid", "OID", DataType::Integer, None, None, true, false),
+            col(
+                "database",
+                "Database",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
             col("schema", "Schema", DataType::String, None, None, true, true),
             col("table", "Table", DataType::String, None, None, true, true),
             col(
@@ -2016,6 +2025,7 @@ fn generate_pgt_schema() -> TabSchema {
                     "io_hit_pct",
                     "disk_blks_read_s",
                     "size_bytes",
+                    "database",
                     "display_name",
                 ]
                 .into_iter()
@@ -2039,6 +2049,7 @@ fn generate_pgt_schema() -> TabSchema {
                     "io_hit_pct",
                     "disk_blks_read_s",
                     "size_bytes",
+                    "database",
                     "display_name",
                 ]
                 .into_iter()
@@ -2061,6 +2072,7 @@ fn generate_pgt_schema() -> TabSchema {
                     "io_hit_pct",
                     "disk_blks_read_s",
                     "size_bytes",
+                    "database",
                     "display_name",
                 ]
                 .into_iter()
@@ -2082,6 +2094,7 @@ fn generate_pgt_schema() -> TabSchema {
                     "autovacuum_count_s",
                     "last_autovacuum",
                     "last_autoanalyze",
+                    "database",
                     "display_name",
                 ]
                 .into_iter()
@@ -2103,6 +2116,7 @@ fn generate_pgt_schema() -> TabSchema {
                     "io_hit_pct",
                     "disk_blks_read_s",
                     "size_bytes",
+                    "database",
                     "display_name",
                 ]
                 .into_iter()
@@ -2146,6 +2160,15 @@ fn generate_pgi_schema() -> TabSchema {
                 None,
                 true,
                 false,
+            ),
+            col(
+                "database",
+                "Database",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
             ),
             col("schema", "Schema", DataType::String, None, None, true, true),
             col("table", "Table", DataType::String, None, None, true, true),
@@ -2252,6 +2275,7 @@ fn generate_pgi_schema() -> TabSchema {
                     "io_hit_pct",
                     "disk_blks_read_s",
                     "size_bytes",
+                    "database",
                     "display_table",
                     "index",
                 ]
@@ -2266,10 +2290,16 @@ fn generate_pgi_schema() -> TabSchema {
             ViewSchema {
                 key: "unused".into(),
                 label: "Unused".into(),
-                columns: vec!["idx_scan", "size_bytes", "display_table", "index"]
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                columns: vec![
+                    "idx_scan",
+                    "size_bytes",
+                    "database",
+                    "display_table",
+                    "index",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
                 default: false,
                 default_sort: Some("idx_scan".into()),
                 default_sort_desc: false,
@@ -2284,6 +2314,7 @@ fn generate_pgi_schema() -> TabSchema {
                     "io_hit_pct",
                     "disk_blks_read_s",
                     "size_bytes",
+                    "database",
                     "display_table",
                     "index",
                 ]
