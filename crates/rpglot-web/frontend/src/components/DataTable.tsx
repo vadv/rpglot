@@ -33,6 +33,8 @@ interface DataTableProps {
   onViewChange?: (view: string) => void;
   onFilterChange?: (filter: string) => void;
   snapshotTimestamp?: number;
+  /** Extra toolbar controls rendered before the filter input */
+  toolbarControls?: React.ReactNode;
 }
 
 export function DataTable({
@@ -50,6 +52,7 @@ export function DataTable({
   onViewChange,
   onFilterChange,
   snapshotTimestamp,
+  toolbarControls,
 }: DataTableProps) {
   const [activeView, setActiveView] = useState(() => {
     if (initialView && views.some((v) => v.key === initialView)) {
@@ -79,6 +82,12 @@ export function DataTable({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
+
+  // Notify parent of initial view on mount
+  useEffect(() => {
+    onViewChange?.(activeView);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Auto-focus table container on mount
   useEffect(() => {
@@ -294,6 +303,7 @@ export function DataTable({
           </div>
         )}
         <div className="ml-auto flex items-center gap-1.5">
+          {toolbarControls}
           <div className="relative">
             <Search
               size={13}

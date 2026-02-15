@@ -167,6 +167,9 @@ struct WebAppInner {
     total_snapshots: Option<usize>,
     history_start: Option<i64>,
     history_end: Option<i64>,
+    // Heatmap cache: per-date ("YYYY-MM-DD" → bucketed data).
+    // Past dates are immutable — cached forever. Today invalidated on refresh.
+    heatmap_cache: HashMap<String, Vec<rpglot_core::storage::metrics::HeatmapBucket>>,
 }
 
 type SharedState = Arc<Mutex<WebAppInner>>;
@@ -256,6 +259,7 @@ async fn async_main(args: Args) {
         total_snapshots,
         history_start,
         history_end,
+        heatmap_cache: HashMap::new(),
     };
 
     let state: SharedState = Arc::new(Mutex::new(inner));
@@ -354,6 +358,7 @@ async fn async_main(args: Args) {
         .route("/api/v1/snapshot", get(handle_snapshot))
         .route("/api/v1/stream", get(handle_stream))
         .route("/api/v1/timeline", get(handle_timeline))
+        .route("/api/v1/timeline/heatmap", get(handle_heatmap))
         .route(
             "/api/v1/auth/config",
             get({
@@ -506,6 +511,15 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
                 inner.total_snapshots = Some(total);
                 inner.history_start = Some(start);
                 inner.history_end = Some(end);
+                // Invalidate today's heatmap cache (new data may have been added)
+                let today_days = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs() as i64
+                    / 86400;
+                let d = chrono_free_date(today_days);
+                let today_key = format!("{:04}-{:02}-{:02}", d.0, d.1, d.2);
+                inner.heatmap_cache.remove(&today_key);
             }
             release_memory_to_os(); // free any chunk decompression buffers
             Ok::<(usize, usize), rpglot_core::provider::ProviderError>((added, total))
@@ -1139,6 +1153,92 @@ fn chrono_free_date(days_since_epoch: i64) -> (i32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
     let y = if m <= 2 { y + 1 } else { y };
     (y as i32, m, d)
+}
+
+// ============================================================
+// Heatmap
+// ============================================================
+
+#[derive(Deserialize, utoipa::IntoParams)]
+struct HeatmapQuery {
+    /// Start timestamp (epoch seconds).
+    start: i64,
+    /// End timestamp (epoch seconds).
+    end: i64,
+    /// Number of buckets (default: 400, max: 1000).
+    buckets: Option<usize>,
+}
+
+/// Get activity heatmap data for a time range (history mode only).
+#[utoipa::path(
+    get,
+    path = "/api/v1/timeline/heatmap",
+    params(HeatmapQuery),
+    responses(
+        (status = 200, description = "Heatmap bucket data"),
+        (status = 404, description = "Not available in live mode")
+    )
+)]
+async fn handle_heatmap(
+    State(state_tuple): AppState,
+    axum::extract::Query(query): axum::extract::Query<HeatmapQuery>,
+) -> Result<Json<Vec<rpglot_core::storage::metrics::HeatmapBucket>>, StatusCode> {
+    let num_buckets = query.buckets.unwrap_or(400).min(1000);
+
+    if query.end <= query.start {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Derive date key for caching
+    let days = query.start / 86400;
+    let d = chrono_free_date(days);
+    let date_key = format!("{:04}-{:02}-{:02}", d.0, d.1, d.2);
+
+    // Check cache first
+    {
+        let inner = state_tuple.0.lock().unwrap();
+        if inner.mode != Mode::History {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        // Use cached data for past dates (they are immutable)
+        let today_days = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            / 86400;
+        let is_past_date = days < today_days;
+        if is_past_date && let Some(cached) = inner.heatmap_cache.get(&date_key) {
+            return Ok(Json(cached.clone()));
+        }
+    }
+
+    // Compute heatmap (potentially expensive — spawn_blocking)
+    let state = state_tuple.0.clone();
+    let buckets = tokio::task::spawn_blocking(move || {
+        let mut inner = state.lock().unwrap();
+        let hp = inner
+            .provider
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<HistoryProvider>())
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let raw = hp.load_metrics_range(query.start, query.end);
+        let buckets = rpglot_core::storage::metrics::bucket_metrics(
+            &raw,
+            query.start,
+            query.end,
+            num_buckets,
+        );
+
+        // Cache the result
+        inner.heatmap_cache.insert(date_key, buckets.clone());
+
+        Ok::<_, StatusCode>(buckets)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    Ok(Json(buckets))
 }
 
 static SSE_CONNECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

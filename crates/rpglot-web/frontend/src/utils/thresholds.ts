@@ -109,8 +109,17 @@ const RULES: Record<string, Classifier> = {
     return "warning";
   },
 
-  // Query / transaction duration
-  query_duration_s: (v) => durationThreshold(v, 1, 30),
+  // Query / transaction duration — ignore idle sessions (duration is meaningless)
+  query_duration_s: (v, row) => {
+    const state = row.state;
+    if (
+      state === "idle" ||
+      state === "idle in transaction" ||
+      state === "idle in transaction (aborted)"
+    )
+      return undefined;
+    return durationThreshold(v, 1, 30);
+  },
   xact_duration_s: (v) => durationThreshold(v, 5, 60),
 
   // Wait event type (any wait = warning)

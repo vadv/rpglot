@@ -366,6 +366,13 @@ impl StorageManager {
         // Write chunk in new format (atomic via .tmp rename)
         crate::storage::chunk::write_chunk(&final_path, &snapshots, &filtered_interner)?;
 
+        // Write .metrics sidecar for timeline heatmap
+        let metrics = crate::storage::metrics::build_metrics_from_snapshots(&snapshots);
+        let mpath = crate::storage::metrics::metrics_path(&final_path);
+        if let Err(e) = crate::storage::metrics::write_metrics(&mpath, &metrics) {
+            tracing::warn!(error = %e, "failed to write chunk metrics");
+        }
+
         // Truncate WAL
         self.wal_file.set_len(0)?;
         self.wal_file.sync_all()?;
@@ -557,6 +564,7 @@ impl StorageManager {
                 && file_date < retention_limit
             {
                 std::fs::remove_file(&file.path)?;
+                let _ = std::fs::remove_file(crate::storage::metrics::metrics_path(&file.path));
                 result.files_removed_by_age += 1;
                 result.bytes_freed += file.size;
                 continue;
@@ -571,6 +579,7 @@ impl StorageManager {
         while total_size > config.max_total_size && !remaining_files.is_empty() {
             let file = remaining_files.remove(0);
             std::fs::remove_file(&file.path)?;
+            let _ = std::fs::remove_file(crate::storage::metrics::metrics_path(&file.path));
             result.files_removed_by_size += 1;
             result.bytes_freed += file.size;
             total_size -= file.size;

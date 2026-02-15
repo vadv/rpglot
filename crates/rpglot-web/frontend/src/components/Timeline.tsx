@@ -12,7 +12,8 @@ import {
   getDatePartsInTz,
   dateToEpochInTz,
 } from "../utils/formatters";
-import type { TimelineInfo, DateInfo } from "../api/types";
+import type { TimelineInfo, DateInfo, HeatmapBucket } from "../api/types";
+import { ActivityHeatmap } from "./ActivityHeatmap";
 
 // ============================================================
 // Timeline — intra-day slider with time display
@@ -25,6 +26,9 @@ interface TimelineProps {
   prevTimestamp?: number;
   nextTimestamp?: number;
   timezone: TimezoneMode;
+  heatmapBuckets?: HeatmapBucket[];
+  hourStart?: number;
+  hourEnd?: number;
 }
 
 export function Timeline({
@@ -34,6 +38,9 @@ export function Timeline({
   prevTimestamp,
   nextTimestamp,
   timezone,
+  heatmapBuckets,
+  hourStart,
+  hourEnd,
 }: TimelineProps) {
   const total = timeline.total_snapshots;
   if (total === 0) return null;
@@ -50,20 +57,23 @@ export function Timeline({
     return dates[0];
   }, [dates, ts]);
 
-  const sliderMin = currentDateInfo
-    ? currentDateInfo.first_timestamp
-    : timeline.start;
-  const sliderMax = currentDateInfo
-    ? currentDateInfo.last_timestamp
-    : timeline.end;
+  // Use hour boundaries if available, otherwise fall back to day/global range
+  const sliderMin =
+    hourStart != null
+      ? hourStart
+      : currentDateInfo
+        ? currentDateInfo.first_timestamp
+        : timeline.start;
+  const sliderMax =
+    hourEnd != null
+      ? hourEnd
+      : currentDateInfo
+        ? currentDateInfo.last_timestamp
+        : timeline.end;
 
   // Time labels for slider endpoints
-  const startTime = currentDateInfo
-    ? formatTime(currentDateInfo.first_timestamp, timezone)
-    : "";
-  const endTime = currentDateInfo
-    ? formatTime(currentDateInfo.last_timestamp, timezone)
-    : "";
+  const startTime = sliderMin > 0 ? formatTime(sliderMin, timezone) : "";
+  const endTime = sliderMax > 0 ? formatTime(sliderMax, timezone) : "";
   const currentTime = ts > 0 ? formatTime(ts, timezone) : "-";
 
   const handleSliderChange = useCallback(
@@ -116,16 +126,26 @@ export function Timeline({
         </span>
       )}
 
-      {/* Intra-day slider */}
-      <input
-        type="range"
-        min={sliderMin}
-        max={sliderMax}
-        value={Math.min(Math.max(ts, sliderMin), sliderMax)}
-        onChange={handleSliderChange}
-        className="flex-1 h-1"
-        style={{ accentColor: "var(--accent)" }}
-      />
+      {/* Intra-day slider with heatmap overlay */}
+      <div className="relative flex-1 h-6 flex items-center">
+        {heatmapBuckets && heatmapBuckets.length > 0 && (
+          <ActivityHeatmap
+            buckets={heatmapBuckets}
+            startTs={sliderMin}
+            endTs={sliderMax}
+            currentTs={ts}
+          />
+        )}
+        <input
+          type="range"
+          min={sliderMin}
+          max={sliderMax}
+          value={Math.min(Math.max(ts, sliderMin), sliderMax)}
+          onChange={handleSliderChange}
+          className="relative z-10 w-full h-1 opacity-80"
+          style={{ accentColor: "var(--accent)" }}
+        />
+      </div>
 
       {/* End time label */}
       {endTime && (

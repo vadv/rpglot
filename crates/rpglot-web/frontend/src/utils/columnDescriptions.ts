@@ -153,4 +153,15 @@ export const COLUMN_DESCRIPTIONS: Record<string, string> = {
   lock_target: "Lock target (table name, transaction ID, etc.)",
   lock_granted: "Whether lock is held (true) or waiting (false)",
   state_change: "Time since last state change",
+
+  // === Schema views (client-side aggregation) ===
+  tables: "Number of tables in schema",
+  indexes: "Number of indexes in schema",
+  unused: "Number of indexes with zero scans",
+  tup_read_s: "Total tuples read per second (seq + idx)",
+  ins_s: "Total inserts per second across schema",
+  upd_s: "Total updates per second across schema",
+  del_s: "Total deletes per second across schema",
+  blk_rd_s: "Total block reads per second (heap + idx)",
+  blk_hit_s: "Total block hits per second (heap + idx)",
 };

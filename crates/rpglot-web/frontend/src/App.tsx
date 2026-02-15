@@ -12,13 +12,18 @@ import {
   HelpCircle,
   HeartPulse,
 } from "lucide-react";
-import { fetchTimeline, fetchAuthConfig } from "./api/client";
+import { fetchTimeline, fetchHeatmap, fetchAuthConfig } from "./api/client";
 import { useSchema } from "./hooks/useSchema";
 import { useLiveSnapshot, useHistorySnapshot } from "./hooks/useSnapshot";
 import { readUrlState, useUrlSync } from "./hooks/useUrlState";
 import { useTheme } from "./hooks/useTheme";
 import { useTimezone } from "./hooks/useTimezone";
-import { formatTimestamp, formatDate } from "./utils/formatters";
+import {
+  formatTimestamp,
+  formatDate,
+  getDatePartsInTz,
+  dateToEpochInTz,
+} from "./utils/formatters";
 import type { TimezoneMode } from "./utils/formatters";
 import { TabBar } from "./components/TabBar";
 import { SummaryPanel } from "./components/SummaryPanel";
@@ -47,6 +52,12 @@ import type {
   DrillDown,
   TimelineInfo,
   DateInfo,
+  HeatmapBucket,
+  ViewSchema,
+  ColumnSchema,
+  DataType,
+  Unit,
+  Format,
 } from "./api/types";
 
 const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pgl"];
@@ -233,8 +244,41 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const themeHook = useTheme();
   const timezoneHook = useTimezone();
   const [timeline, setTimeline] = useState(schema.timeline ?? null);
+  const [heatmapBuckets, setHeatmapBuckets] = useState<HeatmapBucket[]>([]);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+
+  // Compute current hour boundaries from timestamp
+  const hourRange = useMemo(() => {
+    const ts = snapshot?.timestamp ?? 0;
+    if (ts <= 0) return null;
+    const tz = timezoneHook.timezone;
+    const parts = getDatePartsInTz(ts, tz);
+    const hourStart = dateToEpochInTz(
+      parts.year,
+      parts.month,
+      parts.day,
+      parts.hour,
+      0,
+      0,
+      tz,
+    );
+    const hourEnd = hourStart + 3599;
+    return { start: hourStart, end: hourEnd, hour: parts.hour };
+  }, [snapshot?.timestamp, timezoneHook.timezone]);
+
+  // Load heatmap data for the current hour
+  useEffect(() => {
+    if (!hourRange) return;
+    const { start, end } = hourRange;
+    let cancelled = false;
+    fetchHeatmap(start, end, 400).then((buckets) => {
+      if (!cancelled) setHeatmapBuckets(buckets);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [hourRange?.start]);
 
   // On mount: jump to URL timestamp
   useEffect(() => {
@@ -321,6 +365,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         timeline={timeline ?? undefined}
         onTimestampJump={handleTimestampJump}
         snapshot={snapshot}
+        currentHour={hourRange?.hour}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -357,6 +402,9 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
           prevTimestamp={snapshot?.prev_timestamp}
           nextTimestamp={snapshot?.next_timestamp}
           timezone={timezoneHook.timezone}
+          heatmapBuckets={heatmapBuckets}
+          hourStart={hourRange?.start}
+          hourEnd={hourRange?.end}
         />
       )}
     </div>
@@ -581,6 +629,7 @@ function Header({
   onTimestampJump,
   onHelpOpen,
   snapshot,
+  currentHour,
 }: {
   mode: string;
   timestamp?: number;
@@ -593,6 +642,7 @@ function Header({
   onTimestampJump?: (ts: number) => void;
   onHelpOpen?: () => void;
   snapshot?: ApiSnapshot | null;
+  currentHour?: number;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -623,6 +673,24 @@ function Header({
       onTimestampJump?.(epoch);
     },
     [onTimestampJump],
+  );
+
+  const handleHourChange = useCallback(
+    (hour: number) => {
+      if (ts <= 0 || !onTimestampJump) return;
+      const parts = getDatePartsInTz(ts, tz);
+      const epoch = dateToEpochInTz(
+        parts.year,
+        parts.month,
+        parts.day,
+        hour,
+        0,
+        0,
+        tz,
+      );
+      onTimestampJump(epoch);
+    },
+    [ts, tz, onTimestampJump],
   );
 
   const ThemeIcon =
@@ -675,7 +743,7 @@ function Header({
           </span>
         )}
         {isHistory && dates && dates.length > 0 ? (
-          /* History mode: clickable date + editable time */
+          /* History mode: clickable date + hour picker + editable time */
           <div className="flex items-center gap-1.5">
             <button
               ref={dateButtonRef}
@@ -684,6 +752,20 @@ function Header({
             >
               {currentDateStr}
             </button>
+            {currentHour != null && (
+              <select
+                value={currentHour}
+                onChange={(e) => handleHourChange(Number(e.target.value))}
+                className="font-mono text-xs px-1 py-0.5 rounded bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-default)] hover:bg-[var(--bg-hover)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] cursor-pointer transition-colors appearance-none text-center w-[52px]"
+                title="Select hour"
+              >
+                {Array.from({ length: 24 }, (_, h) => (
+                  <option key={h} value={h}>
+                    {String(h).padStart(2, "0")}:00
+                  </option>
+                ))}
+              </select>
+            )}
             {ts > 0 && (
               <TimeInput
                 timestamp={ts}
@@ -787,6 +869,494 @@ function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
   );
 }
 
+// ============================================================
+// Smart filters: per-tab, per-view problem detection
+// ============================================================
+
+/** PRC: returns true if process is a PostgreSQL backend */
+function isPgProcess(row: Record<string, unknown>): boolean {
+  const bt = row.pg_backend_type;
+  return typeof bt === "string" && bt.length > 0;
+}
+
+/** PGT: returns true if table has problems on given view */
+function isPgtProblematic(row: Record<string, unknown>, view: string): boolean {
+  switch (view) {
+    case "reads":
+      return (
+        (num(row.io_hit_pct) > 0 && num(row.io_hit_pct) < 90) ||
+        num(row.disk_blks_read_s) > 0
+      );
+    case "writes":
+      return num(row.dead_pct) > 5 || num(row.n_dead_tup) > 1000;
+    case "scans":
+      return (
+        num(row.seq_pct) > 50 &&
+        num(row.seq_scan_s) > 0 &&
+        num(row.n_live_tup) > 10000
+      );
+    case "maintenance":
+      return num(row.dead_pct) > 5 || num(row.n_dead_tup) > 10000;
+    case "io":
+      return (
+        (num(row.io_hit_pct) > 0 && num(row.io_hit_pct) < 90) ||
+        num(row.disk_blks_read_s) > 0
+      );
+    default:
+      return true; // unknown view — don't filter
+  }
+}
+
+/** PGI: returns true if index has problems on given view */
+function isPgiProblematic(row: Record<string, unknown>, view: string): boolean {
+  switch (view) {
+    case "usage":
+      return num(row.idx_scan) === 0 || num(row.idx_scan_s) === 0;
+    case "unused":
+      return true; // already shows only unused — don't filter
+    case "io":
+      return (
+        (num(row.io_hit_pct) > 0 && num(row.io_hit_pct) < 90) ||
+        num(row.disk_blks_read_s) > 0
+      );
+    default:
+      return true;
+  }
+}
+
+/** Safe numeric accessor — treats null/undefined/NaN as 0 */
+function num(v: unknown): number {
+  if (v == null) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// ============================================================
+// PGT Schema view — client-side aggregation by schema
+// ============================================================
+
+const SCHEMA_VIEW: ViewSchema = {
+  key: "schema",
+  label: "Schema",
+  columns: [
+    "schema",
+    "tables",
+    "size_bytes",
+    "n_live_tup",
+    "n_dead_tup",
+    "dead_pct",
+    "seq_scan_s",
+    "idx_scan_s",
+    "seq_pct",
+    "tup_read_s",
+    "ins_s",
+    "upd_s",
+    "del_s",
+    "blk_rd_s",
+    "blk_hit_s",
+    "io_hit_pct",
+  ],
+  default: false,
+  default_sort: "blk_rd_s",
+  default_sort_desc: true,
+};
+
+const SCHEMA_COLUMNS: ColumnSchema[] = [
+  {
+    key: "schema",
+    label: "Schema",
+    type: "string" as DataType,
+    sortable: true,
+    filterable: true,
+  },
+  {
+    key: "tables",
+    label: "Tables",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "size_bytes",
+    label: "Size",
+    type: "integer" as DataType,
+    unit: "bytes" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "n_live_tup",
+    label: "Live Tuples",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "n_dead_tup",
+    label: "Dead Tuples",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "dead_pct",
+    label: "DEAD%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+  {
+    key: "seq_scan_s",
+    label: "Seq/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_scan_s",
+    label: "Idx/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "seq_pct",
+    label: "SEQ%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+  {
+    key: "tup_read_s",
+    label: "Tup Rd/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "ins_s",
+    label: "Ins/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "upd_s",
+    label: "Upd/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "del_s",
+    label: "Del/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_rd_s",
+    label: "Blk Rd/s",
+    type: "number" as DataType,
+    unit: "blks_per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_hit_s",
+    label: "Blk Hit/s",
+    type: "number" as DataType,
+    unit: "blks_per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "io_hit_pct",
+    label: "HIT%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+];
+
+/** Aggregate PGT rows by schema name */
+function aggregateBySchema(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const map = new Map<
+    string,
+    {
+      tables: number;
+      size_bytes: number;
+      n_live_tup: number;
+      n_dead_tup: number;
+      seq_scan_s: number;
+      idx_scan_s: number;
+      seq_tup_read_s: number;
+      idx_tup_fetch_s: number;
+      ins_s: number;
+      upd_s: number;
+      del_s: number;
+      heap_blks_read_s: number;
+      heap_blks_hit_s: number;
+      idx_blks_read_s: number;
+      idx_blks_hit_s: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const schema = String(row.schema ?? "unknown");
+    let agg = map.get(schema);
+    if (!agg) {
+      agg = {
+        tables: 0,
+        size_bytes: 0,
+        n_live_tup: 0,
+        n_dead_tup: 0,
+        seq_scan_s: 0,
+        idx_scan_s: 0,
+        seq_tup_read_s: 0,
+        idx_tup_fetch_s: 0,
+        ins_s: 0,
+        upd_s: 0,
+        del_s: 0,
+        heap_blks_read_s: 0,
+        heap_blks_hit_s: 0,
+        idx_blks_read_s: 0,
+        idx_blks_hit_s: 0,
+      };
+      map.set(schema, agg);
+    }
+    agg.tables += 1;
+    agg.size_bytes += num(row.size_bytes);
+    agg.n_live_tup += num(row.n_live_tup);
+    agg.n_dead_tup += num(row.n_dead_tup);
+    agg.seq_scan_s += num(row.seq_scan_s);
+    agg.idx_scan_s += num(row.idx_scan_s);
+    agg.seq_tup_read_s += num(row.seq_tup_read_s);
+    agg.idx_tup_fetch_s += num(row.idx_tup_fetch_s);
+    agg.ins_s += num(row.n_tup_ins_s);
+    agg.upd_s += num(row.n_tup_upd_s);
+    agg.del_s += num(row.n_tup_del_s);
+    agg.heap_blks_read_s += num(row.heap_blks_read_s);
+    agg.heap_blks_hit_s += num(row.heap_blks_hit_s);
+    agg.idx_blks_read_s += num(row.idx_blks_read_s);
+    agg.idx_blks_hit_s += num(row.idx_blks_hit_s);
+  }
+
+  const result: Record<string, unknown>[] = [];
+  for (const [schema, agg] of map) {
+    const totalTup = agg.n_live_tup + agg.n_dead_tup;
+    const totalScans = agg.seq_scan_s + agg.idx_scan_s;
+    const totalReads = agg.heap_blks_read_s + agg.idx_blks_read_s;
+    const totalHits = agg.heap_blks_hit_s + agg.idx_blks_hit_s;
+    const totalIO = totalReads + totalHits;
+
+    result.push({
+      schema,
+      tables: agg.tables,
+      size_bytes: agg.size_bytes,
+      n_live_tup: agg.n_live_tup,
+      n_dead_tup: agg.n_dead_tup,
+      dead_pct: totalTup > 0 ? (agg.n_dead_tup / totalTup) * 100 : null,
+      seq_scan_s: agg.seq_scan_s,
+      idx_scan_s: agg.idx_scan_s,
+      seq_pct: totalScans > 0 ? (agg.seq_scan_s / totalScans) * 100 : null,
+      tup_read_s: agg.seq_tup_read_s + agg.idx_tup_fetch_s,
+      ins_s: agg.ins_s,
+      upd_s: agg.upd_s,
+      del_s: agg.del_s,
+      blk_rd_s: totalReads,
+      blk_hit_s: totalHits,
+      io_hit_pct: totalIO > 0 ? (totalHits / totalIO) * 100 : null,
+    });
+  }
+  return result;
+}
+
+// ============================================================
+// PGI Schema view — client-side aggregation by schema
+// ============================================================
+
+const PGI_SCHEMA_VIEW: ViewSchema = {
+  key: "schema",
+  label: "Schema",
+  columns: [
+    "schema",
+    "indexes",
+    "tables",
+    "size_bytes",
+    "idx_scan_s",
+    "idx_tup_read_s",
+    "idx_tup_fetch_s",
+    "blk_rd_s",
+    "blk_hit_s",
+    "io_hit_pct",
+    "unused",
+  ],
+  default: false,
+  default_sort: "blk_rd_s",
+  default_sort_desc: true,
+};
+
+const PGI_SCHEMA_COLUMNS: ColumnSchema[] = [
+  {
+    key: "schema",
+    label: "Schema",
+    type: "string" as DataType,
+    sortable: true,
+    filterable: true,
+  },
+  {
+    key: "indexes",
+    label: "Indexes",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "tables",
+    label: "Tables",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "size_bytes",
+    label: "Size",
+    type: "integer" as DataType,
+    unit: "bytes" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_scan_s",
+    label: "Scan/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_tup_read_s",
+    label: "Tup Rd/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_tup_fetch_s",
+    label: "Tup Ft/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_rd_s",
+    label: "Blk Rd/s",
+    type: "number" as DataType,
+    unit: "blks_per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_hit_s",
+    label: "Blk Hit/s",
+    type: "number" as DataType,
+    unit: "blks_per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "io_hit_pct",
+    label: "HIT%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+  {
+    key: "unused",
+    label: "Unused",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+];
+
+/** Aggregate PGI rows by schema name */
+function aggregateIndexesBySchema(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  const map = new Map<
+    string,
+    {
+      indexes: number;
+      relids: Set<number>;
+      size_bytes: number;
+      idx_scan_s: number;
+      idx_tup_read_s: number;
+      idx_tup_fetch_s: number;
+      idx_blks_read_s: number;
+      idx_blks_hit_s: number;
+      unused: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const schema = String(row.schema ?? "unknown");
+    let agg = map.get(schema);
+    if (!agg) {
+      agg = {
+        indexes: 0,
+        relids: new Set(),
+        size_bytes: 0,
+        idx_scan_s: 0,
+        idx_tup_read_s: 0,
+        idx_tup_fetch_s: 0,
+        idx_blks_read_s: 0,
+        idx_blks_hit_s: 0,
+        unused: 0,
+      };
+      map.set(schema, agg);
+    }
+    agg.indexes += 1;
+    agg.relids.add(num(row.relid));
+    agg.size_bytes += num(row.size_bytes);
+    agg.idx_scan_s += num(row.idx_scan_s);
+    agg.idx_tup_read_s += num(row.idx_tup_read_s);
+    agg.idx_tup_fetch_s += num(row.idx_tup_fetch_s);
+    agg.idx_blks_read_s += num(row.idx_blks_read_s);
+    agg.idx_blks_hit_s += num(row.idx_blks_hit_s);
+    if (num(row.idx_scan) === 0) agg.unused += 1;
+  }
+
+  const result: Record<string, unknown>[] = [];
+  for (const [schema, agg] of map) {
+    const totalIO = agg.idx_blks_read_s + agg.idx_blks_hit_s;
+
+    result.push({
+      schema,
+      indexes: agg.indexes,
+      tables: agg.relids.size,
+      size_bytes: agg.size_bytes,
+      idx_scan_s: agg.idx_scan_s,
+      idx_tup_read_s: agg.idx_tup_read_s,
+      idx_tup_fetch_s: agg.idx_tup_fetch_s,
+      blk_rd_s: agg.idx_blks_read_s,
+      blk_hit_s: agg.idx_blks_hit_s,
+      io_hit_pct: totalIO > 0 ? (agg.idx_blks_hit_s / totalIO) * 100 : null,
+      unused: agg.unused,
+    });
+  }
+  return result;
+}
+
 function TabContent({
   snapshot,
   schema,
@@ -800,6 +1370,7 @@ function TabContent({
     activeTab,
     selectedId,
     detailOpen,
+    activeView,
     initialView,
     initialFilter,
     handleSelectRow,
@@ -810,11 +1381,174 @@ function TabContent({
     handleFilterChange,
   } = tabState;
   const tabSchema = schema.tabs[activeTab];
-  const data = getTabData(snapshot, activeTab);
+  const rawData = getTabData(snapshot, activeTab);
+
+  const isSchemaView =
+    (activeTab === "pgt" || activeTab === "pgi") && activeView === "schema";
+
+  // Inject Schema view into PGT/PGI views list
+  const effectiveViews = useMemo(() => {
+    if (activeTab === "pgt") {
+      return [...tabSchema.views, SCHEMA_VIEW];
+    }
+    if (activeTab === "pgi") {
+      return [...tabSchema.views, PGI_SCHEMA_VIEW];
+    }
+    return tabSchema.views;
+  }, [activeTab, tabSchema.views]);
+
+  // PGA-specific toggle filters (hide idle / hide walsender)
+  const [hideIdle, setHideIdle] = useState(true);
+  const [hideWalSender, setHideWalSender] = useState(true);
+
+  // PRC: only PostgreSQL processes (default ON)
+  const [pgOnly, setPgOnly] = useState(true);
+
+  // PGT/PGI: only problematic rows (default OFF — show all)
+  const [problemsOnly, setProblemsOnly] = useState(false);
+
+  // Reset problemsOnly when switching tabs (keep it per-tab)
+  useEffect(() => {
+    setProblemsOnly(false);
+  }, [activeTab]);
+
+  const data = useMemo(() => {
+    let filtered = rawData;
+
+    if (activeTab === "pga") {
+      filtered = filtered.filter((row) => {
+        if (hideIdle && row.state === "idle") return false;
+        if (hideWalSender && row.backend_type === "walsender") return false;
+        return true;
+      });
+    }
+
+    if (activeTab === "prc" && pgOnly) {
+      filtered = filtered.filter(isPgProcess);
+    }
+
+    if (activeTab === "pgt" && problemsOnly) {
+      filtered = filtered.filter((row) => isPgtProblematic(row, activeView));
+    }
+
+    if (activeTab === "pgi" && problemsOnly) {
+      filtered = filtered.filter((row) => isPgiProblematic(row, activeView));
+    }
+
+    return filtered;
+  }, [
+    rawData,
+    activeTab,
+    activeView,
+    hideIdle,
+    hideWalSender,
+    pgOnly,
+    problemsOnly,
+  ]);
+
+  // Count hidden items for toggle button labels
+  const hiddenCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    if (activeTab === "pga") {
+      if (hideIdle)
+        counts.idle = rawData.filter((r) => r.state === "idle").length;
+      if (hideWalSender)
+        counts.walsender = rawData.filter(
+          (r) => r.backend_type === "walsender",
+        ).length;
+    }
+    if (activeTab === "prc" && pgOnly) {
+      counts.nonpg = rawData.filter((r) => !isPgProcess(r)).length;
+    }
+    if ((activeTab === "pgt" || activeTab === "pgi") && problemsOnly) {
+      const fn =
+        activeTab === "pgt"
+          ? (r: Record<string, unknown>) => isPgtProblematic(r, activeView)
+          : (r: Record<string, unknown>) => isPgiProblematic(r, activeView);
+      counts.healthy = rawData.filter((r) => !fn(r)).length;
+    }
+    return counts;
+  }, [
+    rawData,
+    activeTab,
+    activeView,
+    hideIdle,
+    hideWalSender,
+    pgOnly,
+    problemsOnly,
+  ]);
+
+  const toolbarControls = useMemo(() => {
+    if (activeTab === "pga") {
+      return (
+        <>
+          <ToggleButton
+            active={hideIdle}
+            onClick={() => setHideIdle((p) => !p)}
+            label="idle"
+            count={hiddenCounts.idle}
+          />
+          <ToggleButton
+            active={hideWalSender}
+            onClick={() => setHideWalSender((p) => !p)}
+            label="walsender"
+            count={hiddenCounts.walsender}
+          />
+        </>
+      );
+    }
+    if (activeTab === "prc") {
+      return (
+        <ToggleButton
+          active={pgOnly}
+          onClick={() => setPgOnly((p) => !p)}
+          label="non-pg"
+          count={hiddenCounts.nonpg}
+        />
+      );
+    }
+    if ((activeTab === "pgt" || activeTab === "pgi") && !isSchemaView) {
+      return (
+        <ToggleButton
+          active={problemsOnly}
+          onClick={() => setProblemsOnly((p) => !p)}
+          label="healthy"
+          count={hiddenCounts.healthy}
+          invertLabel
+        />
+      );
+    }
+    return undefined;
+  }, [
+    activeTab,
+    hideIdle,
+    hideWalSender,
+    pgOnly,
+    problemsOnly,
+    hiddenCounts,
+    isSchemaView,
+  ]);
+
+  // Schema view: aggregated data, columns, entity ID
+  const schemaData = useMemo(() => {
+    if (!isSchemaView) return null;
+    if (activeTab === "pgt") return aggregateBySchema(rawData);
+    if (activeTab === "pgi") return aggregateIndexesBySchema(rawData);
+    return null;
+  }, [isSchemaView, activeTab, rawData]);
+
+  const effectiveData = isSchemaView ? schemaData! : data;
+  const effectiveColumns = isSchemaView
+    ? activeTab === "pgi"
+      ? PGI_SCHEMA_COLUMNS
+      : SCHEMA_COLUMNS
+    : tabSchema.columns;
+  const effectiveEntityId = isSchemaView ? "schema" : tabSchema.entity_id;
 
   const selectedRow =
     selectedId != null
-      ? (data.find((row) => row[tabSchema.entity_id] === selectedId) ?? null)
+      ? (effectiveData.find((row) => row[effectiveEntityId] === selectedId) ??
+        null)
       : null;
 
   return (
@@ -822,10 +1556,10 @@ function TabContent({
       <div className="flex-1 min-w-0">
         <DataTable
           key={activeTab}
-          data={data}
-          columns={tabSchema.columns}
-          views={tabSchema.views}
-          entityId={tabSchema.entity_id}
+          data={effectiveData}
+          columns={effectiveColumns}
+          views={effectiveViews}
+          entityId={effectiveEntityId}
           selectedId={selectedId}
           onSelectRow={handleSelectRow}
           onOpenDetail={handleOpenDetail}
@@ -836,9 +1570,10 @@ function TabContent({
           onViewChange={handleViewChange}
           onFilterChange={handleFilterChange}
           snapshotTimestamp={snapshot.timestamp}
+          toolbarControls={toolbarControls}
         />
       </div>
-      {detailOpen && selectedRow && (
+      {detailOpen && selectedRow && !isSchemaView && (
         <DetailPanel
           tab={activeTab}
           row={selectedRow}
@@ -850,6 +1585,47 @@ function TabContent({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Toggle button for filtering.
+ * Default: active=true means "hiding items" (shows "+label (N)"), inactive = "showing all" (shows "-label").
+ * invertLabel: active=true means "showing filtered" (shows "-label (N)"), inactive = "showing all" (shows "+label").
+ */
+function ToggleButton({
+  active,
+  onClick,
+  label,
+  count,
+  invertLabel,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count?: number;
+  invertLabel?: boolean;
+}) {
+  // invertLabel: when true, active state means "filter is ON" → highlight the button
+  // Default (no invertLabel): active means "hiding items" → dimmed button with count
+  const prefix = invertLabel ? (active ? "-" : "+") : active ? "+" : "-";
+  const highlighted = invertLabel ? active : !active;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`text-[11px] px-1.5 py-0.5 rounded font-medium transition-colors whitespace-nowrap ${
+        highlighted
+          ? "bg-[var(--accent-muted)] text-[var(--accent-text)]"
+          : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+      }`}
+      title={active ? `Show ${label}` : `Hide ${label}`}
+    >
+      {prefix} {label}
+      {active && count != null && count > 0 && (
+        <span className="ml-0.5 opacity-70">({count})</span>
+      )}
+    </button>
   );
 }
 

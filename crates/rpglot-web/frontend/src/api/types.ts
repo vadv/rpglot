@@ -407,5 +407,15 @@ export type Unit =
   | "MB/s";
 export type Format = "bytes" | "duration" | "rate" | "percent" | "age";
 
+// ============================================================
+// Heatmap
+// ============================================================
+
+export interface HeatmapBucket {
+  ts: number;
+  active: number;
+  cpu: number;
+}
+
 // Tab key type
 export type TabKey = "prc" | "pga" | "pgs" | "pgt" | "pgi" | "pgl";

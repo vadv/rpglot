@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 use crate::storage::chunk::ChunkReader;
+use crate::storage::metrics::{self, MetricsEntry};
 use crate::storage::model::Snapshot;
 use crate::storage::{StorageManager, StringInterner};
 
@@ -49,6 +50,7 @@ struct ChunkMeta {
 struct WalEntryMeta {
     byte_offset: u64,
     byte_length: u64,
+    timestamp: i64,
 }
 
 /// WAL snapshot source — lazy file-based or in-memory (for tests).
@@ -291,6 +293,7 @@ impl HistoryProvider {
                         WalEntryMeta {
                             byte_offset: offset,
                             byte_length: length,
+                            timestamp: ts,
                         }
                     })
                     .collect();
@@ -613,6 +616,7 @@ impl HistoryProvider {
                     WalEntryMeta {
                         byte_offset: offset,
                         byte_length: length,
+                        timestamp: ts,
                     }
                 })
                 .collect();
@@ -682,6 +686,122 @@ impl HistoryProvider {
         let first = self.timestamps.first().copied().unwrap_or(0);
         let last = self.timestamps.last().copied().unwrap_or(0);
         (first, last)
+    }
+
+    // ========== Metrics / Heatmap ==========
+
+    /// Load lightweight metrics for a timestamp range (for heatmap visualization).
+    ///
+    /// Reads `.metrics` sidecar files where available (no snapshot decompression).
+    /// Falls back to decompressing snapshots for old chunks without `.metrics`.
+    /// WAL entries are loaded individually (lightweight, ~5ms each).
+    ///
+    /// Returns `Vec<(timestamp, MetricsEntry)>` sorted by timestamp.
+    pub fn load_metrics_range(&mut self, start_ts: i64, end_ts: i64) -> Vec<(i64, MetricsEntry)> {
+        let mut result = Vec::new();
+
+        // 1. Chunks overlapping the range
+        for chunk_idx in 0..self.chunks.len() {
+            if !self.chunks[chunk_idx].available {
+                continue;
+            }
+
+            let reader = match ChunkReader::open(&self.chunks[chunk_idx].path) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            let chunk_timestamps = reader.timestamps();
+            if chunk_timestamps.is_empty() {
+                continue;
+            }
+            let chunk_start = chunk_timestamps[0];
+            let chunk_end = *chunk_timestamps.last().unwrap();
+
+            // Skip chunks entirely outside the range
+            if chunk_end < start_ts || chunk_start > end_ts {
+                continue;
+            }
+
+            // Try .metrics sidecar file (fast path — no decompression)
+            let mpath = metrics::metrics_path(&self.chunks[chunk_idx].path);
+            let entries = if let Ok(entries) = metrics::read_metrics(&mpath) {
+                entries
+            } else {
+                // Fallback: decompress all snapshots in chunk, build metrics, cache to disk
+                let fallback = Self::build_metrics_fallback(&reader);
+                if let Some(ref e) = fallback {
+                    let _ = metrics::write_metrics(&mpath, e);
+                }
+                fallback.unwrap_or_default()
+            };
+
+            // Pair with timestamps, filter to range
+            for (i, &ts) in chunk_timestamps.iter().enumerate() {
+                if ts >= start_ts
+                    && ts <= end_ts
+                    && let Some(entry) = entries.get(i)
+                {
+                    result.push((ts, *entry));
+                }
+            }
+        }
+
+        // 2. WAL entries overlapping the range
+        if let Some(ref wal) = self.wal {
+            match &wal.source {
+                WalSource::File { entries, .. } => {
+                    for (wal_idx, entry_meta) in entries.iter().enumerate() {
+                        if entry_meta.timestamp >= start_ts
+                            && entry_meta.timestamp <= end_ts
+                            && let Some(snap) = wal.load_snapshot(wal_idx)
+                        {
+                            let active = metrics::count_active_sessions(&snap);
+                            // CPU% for WAL: simplified to 0 (WAL entries will be flushed
+                            // to chunk with full CPU% soon, < 1 hour of data)
+                            result.push((
+                                entry_meta.timestamp,
+                                MetricsEntry {
+                                    active_sessions: active,
+                                    cpu_pct_x10: 0,
+                                },
+                            ));
+                        }
+                    }
+                }
+                WalSource::InMemory { snapshots } => {
+                    for snap in snapshots {
+                        if snap.timestamp >= start_ts && snap.timestamp <= end_ts {
+                            let active = metrics::count_active_sessions(snap);
+                            result.push((
+                                snap.timestamp,
+                                MetricsEntry {
+                                    active_sessions: active,
+                                    cpu_pct_x10: 0,
+                                },
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        result.sort_by_key(|&(ts, _)| ts);
+        result
+    }
+
+    /// Fallback: decompress all snapshots in a chunk to build metrics.
+    /// This is expensive (~100-500ms per chunk) but happens only once
+    /// for old chunks without `.metrics` files.
+    fn build_metrics_fallback(reader: &ChunkReader) -> Option<Vec<MetricsEntry>> {
+        let count = reader.snapshot_count();
+        let mut snapshots = Vec::with_capacity(count);
+        for i in 0..count {
+            match reader.read_snapshot(i) {
+                Ok(snap) => snapshots.push(snap),
+                Err(_) => return None,
+            }
+        }
+        Some(metrics::build_metrics_from_snapshots(&snapshots))
     }
 
     /// Jumps to the latest snapshot with timestamp <= `target_ts`.

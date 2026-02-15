@@ -1,4 +1,9 @@
-import type { ApiSchema, ApiSnapshot, TimelineInfo } from "./types";
+import type {
+  ApiSchema,
+  ApiSnapshot,
+  HeatmapBucket,
+  TimelineInfo,
+} from "./types";
 import { getToken, clearToken } from "../auth";
 
 const BASE = "/api/v1";
@@ -62,6 +67,20 @@ export async function fetchSnapshot(params?: {
 export async function fetchTimeline(): Promise<TimelineInfo> {
   const res = await authFetch(`${BASE}/timeline`);
   if (!res.ok) throw new Error(`timeline: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchHeatmap(
+  start: number,
+  end: number,
+  buckets?: number,
+): Promise<HeatmapBucket[]> {
+  const url = new URL(`${BASE}/timeline/heatmap`, window.location.origin);
+  url.searchParams.set("start", String(start));
+  url.searchParams.set("end", String(end));
+  if (buckets) url.searchParams.set("buckets", String(buckets));
+  const res = await authFetch(url.toString());
+  if (!res.ok) return [];
   return res.json();
 }
 
