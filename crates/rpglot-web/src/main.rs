@@ -657,6 +657,62 @@ fn find_pgs_prev_snapshot(
     None
 }
 
+fn extract_pgt_collected_at(snapshot: &Snapshot) -> Option<i64> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatUserTables(tables) = b {
+            tables.first().map(|t| t.collected_at).filter(|&t| t > 0)
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_pgi_collected_at(snapshot: &Snapshot) -> Option<i64> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStatUserIndexes(indexes) = b {
+            indexes.first().map(|i| i.collected_at).filter(|&t| t > 0)
+        } else {
+            None
+        }
+    })
+}
+
+fn find_pgt_prev_snapshot(
+    hp: &mut HistoryProvider,
+    pos: usize,
+    current_collected_at: i64,
+) -> Option<Snapshot> {
+    let max_lookback = 10;
+    let start = pos.saturating_sub(max_lookback);
+    for p in (start..pos).rev() {
+        if let Some(snap) = hp.snapshot_at(p)
+            && let Some(ts) = extract_pgt_collected_at(&snap)
+            && ts != current_collected_at
+        {
+            return Some(snap);
+        }
+    }
+    None
+}
+
+fn find_pgi_prev_snapshot(
+    hp: &mut HistoryProvider,
+    pos: usize,
+    current_collected_at: i64,
+) -> Option<Snapshot> {
+    let max_lookback = 10;
+    let start = pos.saturating_sub(max_lookback);
+    for p in (start..pos).rev() {
+        if let Some(snap) = hp.snapshot_at(p)
+            && let Some(ts) = extract_pgi_collected_at(&snap)
+            && ts != current_collected_at
+        {
+            return Some(snap);
+        }
+    }
+    None
+}
+
 /// Reconvert current provider snapshot to ApiSnapshot (after history jump).
 /// Uses the adjacent previous snapshot (position-1) to compute rates and system deltas.
 fn reconvert_current(inner: &mut WebAppInner) {
@@ -698,27 +754,42 @@ fn reconvert_current(inner: &mut WebAppInner) {
     inner.pgi_prev_sample.clear();
     inner.pgi_prev_ts = None;
 
-    // Seed prev_samples and compute rates
+    // Seed prev_samples and compute rates.
+    // All pg_stat_* data is cached ~30s by the collector while snapshots are
+    // written every ~10s.  Adjacent snapshot (pos-1) may have the same
+    // collected_at → rates would be empty.  Look back further to find a
+    // snapshot with different collected_at for each data source.
     if let Some(ref prev) = prev_adjacent {
-        // PGT/PGI: seed from adjacent (pos-1), they use snapshot.timestamp
-        seed_pgt_prev(inner, prev);
-        seed_pgi_prev(inner, prev);
-        update_pgt_rates(inner, &snapshot);
-        update_pgi_rates(inner, &snapshot);
-
-        // PGS: daemon caches statements for ~30s while writing snapshots every ~10s.
-        // Adjacent snapshot (pos-1) may have the same collected_at → rates would be empty.
-        // Look back further to find a snapshot with a different collected_at.
-        let pgs_seed = match extract_pgs_collected_at(&snapshot) {
-            Some(curr_ts) => {
-                let hp = inner
+        // Helper: get mutable HistoryProvider ref (borrows inner.provider)
+        macro_rules! hp_mut {
+            ($inner:expr) => {
+                $inner
                     .provider
                     .as_any_mut()
-                    .and_then(|a| a.downcast_mut::<HistoryProvider>());
-                hp.and_then(|hp| find_pgs_prev_snapshot(hp, position, curr_ts))
-            }
-            None => None,
-        };
+                    .and_then(|a| a.downcast_mut::<HistoryProvider>())
+            };
+        }
+
+        // PGT
+        let pgt_seed = extract_pgt_collected_at(&snapshot).and_then(|curr_ts| {
+            hp_mut!(inner).and_then(|hp| find_pgt_prev_snapshot(hp, position, curr_ts))
+        });
+        let pgt_prev = pgt_seed.as_ref().unwrap_or(prev);
+        seed_pgt_prev(inner, pgt_prev);
+        update_pgt_rates(inner, &snapshot);
+
+        // PGI
+        let pgi_seed = extract_pgi_collected_at(&snapshot).and_then(|curr_ts| {
+            hp_mut!(inner).and_then(|hp| find_pgi_prev_snapshot(hp, position, curr_ts))
+        });
+        let pgi_prev = pgi_seed.as_ref().unwrap_or(prev);
+        seed_pgi_prev(inner, pgi_prev);
+        update_pgi_rates(inner, &snapshot);
+
+        // PGS
+        let pgs_seed = extract_pgs_collected_at(&snapshot).and_then(|curr_ts| {
+            hp_mut!(inner).and_then(|hp| find_pgs_prev_snapshot(hp, position, curr_ts))
+        });
         let pgs_prev = pgs_seed.as_ref().unwrap_or(prev);
         seed_pgs_prev(inner, pgs_prev);
         update_pgs_rates(inner, &snapshot);
@@ -770,7 +841,12 @@ fn seed_pgt_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             None
         }
     }) {
-        inner.pgt_prev_ts = Some(prev.timestamp);
+        let ts = tables
+            .first()
+            .map(|t| t.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(prev.timestamp);
+        inner.pgt_prev_ts = Some(ts);
         inner.pgt_prev_sample = tables.iter().map(|t| (t.relid, t.clone())).collect();
     }
 }
@@ -784,7 +860,12 @@ fn seed_pgi_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             None
         }
     }) {
-        inner.pgi_prev_ts = Some(prev.timestamp);
+        let ts = indexes
+            .first()
+            .map(|i| i.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(prev.timestamp);
+        inner.pgi_prev_ts = Some(ts);
         inner.pgi_prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
     }
 }
@@ -888,7 +969,13 @@ fn update_pgt_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
         return;
     };
 
-    let now_ts = snapshot.timestamp;
+    // Use collected_at from data (not snapshot.timestamp) to compute
+    // accurate rates when collector caches pg_stat_user_tables.
+    let now_ts = tables
+        .first()
+        .map(|t| t.collected_at)
+        .filter(|&t| t > 0)
+        .unwrap_or(snapshot.timestamp);
 
     let Some(prev_ts) = inner.pgt_prev_ts else {
         inner.pgt_prev_ts = Some(now_ts);
@@ -896,6 +983,10 @@ fn update_pgt_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
         inner.pgt_rates.clear();
         return;
     };
+
+    if now_ts == prev_ts {
+        return; // Same collected_at, data unchanged
+    }
 
     let dt = (now_ts - prev_ts) as f64;
     if dt <= 0.0 {
@@ -953,7 +1044,13 @@ fn update_pgi_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
         return;
     };
 
-    let now_ts = snapshot.timestamp;
+    // Use collected_at from data (not snapshot.timestamp) to compute
+    // accurate rates when collector caches pg_stat_user_indexes.
+    let now_ts = indexes
+        .first()
+        .map(|i| i.collected_at)
+        .filter(|&t| t > 0)
+        .unwrap_or(snapshot.timestamp);
 
     let Some(prev_ts) = inner.pgi_prev_ts else {
         inner.pgi_prev_ts = Some(now_ts);
@@ -961,6 +1058,10 @@ fn update_pgi_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
         inner.pgi_rates.clear();
         return;
     };
+
+    if now_ts == prev_ts {
+        return; // Same collected_at, data unchanged
+    }
 
     let dt = (now_ts - prev_ts) as f64;
     if dt <= 0.0 {

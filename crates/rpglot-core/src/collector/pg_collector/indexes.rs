@@ -2,7 +2,7 @@
 
 use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatUserIndexesInfo;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::PgCollectError;
 use super::PostgresCollector;
@@ -58,11 +58,16 @@ impl PostgresCollector {
             .query(query, &[])
             .map_err(|e| PgCollectError::QueryError(format_postgres_error(&e)))?;
 
+        let collected_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         let mut results = Vec::with_capacity(rows.len());
         let mut cache = Vec::with_capacity(rows.len());
 
         for row in &rows {
-            let Some(info) = parse_index_row(row, interner) else {
+            let Some(info) = parse_index_row(row, interner, collected_at) else {
                 continue; // skip rows that fail to deserialize
             };
 
@@ -105,6 +110,7 @@ impl PostgresCollector {
 fn parse_index_row(
     row: &postgres::Row,
     interner: &mut StringInterner,
+    collected_at: i64,
 ) -> Option<(PgStatUserIndexesInfo, String, String, String)> {
     let indexrelid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
     let relid: u32 = row.try_get::<_, i64>(1).ok()? as u32;
@@ -124,6 +130,7 @@ fn parse_index_row(
         size_bytes: row.try_get(8).unwrap_or(0),
         idx_blks_read: 0,
         idx_blks_hit: 0,
+        collected_at,
     };
 
     Some((info, schemaname, relname, indexrelname))

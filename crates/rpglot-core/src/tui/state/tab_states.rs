@@ -827,7 +827,13 @@ impl PgTablesTabState {
             return;
         }
 
-        let now_ts = snapshot.timestamp;
+        // Use collected_at from data (not snapshot.timestamp) to compute
+        // accurate rates when collector caches pg_stat_user_tables.
+        let now_ts = current
+            .first()
+            .map(|t| t.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(snapshot.timestamp);
 
         if let Some(prev_ts) = self.prev_sample_ts {
             if now_ts < prev_ts {
@@ -839,7 +845,7 @@ impl PgTablesTabState {
                 return;
             }
             if now_ts == prev_ts {
-                return; // Same timestamp, keep existing rates
+                return; // Same collected_at, data unchanged — keep existing rates
             }
         }
 
@@ -1039,7 +1045,13 @@ impl PgIndexesTabState {
             return;
         }
 
-        let now_ts = snapshot.timestamp;
+        // Use collected_at from data (not snapshot.timestamp) to compute
+        // accurate rates when collector caches pg_stat_user_indexes.
+        let now_ts = current
+            .first()
+            .map(|i| i.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(snapshot.timestamp);
 
         if let Some(prev_ts) = self.prev_sample_ts {
             if now_ts < prev_ts {
@@ -1050,7 +1062,7 @@ impl PgIndexesTabState {
                 return;
             }
             if now_ts == prev_ts {
-                return;
+                return; // Same collected_at, data unchanged — keep existing rates
             }
         }
 

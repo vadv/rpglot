@@ -461,6 +461,12 @@ pub struct PgStatUserTablesInfo {
     /// Source: `pg_statio_user_tables.tidx_blks_hit`
     #[serde(default)]
     pub tidx_blks_hit: i64,
+
+    /// Unix timestamp (seconds since epoch) when this data was collected from PostgreSQL.
+    /// Used to calculate accurate rates when collector caches pg_stat_user_tables.
+    /// Source: set by collector at collection time
+    #[serde(default)]
+    pub collected_at: i64,
 }
 
 /// Per-index statistics from pg_stat_user_indexes.
@@ -513,6 +519,12 @@ pub struct PgStatUserIndexesInfo {
     pub idx_blks_read: i64,
     #[serde(default)]
     pub idx_blks_hit: i64,
+
+    /// Unix timestamp (seconds since epoch) when this data was collected from PostgreSQL.
+    /// Used to calculate accurate rates when collector caches pg_stat_user_indexes.
+    /// Source: set by collector at collection time
+    #[serde(default)]
+    pub collected_at: i64,
 }
 
 /// Lock tree node from recursive CTE on pg_locks + pg_stat_activity.

@@ -2,7 +2,7 @@
 
 use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatUserTablesInfo;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use super::PgCollectError;
 use super::PostgresCollector;
@@ -56,11 +56,16 @@ impl PostgresCollector {
             .query(query, &[])
             .map_err(|e| PgCollectError::QueryError(format_postgres_error(&e)))?;
 
+        let collected_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
         let mut results = Vec::with_capacity(rows.len());
         let mut cache = Vec::with_capacity(rows.len());
 
         for row in &rows {
-            let Some(info) = parse_table_row(row, interner) else {
+            let Some(info) = parse_table_row(row, interner, collected_at) else {
                 continue; // skip rows that fail to deserialize
             };
 
@@ -144,6 +149,7 @@ fn parse_statio_row(row: &postgres::Row) -> Option<StatioRow> {
 fn parse_table_row(
     row: &postgres::Row,
     interner: &mut StringInterner,
+    collected_at: i64,
 ) -> Option<(PgStatUserTablesInfo, String, String)> {
     let relid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
     let schemaname: String = row.try_get(1).unwrap_or_default();
@@ -180,6 +186,7 @@ fn parse_table_row(
         toast_blks_hit: 0,
         tidx_blks_read: 0,
         tidx_blks_hit: 0,
+        collected_at,
     };
 
     Some((info, schemaname, relname))
