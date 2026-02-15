@@ -848,6 +848,97 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     description: "Time since the last state change in pg_stat_activity.",
     docUrl: PG_STAT_ACTIVITY,
   },
+
+  // =====================================================
+  // PGE (Events) — checkpoint-specific dual-use fields
+  // =====================================================
+  severity: {
+    label: "Severity",
+    description:
+      "Log severity level: ERROR, FATAL, or PANIC for errors; LOG for events.",
+    thresholds: "PANIC/FATAL = critical · ERROR = warning",
+  },
+  count: {
+    label: "Count",
+    description:
+      "Number of occurrences in the snapshot interval (grouped errors). Always 1 for events.",
+    thresholds: ">100 critical · 10-100 warning",
+  },
+  event_type: {
+    label: "Type",
+    description:
+      "Event type: checkpoint_starting, checkpoint_complete, autovacuum, autoanalyze, or error severity.",
+  },
+  table_name: {
+    label: "Table",
+    description:
+      "Target table for autovacuum/autoanalyze. Empty for checkpoints and errors.",
+    docUrl: PG_VACUUM,
+  },
+  elapsed_s: {
+    label: "Elapsed",
+    description:
+      "Total duration in seconds.\n• Checkpoint: total checkpoint time\n• Autovacuum: elapsed time reported by PostgreSQL",
+    thresholds: ">5min critical · 30s-5min warning",
+  },
+  extra_num1: {
+    label: "Buffers/Tuples",
+    description:
+      "Dual-use field:\n• Checkpoint: buffers written to disk\n• Autovacuum: tuples removed",
+  },
+  extra_num2: {
+    label: "Distance/Pages",
+    description:
+      "Dual-use field:\n• Checkpoint: WAL distance in kB between this and previous checkpoint\n• Autovacuum: pages removed",
+  },
+  extra_num3: {
+    label: "Estimate",
+    description:
+      "Checkpoint only: PostgreSQL's estimate of optimal checkpoint distance (kB). Used to plan next checkpoint spacing.",
+    tip: "If distance >> estimate, checkpoint_completion_target may need tuning",
+  },
+  cpu_user_s: {
+    label: "CPU User / Write Time",
+    description:
+      "Dual-use field:\n• Checkpoint: write phase duration (seconds)\n• Autovacuum: CPU user time (seconds)",
+    thresholds: ">30s critical · 5-30s warning",
+  },
+  cpu_system_s: {
+    label: "CPU Sys / Sync Time",
+    description:
+      "Dual-use field:\n• Checkpoint: sync (fsync) phase duration (seconds)\n• Autovacuum: CPU system time (seconds)",
+    thresholds: ">30s critical · 5-30s warning",
+    tip: "Checkpoint sync time should be near zero with modern filesystems and effective_io_concurrency",
+  },
+  buffer_hits: {
+    label: "Buf Hits / Sync Files",
+    description:
+      "Dual-use field:\n• Checkpoint: number of files synchronized (fsync'd)\n• Autovacuum: buffer cache hits",
+  },
+  buffer_misses: {
+    label: "Buf Misses",
+    description:
+      "Buffer cache misses (physical reads from disk). Autovacuum only.",
+    thresholds: ">10K critical · 1K-10K warning",
+  },
+  buffer_dirtied: {
+    label: "Buf Dirtied",
+    description: "Buffers dirtied during operation. Autovacuum only.",
+    thresholds: ">1K critical · 100-1K warning",
+  },
+  avg_read_rate_mbs: {
+    label: "Avg Read / Longest Sync",
+    description:
+      "Dual-use field:\n• Checkpoint: longest individual file sync duration (seconds)\n• Autovacuum: average read rate (MB/s)",
+    thresholds: "Autovacuum: >100 MB/s critical · 20-100 MB/s warning",
+    tip: "Checkpoint: high longest sync indicates slow storage for specific files",
+  },
+  avg_write_rate_mbs: {
+    label: "Avg Write / Avg Sync",
+    description:
+      "Dual-use field:\n• Checkpoint: average file sync duration (seconds)\n• Autovacuum: average write rate (MB/s)",
+    thresholds: "Autovacuum: >50 MB/s critical · 10-50 MB/s warning",
+  },
 };
 
 export function buildColumnTooltip(key: string): ReactNode | null {
@@ -921,6 +1012,12 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
     io: "Index physical I/O \u2014 cache hit ratio",
     schema:
       "Indexes aggregated by schema \u2014 identify which schema consumes most index I/O",
+  },
+  pge: {
+    errors: "Grouped PostgreSQL errors by pattern",
+    checkpoints: "Checkpoint metrics \u2014 timing, buffers, WAL files, sync",
+    autovacuum:
+      "Autovacuum/autoanalyze metrics \u2014 timing, buffers, CPU, WAL",
   },
   pgl: {
     tree: "Lock blocking tree \u2014 who blocks whom",

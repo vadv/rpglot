@@ -34,6 +34,18 @@ pub enum EventData {
         total_time_ms: f64,
         distance_kb: i64,
         estimate_kb: i64,
+        /// WAL files added during checkpoint.
+        wal_added: i64,
+        /// WAL files removed during checkpoint.
+        wal_removed: i64,
+        /// WAL files recycled during checkpoint.
+        wal_recycled: i64,
+        /// Number of files synced.
+        sync_files: i64,
+        /// Longest individual file sync duration (seconds).
+        longest_sync_s: f64,
+        /// Average file sync duration (seconds).
+        average_sync_s: f64,
     },
     Autovacuum {
         table_name: String,
@@ -337,6 +349,25 @@ fn parse_checkpoint_complete(message: &str) -> EventData {
         .or_else(|| extract_i64_after(message, "ожидалось="))
         .unwrap_or(0);
 
+    // WAL file operations:
+    // EN: "0 WAL file(s) added, 0 removed, 1 recycled"
+    // RU: "добавлено файлов WAL: 0, удалено: 0, переработано: 1"
+    let (wal_added, wal_removed, wal_recycled) = parse_wal_files(message).unwrap_or((0, 0, 0));
+
+    // Sync files: "sync files=5, longest=0.123 s, average=0.099 s"
+    // RU: "синхронизировано файлов: 5, самый долгий: 0.123 с, средний: 0.099 с"
+    let sync_files = extract_i64_after(message, "sync files=")
+        .or_else(|| extract_i64_after(message, "синхронизировано файлов: "))
+        .unwrap_or(0);
+
+    let longest_sync_s = extract_f64_after(message, "longest=")
+        .or_else(|| extract_f64_after(message, "самый долгий: "))
+        .unwrap_or(0.0);
+
+    let average_sync_s = extract_f64_after(message, "average=")
+        .or_else(|| extract_f64_after(message, "средний: "))
+        .unwrap_or(0.0);
+
     EventData::CheckpointComplete {
         buffers_written,
         write_time_ms: write_time_s * 1000.0,
@@ -344,6 +375,12 @@ fn parse_checkpoint_complete(message: &str) -> EventData {
         total_time_ms: total_time_s * 1000.0,
         distance_kb,
         estimate_kb,
+        wal_added,
+        wal_removed,
+        wal_recycled,
+        sync_files,
+        longest_sync_s,
+        average_sync_s,
     }
 }
 
@@ -442,6 +479,47 @@ fn parse_autovacuum(message: &str, is_analyze: bool) -> EventData {
 // ============================================================
 // Numeric extraction helpers
 // ============================================================
+
+/// Parse WAL file counts from checkpoint complete message.
+///
+/// EN: `"0 WAL file(s) added, 0 removed, 1 recycled"`
+/// RU: `"добавлено файлов WAL: 0, удалено: 0, переработано: 1"`
+///
+/// Returns `(added, removed, recycled)`.
+fn parse_wal_files(message: &str) -> Option<(i64, i64, i64)> {
+    // Try English format: "N WAL file(s) added, N removed, N recycled"
+    if let Some(pos) = message.find(" WAL file") {
+        let before = &message[..pos];
+        // Number is right before " WAL file"
+        let added = extract_trailing_i64(before).unwrap_or(0);
+        let removed = extract_i64_after(message, "added, ").unwrap_or(0);
+        let recycled = extract_i64_after(message, "removed, ").unwrap_or(0);
+        return Some((added, removed, recycled));
+    }
+    // Try Russian format
+    if message.contains("добавлено файлов WAL:") {
+        let added = extract_i64_after(message, "добавлено файлов WAL: ").unwrap_or(0);
+        let removed = extract_i64_after(message, "удалено: ").unwrap_or(0);
+        let recycled = extract_i64_after(message, "переработано: ").unwrap_or(0);
+        return Some((added, removed, recycled));
+    }
+    None
+}
+
+/// Extract trailing integer from the end of a string slice.
+/// E.g. `"wrote 123 buffers (0.1%); 0"` → `Some(0)`.
+fn extract_trailing_i64(text: &str) -> Option<i64> {
+    let trimmed = text.trim_end();
+    let end = trimmed.len();
+    let start = trimmed
+        .rfind(|c: char| !c.is_ascii_digit() && c != '-')
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    if start >= end {
+        return None;
+    }
+    trimmed[start..end].parse().ok()
+}
 
 /// Extract first i64 value immediately after `marker` in `text`.
 pub(super) fn extract_i64_after(text: &str, marker: &str) -> Option<i64> {
@@ -694,6 +772,12 @@ mod tests {
                 total_time_ms,
                 distance_kb,
                 estimate_kb,
+                wal_added,
+                wal_removed,
+                wal_recycled,
+                sync_files,
+                longest_sync_s,
+                average_sync_s,
             }) => {
                 assert_eq!(buffers_written, 456);
                 assert!((write_time_ms - 1234.0).abs() < 1.0);
@@ -701,6 +785,12 @@ mod tests {
                 assert!((total_time_ms - 2345.0).abs() < 1.0);
                 assert_eq!(distance_kb, 12345);
                 assert_eq!(estimate_kb, 67890);
+                assert_eq!(wal_added, 0);
+                assert_eq!(wal_removed, 0);
+                assert_eq!(wal_recycled, 1);
+                assert_eq!(sync_files, 5);
+                assert!((longest_sync_s - 0.123).abs() < 0.001);
+                assert!((average_sync_s - 0.099).abs() < 0.001);
             }
             other => panic!("expected CheckpointComplete, got {:?}", other),
         }
@@ -771,6 +861,12 @@ mod tests {
                 total_time_ms,
                 distance_kb,
                 estimate_kb,
+                wal_added,
+                wal_removed,
+                wal_recycled,
+                sync_files,
+                longest_sync_s,
+                average_sync_s,
             } => {
                 assert_eq!(buffers_written, 123);
                 assert!((write_time_ms - 1234.0).abs() < 1.0);
@@ -778,6 +874,12 @@ mod tests {
                 assert!((total_time_ms - 2345.0).abs() < 1.0);
                 assert_eq!(distance_kb, 12345);
                 assert_eq!(estimate_kb, 67890);
+                assert_eq!(wal_added, 0);
+                assert_eq!(wal_removed, 0);
+                assert_eq!(wal_recycled, 1);
+                assert_eq!(sync_files, 5);
+                assert!((longest_sync_s - 0.123).abs() < 0.001);
+                assert!((average_sync_s - 0.099).abs() < 0.001);
             }
             other => panic!("expected CheckpointComplete, got {:?}", other),
         }

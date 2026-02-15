@@ -572,7 +572,9 @@ pub struct PgEventsRow {
     pub extra_num1: i64,
     /// Extra numeric 2: distance_kb (checkpoint) / pages_removed (vacuum).
     pub extra_num2: i64,
-    /// Buffer cache hits (autovacuum/autoanalyze).
+    /// Extra numeric 3: estimate_kb (checkpoint), 0 for others.
+    pub extra_num3: i64,
+    /// Buffer cache hits (autovacuum/autoanalyze) / sync files (checkpoint).
     pub buffer_hits: i64,
     /// Buffer cache misses (autovacuum/autoanalyze).
     pub buffer_misses: i64,

@@ -690,13 +690,16 @@ pub struct PgLogEventEntry {
     /// CPU system time in seconds (autovacuum/autoanalyze).
     #[serde(default)]
     pub cpu_system_s: f64,
-    /// WAL records generated (autovacuum).
+    /// WAL records generated (autovacuum) / WAL files added (checkpoint).
     #[serde(default)]
     pub wal_records: i64,
-    /// WAL full page images (autovacuum).
+    /// WAL full page images (autovacuum) / WAL files removed (checkpoint).
     #[serde(default)]
     pub wal_fpi: i64,
-    /// WAL bytes written (autovacuum).
+    /// WAL bytes written (autovacuum) / WAL files recycled (checkpoint).
     #[serde(default)]
     pub wal_bytes: i64,
+    /// Extra numeric field 3: checkpoint estimate_kb.
+    #[serde(default)]
+    pub extra_num3: i64,
 }

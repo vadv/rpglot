@@ -2334,6 +2334,15 @@ fn generate_pge_schema() -> TabSchema {
                 false,
             ),
             col(
+                "extra_num3",
+                "Estimate",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
                 "buffer_hits",
                 "Buf Hits",
                 DataType::Integer,
@@ -2466,10 +2475,25 @@ fn generate_pge_schema() -> TabSchema {
             ViewSchema {
                 key: "checkpoints".into(),
                 label: "Checkpoints".into(),
-                columns: vec!["event_type", "extra_num1", "elapsed_s", "message"]
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                columns: vec![
+                    "event_type",
+                    "extra_num1",
+                    "extra_num2",
+                    "extra_num3",
+                    "elapsed_s",
+                    "cpu_user_s",
+                    "cpu_system_s",
+                    "buffer_hits",
+                    "avg_read_rate_mbs",
+                    "avg_write_rate_mbs",
+                    "wal_records",
+                    "wal_fpi",
+                    "wal_bytes",
+                    "message",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
                 default: false,
                 default_sort: Some("event_id".into()),
                 default_sort_desc: true,

@@ -327,6 +327,7 @@ export interface PgEventsRow {
   elapsed_s: number;
   extra_num1: number;
   extra_num2: number;
+  extra_num3: number;
   buffer_hits: number;
   buffer_misses: number;
   buffer_dirtied: number;

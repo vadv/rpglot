@@ -376,6 +376,9 @@ const RULES: Record<string, Classifier> = {
   wal_records: rateInactive,
   wal_fpi: rateInactive,
 
+  // --- PGE: extra_num3 (checkpoint estimate_kb, informational) ---
+  extra_num3: rateInactive,
+
   // Rates — zero = inactive
   calls_s: rateInactive,
   rows_s: rateInactive,
