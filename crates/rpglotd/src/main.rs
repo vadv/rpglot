@@ -171,6 +171,13 @@ fn describe_snapshot(snapshot: &rpglot_core::storage::Snapshot) -> String {
             DataBlock::PgStatUserTables(t) => parts.push(format!("{} pg_tables", t.len())),
             DataBlock::PgStatUserIndexes(i) => parts.push(format!("{} pg_indexes", i.len())),
             DataBlock::PgStatBgwriter(_) => parts.push("pg_bgwriter".to_string()),
+            DataBlock::PgLogErrors(e) if !e.is_empty() => {
+                let total: u32 = e.iter().map(|x| x.count).sum();
+                parts.push(format!("{} log_errors({} patterns)", total, e.len()));
+            }
+            DataBlock::PgLogDetailedEvents(evts) if !evts.is_empty() => {
+                parts.push(format!("{} log_events", evts.len()));
+            }
             _ => {}
         }
     }
