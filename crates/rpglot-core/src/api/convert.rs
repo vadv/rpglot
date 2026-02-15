@@ -1426,6 +1426,8 @@ fn extract_pgi(
 
 fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEventsRow> {
     let mut rows = Vec::new();
+    // Sequential counter for unique event IDs. Must stay within JS Number.MAX_SAFE_INTEGER (2^53-1).
+    let mut next_id: u64 = 1;
 
     // Errors from PgLogErrors
     if let Some(entries) = find_block(snap, |b| {
@@ -1441,8 +1443,10 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 PgLogSeverity::Fatal => "FATAL",
                 PgLogSeverity::Panic => "PANIC",
             };
+            let event_id = next_id;
+            next_id += 1;
             rows.push(PgEventsRow {
-                event_id: e.pattern_hash,
+                event_id,
                 event_type: severity_str.to_lowercase(),
                 severity: severity_str.to_string(),
                 count: e.count,
@@ -1474,15 +1478,15 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
             None
         }
     }) {
-        for (i, ev) in events.iter().enumerate() {
+        for ev in events {
             let event_type_str = match ev.event_type {
                 PgLogEventType::CheckpointStarting => "checkpoint_starting",
                 PgLogEventType::CheckpointComplete => "checkpoint_complete",
                 PgLogEventType::Autovacuum => "autovacuum",
                 PgLogEventType::Autoanalyze => "autoanalyze",
             };
-            // Generate a unique event_id from index to avoid collisions with error pattern hashes
-            let event_id = 0x8000_0000_0000_0000u64 | (i as u64);
+            let event_id = next_id;
+            next_id += 1;
             rows.push(PgEventsRow {
                 event_id,
                 event_type: event_type_str.to_string(),
