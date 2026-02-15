@@ -284,10 +284,18 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
   ],
   pge: [
     {
-      title: "Error Info",
-      fields: ["severity", "count", "pattern_hash"],
+      title: "Event Info",
+      fields: [
+        "event_type",
+        "severity",
+        "count",
+        "table_name",
+        "elapsed_s",
+        "extra_num1",
+        "extra_num2",
+      ],
     },
-    { title: "Pattern", fields: ["pattern"], type: "query" },
+    { title: "Message", fields: ["message"], type: "query" },
     { title: "Sample", fields: ["sample"], type: "query" },
   ],
   pgl: [

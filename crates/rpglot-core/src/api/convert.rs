@@ -8,8 +8,9 @@ use std::collections::{HashMap, HashSet};
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
-    CgroupCpuInfo, DataBlock, PgLogSeverity, PgStatActivityInfo, PgStatBgwriterInfo,
-    PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
+    CgroupCpuInfo, DataBlock, PgLogEventType, PgLogSeverity, PgStatActivityInfo,
+    PgStatBgwriterInfo, PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo,
+    SystemNetInfo,
 };
 
 use super::snapshot::*;
@@ -1420,35 +1421,74 @@ fn extract_pgi(
 }
 
 // ============================================================
-// PGE (pg_log_errors)
+// PGE (pg_log_events + errors)
 // ============================================================
 
-fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgErrorsRow> {
-    let Some(entries) = find_block(snap, |b| {
+fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEventsRow> {
+    let mut rows = Vec::new();
+
+    // Errors from PgLogErrors
+    if let Some(entries) = find_block(snap, |b| {
         if let DataBlock::PgLogErrors(v) = b {
             Some(v.as_slice())
         } else {
             None
         }
-    }) else {
-        return Vec::new();
-    };
-
-    entries
-        .iter()
-        .map(|e| PgErrorsRow {
-            pattern_hash: e.pattern_hash,
-            severity: match e.severity {
+    }) {
+        for e in entries {
+            let severity_str = match e.severity {
                 PgLogSeverity::Error => "ERROR",
                 PgLogSeverity::Fatal => "FATAL",
                 PgLogSeverity::Panic => "PANIC",
-            }
-            .to_string(),
-            pattern: resolve(interner, e.pattern_hash),
-            count: e.count,
-            sample: resolve(interner, e.sample_hash),
-        })
-        .collect()
+            };
+            rows.push(PgEventsRow {
+                event_id: e.pattern_hash,
+                event_type: severity_str.to_lowercase(),
+                severity: severity_str.to_string(),
+                count: e.count,
+                table_name: String::new(),
+                elapsed_s: 0.0,
+                extra_num1: 0,
+                extra_num2: 0,
+                message: resolve(interner, e.pattern_hash),
+                sample: resolve(interner, e.sample_hash),
+            });
+        }
+    }
+
+    // Detailed events from PgLogDetailedEvents
+    if let Some(events) = find_block(snap, |b| {
+        if let DataBlock::PgLogDetailedEvents(v) = b {
+            Some(v.as_slice())
+        } else {
+            None
+        }
+    }) {
+        for (i, ev) in events.iter().enumerate() {
+            let event_type_str = match ev.event_type {
+                PgLogEventType::CheckpointStarting => "checkpoint_starting",
+                PgLogEventType::CheckpointComplete => "checkpoint_complete",
+                PgLogEventType::Autovacuum => "autovacuum",
+                PgLogEventType::Autoanalyze => "autoanalyze",
+            };
+            // Generate a unique event_id from index to avoid collisions with error pattern hashes
+            let event_id = 0x8000_0000_0000_0000u64 | (i as u64);
+            rows.push(PgEventsRow {
+                event_id,
+                event_type: event_type_str.to_string(),
+                severity: "LOG".to_string(),
+                count: 1,
+                table_name: ev.table_name.clone(),
+                elapsed_s: ev.elapsed_s,
+                extra_num1: ev.extra_num1,
+                extra_num2: ev.extra_num2,
+                message: ev.message.clone(),
+                sample: String::new(),
+            });
+        }
+    }
+
+    rows
 }
 
 // ============================================================

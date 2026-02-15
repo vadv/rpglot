@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use xxhash_rust::xxh3::xxh3_64;
 
-use super::model::{CgroupCpuInfo, CgroupMemoryInfo, DataBlock, Snapshot, SystemCpuInfo};
+use super::model::{
+    CgroupCpuInfo, CgroupMemoryInfo, DataBlock, PgLogEventType, Snapshot, SystemCpuInfo,
+};
 
 /// Magic bytes identifying heatmap sidecar files.
 const HEATMAP_MAGIC: &[u8; 4] = b"HM01";
@@ -128,7 +130,24 @@ fn idle_hash() -> u64 {
 }
 
 /// Count checkpoint events in a snapshot.
+/// Checks both `PgLogDetailedEvents` (preferred) and legacy `PgLogEvents`.
 pub fn count_checkpoint_events(snapshot: &Snapshot) -> u8 {
+    // Prefer detailed events (source-of-truth)
+    for b in &snapshot.blocks {
+        if let DataBlock::PgLogDetailedEvents(events) = b {
+            let count = events
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        e.event_type,
+                        PgLogEventType::CheckpointStarting | PgLogEventType::CheckpointComplete
+                    )
+                })
+                .count();
+            return count.min(255) as u8;
+        }
+    }
+    // Fallback to legacy counters
     snapshot
         .blocks
         .iter()
@@ -143,7 +162,24 @@ pub fn count_checkpoint_events(snapshot: &Snapshot) -> u8 {
 }
 
 /// Count autovacuum/autoanalyze events in a snapshot.
+/// Checks both `PgLogDetailedEvents` (preferred) and legacy `PgLogEvents`.
 pub fn count_autovacuum_events(snapshot: &Snapshot) -> u8 {
+    // Prefer detailed events (source-of-truth)
+    for b in &snapshot.blocks {
+        if let DataBlock::PgLogDetailedEvents(events) = b {
+            let count = events
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        e.event_type,
+                        PgLogEventType::Autovacuum | PgLogEventType::Autoanalyze
+                    )
+                })
+                .count();
+            return count.min(255) as u8;
+        }
+    }
+    // Fallback to legacy counters
     snapshot
         .blocks
         .iter()

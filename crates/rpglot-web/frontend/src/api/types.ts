@@ -15,7 +15,7 @@ export interface ApiSnapshot {
   pgs: PgStatementsRow[];
   pgt: PgTablesRow[];
   pgi: PgIndexesRow[];
-  pge: PgErrorsRow[];
+  pge: PgEventsRow[];
   pgl: PgLocksRow[];
 }
 
@@ -318,11 +318,16 @@ export interface PgIndexesRow {
   disk_blks_read_s: number | null;
 }
 
-export interface PgErrorsRow {
-  pattern_hash: number;
+export interface PgEventsRow {
+  event_id: number;
+  event_type: string;
   severity: string;
-  pattern: string;
   count: number;
+  table_name: string;
+  elapsed_s: number;
+  extra_num1: number;
+  extra_num2: number;
+  message: string;
   sample: string;
 }
 

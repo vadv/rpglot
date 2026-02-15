@@ -17,6 +17,29 @@ pub enum LogEventKind {
     Autovacuum,
 }
 
+/// Extracted structured data from checkpoint/autovacuum LOG messages.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventData {
+    CheckpointStarting {
+        reason: String,
+    },
+    CheckpointComplete {
+        buffers_written: i64,
+        write_time_ms: f64,
+        sync_time_ms: f64,
+        total_time_ms: f64,
+        distance_kb: i64,
+        estimate_kb: i64,
+    },
+    Autovacuum {
+        table_name: String,
+        is_analyze: bool,
+        tuples_removed: i64,
+        pages_removed: i64,
+        elapsed_s: f64,
+    },
+}
+
 /// Result of parsing a single log line.
 #[derive(Debug, Clone)]
 pub struct ParsedLogLine {
@@ -26,6 +49,8 @@ pub struct ParsedLogLine {
     pub message: String,
     /// Kind of event detected.
     pub event_kind: LogEventKind,
+    /// Extracted event data (checkpoint stats, vacuum table name, etc.).
+    pub event_data: Option<EventData>,
 }
 
 /// Compiled parser for stderr format with a specific `log_line_prefix`.
@@ -43,11 +68,32 @@ pub struct StderrParser {
     _prefix: String,
 }
 
-/// Severity keywords we look for in log lines.
+/// Severity keywords we look for in log lines (English + Russian locale).
 const SEVERITIES: &[(&str, PgLogSeverity)] = &[
     ("PANIC:  ", PgLogSeverity::Panic),
     ("FATAL:  ", PgLogSeverity::Fatal),
     ("ERROR:  ", PgLogSeverity::Error),
+    // Russian locale (lc_messages = 'ru_RU.UTF-8')
+    ("ПАНИКА:  ", PgLogSeverity::Panic),
+    ("ВАЖНО:  ", PgLogSeverity::Fatal),
+    ("ОШИБКА:  ", PgLogSeverity::Error),
+];
+
+/// LOG-level prefixes (English + Russian locale).
+const LOG_PREFIXES: &[&str] = &["LOG:  ", "СООБЩЕНИЕ:  "];
+
+/// Checkpoint starting message prefixes (English + Russian).
+const CHECKPOINT_STARTING: &[&str] = &["checkpoint starting:", "начата контрольная точка:"];
+
+/// Checkpoint complete message prefixes (English + Russian).
+const CHECKPOINT_COMPLETE: &[&str] = &["checkpoint complete:", "контрольная точка завершена:"];
+
+/// Autovacuum/autoanalyze message prefixes (English + Russian).
+const AUTOVACUUM_PREFIXES: &[&str] = &[
+    "automatic vacuum of table",
+    "automatic analyze of table",
+    "автоматическая очистка таблицы",
+    "автоматический анализ таблицы",
 ];
 
 impl StderrParser {
@@ -61,7 +107,8 @@ impl StderrParser {
 
     /// Try to parse a log line.
     ///
-    /// Returns `Some(ParsedLogLine)` if the line contains ERROR/FATAL/PANIC,
+    /// Returns `Some(ParsedLogLine)` if the line contains ERROR/FATAL/PANIC
+    /// or a LOG-level operational event (checkpoint, autovacuum).
     /// `None` otherwise (LOG, WARNING, NOTICE, continuation lines, etc.).
     pub fn parse_line(&self, line: &str) -> Option<ParsedLogLine> {
         // Scan for severity keyword in the line.
@@ -84,31 +131,16 @@ impl StderrParser {
                     severity,
                     message: message.to_string(),
                     event_kind: LogEventKind::Error,
+                    event_data: None,
                 });
             }
         }
 
         // Check for LOG-level operational events (checkpoint, autovacuum).
-        const LOG_PREFIX: &str = "LOG:  ";
-        if let Some(pos) = line.find(LOG_PREFIX) {
-            let message = &line[pos + LOG_PREFIX.len()..];
-            if message.starts_with("checkpoint starting:")
-                || message.starts_with("checkpoint complete:")
-            {
-                return Some(ParsedLogLine {
-                    severity: PgLogSeverity::Error,
-                    message: message.to_string(),
-                    event_kind: LogEventKind::Checkpoint,
-                });
-            }
-            if message.starts_with("automatic vacuum of table")
-                || message.starts_with("automatic analyze of table")
-            {
-                return Some(ParsedLogLine {
-                    severity: PgLogSeverity::Error,
-                    message: message.to_string(),
-                    event_kind: LogEventKind::Autovacuum,
-                });
+        for prefix in LOG_PREFIXES {
+            if let Some(pos) = line.find(prefix) {
+                let message = &line[pos + prefix.len()..];
+                return classify_log_message(message);
             }
         }
 
@@ -128,6 +160,9 @@ pub struct CsvlogParser;
 
 impl CsvlogParser {
     /// Try to parse a csvlog line.
+    ///
+    /// In csvlog format, severity (column 11) is always in English,
+    /// but the message (column 13) follows lc_messages locale.
     pub fn parse_line(&self, line: &str) -> Option<ParsedLogLine> {
         // Simple CSV split — PG csvlog uses standard CSV with double-quote escaping.
         let fields = split_csv_line(line);
@@ -141,26 +176,8 @@ impl CsvlogParser {
             "FATAL" => PgLogSeverity::Fatal,
             "PANIC" => PgLogSeverity::Panic,
             "LOG" => {
-                let message = fields[13].clone();
-                if message.starts_with("checkpoint starting:")
-                    || message.starts_with("checkpoint complete:")
-                {
-                    return Some(ParsedLogLine {
-                        severity: PgLogSeverity::Error,
-                        message,
-                        event_kind: LogEventKind::Checkpoint,
-                    });
-                }
-                if message.starts_with("automatic vacuum of table")
-                    || message.starts_with("automatic analyze of table")
-                {
-                    return Some(ParsedLogLine {
-                        severity: PgLogSeverity::Error,
-                        message,
-                        event_kind: LogEventKind::Autovacuum,
-                    });
-                }
-                return None;
+                let message = &fields[13];
+                return classify_log_message(message);
             }
             _ => return None,
         };
@@ -174,22 +191,187 @@ impl CsvlogParser {
             severity,
             message,
             event_kind: LogEventKind::Error,
+            event_data: None,
         })
     }
+}
+
+// ============================================================
+// LOG message classification and data extraction
+// ============================================================
+
+/// Classify a LOG-level message as checkpoint or autovacuum event.
+/// Returns `None` if the message is not a known operational event.
+fn classify_log_message(message: &str) -> Option<ParsedLogLine> {
+    // Checkpoint starting
+    for prefix in CHECKPOINT_STARTING {
+        if let Some(rest) = message.strip_prefix(prefix) {
+            let reason = rest.trim().to_string();
+            return Some(ParsedLogLine {
+                severity: PgLogSeverity::Error,
+                message: message.to_string(),
+                event_kind: LogEventKind::Checkpoint,
+                event_data: Some(EventData::CheckpointStarting { reason }),
+            });
+        }
+    }
+
+    // Checkpoint complete
+    for prefix in CHECKPOINT_COMPLETE {
+        if message.starts_with(prefix) {
+            let event_data = parse_checkpoint_complete(message);
+            return Some(ParsedLogLine {
+                severity: PgLogSeverity::Error,
+                message: message.to_string(),
+                event_kind: LogEventKind::Checkpoint,
+                event_data: Some(event_data),
+            });
+        }
+    }
+
+    // Autovacuum / autoanalyze
+    for prefix in AUTOVACUUM_PREFIXES {
+        if message.starts_with(prefix) {
+            let is_analyze = prefix.contains("analyze") || prefix.contains("анализ");
+            let event_data = parse_autovacuum(message, is_analyze);
+            return Some(ParsedLogLine {
+                severity: PgLogSeverity::Error,
+                message: message.to_string(),
+                event_kind: LogEventKind::Autovacuum,
+                event_data: Some(event_data),
+            });
+        }
+    }
+
+    None
+}
+
+/// Parse checkpoint complete message fields.
+///
+/// EN: `checkpoint complete: wrote 123 buffers (0.1%); ... write=1.234 s, sync=0.567 s, total=2.345 s; ... distance=12345 kB, estimate=67890 kB`
+/// RU: `контрольная точка завершена: записано буферов: 123 (0.1%); ... запись=1.234 с, синхронизация=0.567 с, всего=2.345 с; ... расстояние=12345 КБ, ожидалось=67890 КБ`
+fn parse_checkpoint_complete(message: &str) -> EventData {
+    let buffers_written = extract_i64_after(message, "wrote ")
+        .or_else(|| extract_i64_after(message, "записано буферов: "))
+        .unwrap_or(0);
+
+    let write_time_s = extract_f64_after(message, "write=")
+        .or_else(|| extract_f64_after(message, "запись="))
+        .unwrap_or(0.0);
+
+    let sync_time_s = extract_f64_after(message, "sync=")
+        .or_else(|| extract_f64_after(message, "синхронизация="))
+        .unwrap_or(0.0);
+
+    let total_time_s = extract_f64_after(message, "total=")
+        .or_else(|| extract_f64_after(message, "всего="))
+        .unwrap_or(0.0);
+
+    let distance_kb = extract_i64_after(message, "distance=")
+        .or_else(|| extract_i64_after(message, "расстояние="))
+        .unwrap_or(0);
+
+    let estimate_kb = extract_i64_after(message, "estimate=")
+        .or_else(|| extract_i64_after(message, "ожидалось="))
+        .unwrap_or(0);
+
+    EventData::CheckpointComplete {
+        buffers_written,
+        write_time_ms: write_time_s * 1000.0,
+        sync_time_ms: sync_time_s * 1000.0,
+        total_time_ms: total_time_s * 1000.0,
+        distance_kb,
+        estimate_kb,
+    }
+}
+
+/// Parse autovacuum/autoanalyze message fields.
+///
+/// EN: `automatic vacuum of table "db.schema.table": index scans: 1\n  pages: 0 removed, ...`
+/// RU: `автоматическая очистка таблицы "db.schema.table": ...`
+fn parse_autovacuum(message: &str, is_analyze: bool) -> EventData {
+    // Extract table name from first quoted string
+    let table_name = extract_quoted_string(message).unwrap_or_default();
+
+    let tuples_removed = if !is_analyze {
+        // EN: "tuples: 1234 removed"
+        extract_i64_after(message, "tuples: ")
+            .or_else(|| extract_i64_after(message, "кортежей: "))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let pages_removed = if !is_analyze {
+        // EN: "pages: 0 removed"
+        extract_i64_after(message, "pages: ")
+            .or_else(|| extract_i64_after(message, "страниц: "))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    // EN: "elapsed: 5.67 s"
+    let elapsed_s = extract_f64_after(message, "elapsed: ")
+        .or_else(|| extract_f64_after(message, "прошло: "))
+        .unwrap_or(0.0);
+
+    EventData::Autovacuum {
+        table_name,
+        is_analyze,
+        tuples_removed,
+        pages_removed,
+        elapsed_s,
+    }
+}
+
+// ============================================================
+// Numeric extraction helpers
+// ============================================================
+
+/// Extract first i64 value immediately after `marker` in `text`.
+fn extract_i64_after(text: &str, marker: &str) -> Option<i64> {
+    let pos = text.find(marker)? + marker.len();
+    let rest = &text[pos..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit() && c != '-')
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// Extract first f64 value immediately after `marker` in `text`.
+fn extract_f64_after(text: &str, marker: &str) -> Option<f64> {
+    let pos = text.find(marker)? + marker.len();
+    let rest = &text[pos..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit() && c != '.' && c != '-')
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// Extract first double-quoted string from `text`.
+fn extract_quoted_string(text: &str) -> Option<String> {
+    let start = text.find('"')? + 1;
+    let end = start + text[start..].find('"')?;
+    Some(text[start..end].to_string())
 }
 
 /// Strip optional SQLSTATE code prefix from message.
 /// PostgreSQL may include SQLSTATE like `42P01:  relation "foo"...`
 fn strip_sqlstate(message: &str) -> &str {
-    // SQLSTATE is exactly 5 chars: 2 digits/letters + 3 digits/letters
-    if message.len() > 7 {
-        let prefix = &message[..5];
-        let is_sqlstate = prefix
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-        if is_sqlstate && message[5..].starts_with(":  ") {
-            return message[8..].trim();
-        }
+    // SQLSTATE is exactly 5 ASCII chars: 2 digits/letters + 3 digits/letters
+    // followed by ":  " (colon + two spaces).
+    // Since SQLSTATE is pure ASCII, we can safely index by bytes — but only
+    // after checking that bytes 0..5 are all ASCII (single-byte chars).
+    if message.len() > 7
+        && message.as_bytes()[..5]
+            .iter()
+            .all(|&b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        && message.as_bytes()[5] == b':'
+        && message.as_bytes()[6] == b' '
+        && message.as_bytes()[7] == b' '
+    {
+        return message[8..].trim();
     }
     message
 }
@@ -277,6 +459,10 @@ mod tests {
         let parsed = parser.parse_line(line).unwrap();
         assert_eq!(parsed.event_kind, LogEventKind::Checkpoint);
         assert!(parsed.message.starts_with("checkpoint starting:"));
+        assert!(matches!(
+            parsed.event_data,
+            Some(EventData::CheckpointStarting { .. })
+        ));
     }
 
     #[test]
@@ -310,6 +496,7 @@ mod tests {
         let line = "2024-01-15 14:30:00 UTC [12345]: ERROR:  relation \"users\" does not exist";
         let parsed = parser.parse_line(line).unwrap();
         assert_eq!(parsed.event_kind, LogEventKind::Error);
+        assert!(parsed.event_data.is_none());
     }
 
     #[test]
@@ -329,6 +516,181 @@ mod tests {
         let parsed = parser.parse_line(line).unwrap();
         assert_eq!(parsed.message, "deadlock detected");
     }
+
+    // ---- Russian locale tests ----
+
+    #[test]
+    fn test_stderr_russian_error() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: ОШИБКА:  отношение \"users\" не существует";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.severity, PgLogSeverity::Error);
+        assert_eq!(parsed.event_kind, LogEventKind::Error);
+        assert_eq!(parsed.message, "отношение \"users\" не существует");
+    }
+
+    #[test]
+    fn test_stderr_russian_fatal() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: ВАЖНО:  база данных \"mydb\" не существует";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.severity, PgLogSeverity::Fatal);
+    }
+
+    #[test]
+    fn test_stderr_russian_panic() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: ПАНИКА:  не удалось записать файл";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.severity, PgLogSeverity::Panic);
+    }
+
+    #[test]
+    fn test_stderr_russian_checkpoint_starting() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: СООБЩЕНИЕ:  начата контрольная точка: time";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Checkpoint);
+        match parsed.event_data {
+            Some(EventData::CheckpointStarting { reason }) => assert_eq!(reason, "time"),
+            other => panic!("expected CheckpointStarting, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_stderr_russian_checkpoint_complete() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: СООБЩЕНИЕ:  контрольная точка завершена: записано буферов: 456 (3.5%); добавлено файлов WAL: 0, удалено: 0, переработано: 1; запись=1.234 с, синхронизация=0.567 с, всего=2.345 с; синхронизировано файлов: 5, самый долгий: 0.123 с, средний: 0.099 с; расстояние=12345 КБ, ожидалось=67890 КБ";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Checkpoint);
+        match parsed.event_data {
+            Some(EventData::CheckpointComplete {
+                buffers_written,
+                write_time_ms,
+                sync_time_ms,
+                total_time_ms,
+                distance_kb,
+                estimate_kb,
+            }) => {
+                assert_eq!(buffers_written, 456);
+                assert!((write_time_ms - 1234.0).abs() < 1.0);
+                assert!((sync_time_ms - 567.0).abs() < 1.0);
+                assert!((total_time_ms - 2345.0).abs() < 1.0);
+                assert_eq!(distance_kb, 12345);
+                assert_eq!(estimate_kb, 67890);
+            }
+            other => panic!("expected CheckpointComplete, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_stderr_russian_autovacuum() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: СООБЩЕНИЕ:  автоматическая очистка таблицы \"mydb.public.users\": просмотров индекса: 1\nстраниц: 0 удалено, 500 осталось\nкортежей: 1234 удалено, 5678 осталось\nсистемное использование: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Autovacuum);
+        match parsed.event_data {
+            Some(EventData::Autovacuum {
+                table_name,
+                is_analyze,
+                tuples_removed,
+                elapsed_s,
+                ..
+            }) => {
+                assert_eq!(table_name, "mydb.public.users");
+                assert!(!is_analyze);
+                assert_eq!(tuples_removed, 1234);
+                assert!((elapsed_s - 5.67).abs() < 0.01);
+            }
+            other => panic!("expected Autovacuum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_stderr_russian_autoanalyze() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: СООБЩЕНИЕ:  автоматический анализ таблицы \"mydb.public.users\"\nсистемное использование: CPU: user: 0.01 s, system: 0.00 s, elapsed: 0.12 s";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::Autovacuum);
+        match parsed.event_data {
+            Some(EventData::Autovacuum {
+                table_name,
+                is_analyze,
+                elapsed_s,
+                ..
+            }) => {
+                assert_eq!(table_name, "mydb.public.users");
+                assert!(is_analyze);
+                assert!((elapsed_s - 0.12).abs() < 0.01);
+            }
+            other => panic!("expected Autovacuum (analyze), got {:?}", other),
+        }
+    }
+
+    // ---- Field parsing tests ----
+
+    #[test]
+    fn test_parse_checkpoint_complete_fields_en() {
+        let msg = "checkpoint complete: wrote 123 buffers (0.1%); 0 WAL file(s) added, 0 removed, 1 recycled; write=1.234 s, sync=0.567 s, total=2.345 s; sync files=5, longest=0.123 s, average=0.099 s; distance=12345 kB, estimate=67890 kB";
+        match parse_checkpoint_complete(msg) {
+            EventData::CheckpointComplete {
+                buffers_written,
+                write_time_ms,
+                sync_time_ms,
+                total_time_ms,
+                distance_kb,
+                estimate_kb,
+            } => {
+                assert_eq!(buffers_written, 123);
+                assert!((write_time_ms - 1234.0).abs() < 1.0);
+                assert!((sync_time_ms - 567.0).abs() < 1.0);
+                assert!((total_time_ms - 2345.0).abs() < 1.0);
+                assert_eq!(distance_kb, 12345);
+                assert_eq!(estimate_kb, 67890);
+            }
+            other => panic!("expected CheckpointComplete, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parse_autovacuum_fields_en() {
+        let msg = r#"automatic vacuum of table "mydb.public.orders": index scans: 1
+pages: 10 removed, 500 remain, 0 skipped due to pins, 0 skipped frozen
+tuples: 1234 removed, 5678 remain, 100 are dead but not yet removable
+buffer usage: 456 hits, 78 misses, 9 dirtied
+avg read rate: 1.234 MB/s, avg write rate: 5.678 MB/s
+system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
+        match parse_autovacuum(msg, false) {
+            EventData::Autovacuum {
+                table_name,
+                is_analyze,
+                tuples_removed,
+                pages_removed,
+                elapsed_s,
+            } => {
+                assert_eq!(table_name, "mydb.public.orders");
+                assert!(!is_analyze);
+                assert_eq!(tuples_removed, 1234);
+                assert_eq!(pages_removed, 10);
+                assert!((elapsed_s - 5.67).abs() < 0.01);
+            }
+            other => panic!("expected Autovacuum, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_extract_helpers() {
+        assert_eq!(extract_i64_after("wrote 123 buffers", "wrote "), Some(123));
+        assert_eq!(extract_i64_after("no match", "wrote "), None);
+        assert_eq!(extract_f64_after("write=1.234 s", "write="), Some(1.234));
+        assert_eq!(
+            extract_quoted_string(r#"table "mydb.public.t": done"#),
+            Some("mydb.public.t".to_string())
+        );
+        assert_eq!(extract_quoted_string("no quotes"), None);
+    }
+
+    // ---- Existing tests ----
 
     #[test]
     fn test_csvlog_parser_error() {

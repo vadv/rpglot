@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use super::cgroup::CgroupInfo;
 use super::postgres::{
-    PgLockTreeNode, PgLogEntry, PgLogEventsInfo, PgStatActivityInfo, PgStatBgwriterInfo,
-    PgStatDatabaseInfo, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventsInfo, PgStatActivityInfo,
+    PgStatBgwriterInfo, PgStatDatabaseInfo, PgStatStatementsInfo, PgStatUserIndexesInfo,
+    PgStatUserTablesInfo,
 };
 use super::process::ProcessInfo;
 use super::system::{
@@ -118,6 +119,11 @@ pub enum DataBlock {
     /// PostgreSQL operational events (checkpoint, autovacuum) counts.
     /// Source: PostgreSQL log files (LOG-level messages)
     PgLogEvents(PgLogEventsInfo),
+
+    /// PostgreSQL detailed log events (checkpoint, autovacuum) with parsed fields.
+    /// Source: PostgreSQL log files (LOG-level messages)
+    /// This is the source-of-truth; heatmap counts are derived from these entries.
+    PgLogDetailedEvents(Vec<PgLogEventEntry>),
 }
 
 /// A point-in-time capture of all collected metrics.

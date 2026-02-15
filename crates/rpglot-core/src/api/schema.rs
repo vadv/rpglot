@@ -2265,18 +2265,27 @@ fn generate_pgi_schema() -> TabSchema {
 
 fn generate_pge_schema() -> TabSchema {
     TabSchema {
-        name: "PG Errors".into(),
-        description: "PostgreSQL log errors (ERROR/FATAL/PANIC)".into(),
-        entity_id: "pattern_hash".into(),
+        name: "PG Events".into(),
+        description: "PostgreSQL log events and errors".into(),
+        entity_id: "event_id".into(),
         columns: vec![
             col(
-                "pattern_hash",
-                "Pattern ID",
+                "event_id",
+                "Event ID",
                 DataType::Integer,
                 None,
                 None,
                 true,
                 false,
+            ),
+            col(
+                "event_type",
+                "Type",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
             ),
             col(
                 "severity",
@@ -2289,8 +2298,44 @@ fn generate_pge_schema() -> TabSchema {
             ),
             col("count", "Count", DataType::Integer, None, None, true, false),
             col(
-                "pattern",
-                "Pattern",
+                "table_name",
+                "Table",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
+            col(
+                "elapsed_s",
+                "Elapsed",
+                DataType::Number,
+                Some(Unit::Seconds),
+                Some(Format::Duration),
+                true,
+                false,
+            ),
+            col(
+                "extra_num1",
+                "Buffers/Tuples",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "extra_num2",
+                "Distance/Pages",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "message",
+                "Message",
                 DataType::String,
                 None,
                 None,
@@ -2307,17 +2352,48 @@ fn generate_pge_schema() -> TabSchema {
                 true,
             ),
         ],
-        views: vec![ViewSchema {
-            key: "default".into(),
-            label: "Errors".into(),
-            columns: vec!["severity", "count", "pattern", "sample"]
+        views: vec![
+            ViewSchema {
+                key: "errors".into(),
+                label: "Errors".into(),
+                columns: vec!["severity", "count", "message", "sample"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                default: true,
+                default_sort: Some("count".into()),
+                default_sort_desc: true,
+            },
+            ViewSchema {
+                key: "checkpoints".into(),
+                label: "Checkpoints".into(),
+                columns: vec!["event_type", "extra_num1", "elapsed_s", "message"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                default: false,
+                default_sort: Some("event_id".into()),
+                default_sort_desc: true,
+            },
+            ViewSchema {
+                key: "autovacuum".into(),
+                label: "Autovacuum".into(),
+                columns: vec![
+                    "event_type",
+                    "table_name",
+                    "extra_num1",
+                    "extra_num2",
+                    "elapsed_s",
+                    "message",
+                ]
                 .into_iter()
                 .map(String::from)
                 .collect(),
-            default: true,
-            default_sort: Some("count".into()),
-            default_sort_desc: true,
-        }],
+                default: false,
+                default_sort: Some("elapsed_s".into()),
+                default_sort_desc: true,
+            },
+        ],
         drill_down: None,
     }
 }

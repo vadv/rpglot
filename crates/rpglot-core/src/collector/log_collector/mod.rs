@@ -15,10 +15,10 @@ use std::time::Instant;
 use postgres::Client;
 
 use crate::storage::interner::StringInterner;
-use crate::storage::model::PgLogSeverity;
+use crate::storage::model::{PgLogEventEntry, PgLogEventType, PgLogSeverity};
 
 use normalize::{MAX_LOG_MESSAGE_LEN, normalize_error};
-use parser::{CsvlogParser, LogEventKind, ParsedLogLine, StderrParser};
+use parser::{CsvlogParser, EventData, LogEventKind, ParsedLogLine, StderrParser};
 use tailer::FileTailer;
 
 /// Result of a log collection cycle.
@@ -30,6 +30,8 @@ pub struct LogCollectResult {
     pub checkpoint_count: u16,
     /// Number of autovacuum/autoanalyze events detected in this interval.
     pub autovacuum_count: u16,
+    /// Detailed checkpoint/autovacuum event entries for snapshot storage.
+    pub events: Vec<PgLogEventEntry>,
 }
 
 /// Maximum number of unique error patterns kept per snapshot interval.
@@ -77,6 +79,8 @@ pub struct LogCollector {
     pending_checkpoints: u16,
     /// Accumulated autovacuum/autoanalyze event count between snapshots.
     pending_autovacuums: u16,
+    /// Accumulated detailed event entries between snapshots.
+    pending_events: Vec<PgLogEventEntry>,
     /// Last initialization error (for diagnostics)
     last_error: Option<String>,
 }
@@ -103,6 +107,7 @@ impl LogCollector {
             pending_errors: HashMap::new(),
             pending_checkpoints: 0,
             pending_autovacuums: 0,
+            pending_events: Vec::new(),
             last_error: None,
         }
     }
@@ -202,12 +207,14 @@ impl LogCollector {
         let errors = self.drain_pending(interner);
         let checkpoint_count = self.pending_checkpoints;
         let autovacuum_count = self.pending_autovacuums;
+        let events = std::mem::take(&mut self.pending_events);
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
         LogCollectResult {
             errors,
             checkpoint_count,
             autovacuum_count,
+            events,
         }
     }
 
@@ -241,9 +248,17 @@ impl LogCollector {
             }
             LogEventKind::Checkpoint => {
                 self.pending_checkpoints = self.pending_checkpoints.saturating_add(1);
+                if let Some(event_data) = parsed.event_data {
+                    self.pending_events
+                        .push(event_data_to_entry(event_data, &parsed.message));
+                }
             }
             LogEventKind::Autovacuum => {
                 self.pending_autovacuums = self.pending_autovacuums.saturating_add(1);
+                if let Some(event_data) = parsed.event_data {
+                    self.pending_events
+                        .push(event_data_to_entry(event_data, &parsed.message));
+                }
             }
         }
     }
@@ -328,6 +343,51 @@ impl LogCollector {
     }
 }
 
+/// Convert parser `EventData` into storage `PgLogEventEntry`.
+fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
+    match data {
+        EventData::CheckpointStarting { .. } => PgLogEventEntry {
+            event_type: PgLogEventType::CheckpointStarting,
+            message: message.to_string(),
+            table_name: String::new(),
+            elapsed_s: 0.0,
+            extra_num1: 0,
+            extra_num2: 0,
+        },
+        EventData::CheckpointComplete {
+            buffers_written,
+            total_time_ms,
+            distance_kb,
+            ..
+        } => PgLogEventEntry {
+            event_type: PgLogEventType::CheckpointComplete,
+            message: message.to_string(),
+            table_name: String::new(),
+            elapsed_s: total_time_ms / 1000.0,
+            extra_num1: buffers_written,
+            extra_num2: distance_kb,
+        },
+        EventData::Autovacuum {
+            table_name,
+            is_analyze,
+            tuples_removed,
+            pages_removed,
+            elapsed_s,
+        } => PgLogEventEntry {
+            event_type: if is_analyze {
+                PgLogEventType::Autoanalyze
+            } else {
+                PgLogEventType::Autovacuum
+            },
+            message: message.to_string(),
+            table_name,
+            elapsed_s,
+            extra_num1: tuples_removed,
+            extra_num2: pages_removed,
+        },
+    }
+}
+
 /// Execute `SHOW <setting>` and return the value.
 fn show_setting(client: &mut Client, name: &str) -> Option<String> {
     let query = format!("SHOW {}", name);
@@ -367,16 +427,19 @@ mod tests {
             severity: PgLogSeverity::Error,
             message: "relation \"users\" does not exist".to_string(),
             event_kind: LogEventKind::Error,
+            event_data: None,
         });
         collector.accumulate(ParsedLogLine {
             severity: PgLogSeverity::Error,
             message: "relation \"orders\" does not exist".to_string(),
             event_kind: LogEventKind::Error,
+            event_data: None,
         });
         collector.accumulate(ParsedLogLine {
             severity: PgLogSeverity::Fatal,
             message: "database \"mydb\" does not exist".to_string(),
             event_kind: LogEventKind::Error,
+            event_data: None,
         });
 
         let entries = collector.drain_pending(&mut interner);
@@ -409,6 +472,7 @@ mod tests {
                 severity: PgLogSeverity::Error,
                 message: format!("unique error number {}", i),
                 event_kind: LogEventKind::Error,
+                event_data: None,
             });
         }
 
@@ -425,6 +489,7 @@ mod tests {
             severity: PgLogSeverity::Error,
             message: "some error".to_string(),
             event_kind: LogEventKind::Error,
+            event_data: None,
         });
 
         let entries = collector.drain_pending(&mut interner);

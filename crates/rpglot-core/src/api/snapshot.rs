@@ -31,8 +31,8 @@ pub struct ApiSnapshot {
     pub pgt: Vec<PgTablesRow>,
     /// pg_stat_user_indexes rows (with rates).
     pub pgi: Vec<PgIndexesRow>,
-    /// PostgreSQL log errors (ERROR/FATAL/PANIC).
-    pub pge: Vec<PgErrorsRow>,
+    /// PostgreSQL log events and errors.
+    pub pge: Vec<PgEventsRow>,
     /// pg_locks blocking tree (flat, with depth).
     pub pgl: Vec<PgLocksRow>,
 }
@@ -552,18 +552,29 @@ pub struct PgIndexesRow {
     pub disk_blks_read_s: Option<f64>,
 }
 
-/// PostgreSQL log error pattern row.
+/// PostgreSQL log event/error row.
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct PgErrorsRow {
-    /// Pattern hash (entity ID for selection tracking).
-    pub pattern_hash: u64,
-    /// Severity: "ERROR", "FATAL", or "PANIC".
+pub struct PgEventsRow {
+    /// Unique event identifier (hash-based for errors, sequential for events).
+    pub event_id: u64,
+    /// Event type: "error", "fatal", "panic", "checkpoint_starting",
+    /// "checkpoint_complete", "autovacuum", "autoanalyze".
+    pub event_type: String,
+    /// Severity: "ERROR"/"FATAL"/"PANIC" for errors, "LOG" for events.
     pub severity: String,
-    /// Normalized error pattern text.
-    pub pattern: String,
-    /// Number of occurrences in this snapshot interval.
+    /// Number of occurrences (N for grouped errors, 1 for events).
     pub count: u32,
-    /// One concrete example of the error message.
+    /// Table name (for autovacuum/autoanalyze), empty for checkpoint/errors.
+    pub table_name: String,
+    /// Elapsed time in seconds (checkpoint total_time / vacuum elapsed).
+    pub elapsed_s: f64,
+    /// Extra numeric 1: buffers_written (checkpoint) / tuples_removed (vacuum).
+    pub extra_num1: i64,
+    /// Extra numeric 2: distance_kb (checkpoint) / pages_removed (vacuum).
+    pub extra_num2: i64,
+    /// Error pattern or event message.
+    pub message: String,
+    /// Concrete error sample (errors only), empty for events.
     pub sample: String,
 }
 

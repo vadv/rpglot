@@ -399,23 +399,49 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
   },
 
   pge: {
-    label: "Errors",
-    source: "PostgreSQL stderr log parsing",
+    label: "Events",
+    source: "PostgreSQL stderr/csvlog parsing",
     description:
-      "PostgreSQL log errors (ERROR/FATAL/PANIC) grouped by normalized pattern. Errors are accumulated within the current hour.",
+      "PostgreSQL log events and errors: ERROR/FATAL/PANIC grouped by pattern, plus checkpoint and autovacuum events with parsed details.",
     howToRead:
-      "Sort by Count to find most frequent errors. PANIC = database crash, FATAL = connection terminated, ERROR = query failed. Check Sample column for concrete error message.",
+      "Errors view: sort by Count to find most frequent errors. Checkpoints view: monitor checkpoint frequency and duration. Autovacuum view: track vacuum activity per table.",
     views: {
-      default: {
-        description: "All error patterns from PostgreSQL logs.",
+      errors: {
+        description: "Error patterns from PostgreSQL logs (ERROR/FATAL/PANIC).",
         metrics: [
           { label: "Severity", description: "ERROR, FATAL, or PANIC" },
           {
             label: "Count",
-            description: "Number of occurrences in current hour",
+            description: "Number of occurrences in current interval",
           },
-          { label: "Pattern", description: "Normalized error pattern" },
+          { label: "Message", description: "Normalized error pattern" },
           { label: "Sample", description: "One concrete error message" },
+        ],
+      },
+      checkpoints: {
+        description: "Checkpoint events from PostgreSQL logs.",
+        metrics: [
+          {
+            label: "Type",
+            description: "checkpoint_starting or checkpoint_complete",
+          },
+          {
+            label: "Buffers/Tuples",
+            description: "Buffers written during checkpoint",
+          },
+          { label: "Elapsed", description: "Total checkpoint time" },
+          { label: "Message", description: "Full log message" },
+        ],
+      },
+      autovacuum: {
+        description: "Autovacuum and autoanalyze events from PostgreSQL logs.",
+        metrics: [
+          { label: "Type", description: "autovacuum or autoanalyze" },
+          { label: "Table", description: "Target table name" },
+          { label: "Buffers/Tuples", description: "Tuples removed" },
+          { label: "Distance/Pages", description: "Pages removed" },
+          { label: "Elapsed", description: "Operation duration" },
+          { label: "Message", description: "Full log message" },
         ],
       },
     },

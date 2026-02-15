@@ -372,6 +372,9 @@ impl<F: FileSystem + Clone> Collector<F> {
                     },
                 ));
             }
+            if !log_result.events.is_empty() {
+                blocks.push(DataBlock::PgLogDetailedEvents(log_result.events));
+            }
 
             // Store last error for TUI display
             self.pg_last_error = pg_collector.last_error().map(|s| s.to_string());

@@ -636,3 +636,33 @@ pub struct PgLogEventsInfo {
     /// Number of autovacuum + autoanalyze events in this interval.
     pub autovacuum_count: u16,
 }
+
+/// Type of PostgreSQL log event.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq)]
+pub enum PgLogEventType {
+    CheckpointStarting,
+    CheckpointComplete,
+    Autovacuum,
+    Autoanalyze,
+}
+
+/// A detailed PostgreSQL log event entry within a snapshot interval.
+///
+/// Stores parsed fields from checkpoint/autovacuum LOG messages.
+/// This is the source-of-truth data stored in snapshots (.zst files).
+/// Heatmap counts are derived from these entries.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PgLogEventEntry {
+    /// Type of event.
+    pub event_type: PgLogEventType,
+    /// Full raw log message.
+    pub message: String,
+    /// Table name for autovacuum/autoanalyze (e.g. "db.schema.table"), empty for checkpoint.
+    pub table_name: String,
+    /// Elapsed time in seconds (checkpoint total_time or vacuum elapsed).
+    pub elapsed_s: f64,
+    /// Extra numeric field 1: checkpoint buffers_written / autovacuum tuples_removed.
+    pub extra_num1: i64,
+    /// Extra numeric field 2: checkpoint distance_kb / autovacuum pages_removed.
+    pub extra_num2: i64,
+}
