@@ -267,17 +267,22 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     return { start: hourStart, end: hourEnd, hour: parts.hour };
   }, [snapshot?.timestamp, timezoneHook.timezone]);
 
-  // Load heatmap data for the current hour
+  // Load heatmap data for the current hour (and refresh periodically)
   const heatmapKey = hourRange ? `${hourRange.start}-${hourRange.end}` : "";
   useEffect(() => {
     if (!hourRange) return;
     const { start, end } = hourRange;
     let cancelled = false;
-    fetchHeatmap(start, end, 400).then((buckets) => {
-      if (!cancelled) setHeatmapBuckets(buckets);
-    });
+    const load = () => {
+      fetchHeatmap(start, end, 400).then((buckets) => {
+        if (!cancelled) setHeatmapBuckets(buckets);
+      });
+    };
+    load();
+    const interval = setInterval(load, 30_000);
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [heatmapKey]);
