@@ -1,28 +1,39 @@
-//! Chunk storage format with per-snapshot zstd frames and O(1) random access.
+//! Chunk storage format with per-snapshot zstd frames, dictionary compression,
+//! and O(1) random access.
+//!
+//! A trained zstd dictionary captures common patterns across snapshots within
+//! a chunk, restoring cross-snapshot redundancy that was lost when moving from
+//! monolithic compression to per-snapshot frames.
 //!
 //! File layout:
 //! ```text
 //! ┌─────────────────────────────────────────────────────────┐
-//! │ HEADER (32 bytes, uncompressed)                         │
-//! │   magic: [u8; 4]              = b"RPG2"                 │
-//! │   version: u16                = 2                       │
+//! │ HEADER (48 bytes, uncompressed)                         │
+//! │   magic: [u8; 4]              = b"RPG3"                 │
+//! │   version: u16                = 3                       │
 //! │   snapshot_count: u16                                   │
 //! │   interner_offset: u64        (byte offset in file)     │
 //! │   interner_compressed_len: u64                          │
+//! │   dict_offset: u64            (byte offset in file)     │
+//! │   dict_len: u64               (raw dict size in bytes)  │
 //! │   _reserved: [u8; 4]          = [0; 4]                  │
 //! ├─────────────────────────────────────────────────────────┤
-//! │ INDEX TABLE (snapshot_count × 24 bytes, uncompressed)   │
+//! │ INDEX TABLE (snapshot_count × 28 bytes, uncompressed)   │
 //! │   Per snapshot:                                         │
-//! │     offset: u64   (byte position in file)               │
+//! │     offset: u64           (byte position in file)       │
 //! │     compressed_len: u64                                 │
 //! │     timestamp: i64                                      │
+//! │     uncompressed_len: u32 (for decompress capacity)     │
 //! ├─────────────────────────────────────────────────────────┤
-//! │ SNAPSHOT FRAMES (variable, each an independent zstd)    │
-//! │   zstd(bincode(Snapshot_0))                             │
-//! │   zstd(bincode(Snapshot_1))                             │
+//! │ DICTIONARY (raw bytes, NOT zstd compressed)             │
+//! │   zstd trained dictionary (~64-112 KB)                  │
+//! ├─────────────────────────────────────────────────────────┤
+//! │ SNAPSHOT FRAMES (each compressed WITH dictionary)       │
+//! │   zstd_dict(bincode(Snapshot_0))                        │
+//! │   zstd_dict(bincode(Snapshot_1))                        │
 //! │   ...                                                   │
 //! ├─────────────────────────────────────────────────────────┤
-//! │ INTERNER FRAME (one zstd frame)                         │
+//! │ INTERNER FRAME (one zstd frame, WITHOUT dictionary)     │
 //! │   zstd(bincode(StringInterner))                         │
 //! └─────────────────────────────────────────────────────────┘
 //! ```
@@ -32,26 +43,27 @@ use crate::storage::model::Snapshot;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
 
-const MAGIC: [u8; 4] = *b"RPG2";
-const VERSION: u16 = 2;
-const HEADER_SIZE: usize = 32;
-const INDEX_ENTRY_SIZE: usize = 24; // offset: u64 + compressed_len: u64 + timestamp: i64
+const MAGIC: [u8; 4] = *b"RPG3";
+const VERSION: u16 = 3;
+const HEADER_SIZE: usize = 48;
+const INDEX_ENTRY_SIZE: usize = 28; // offset: u64 + compressed_len: u64 + timestamp: i64 + uncompressed_len: u32
+const DICT_MAX_SIZE: usize = 112 * 1024; // 112 KB
 
-/// Reader for new-format chunk files with per-snapshot random access.
+/// Reader for chunk files with per-snapshot random access and dictionary decompression.
 pub struct ChunkReader {
     snapshot_count: usize,
-    /// (byte_offset, compressed_len, timestamp) for each snapshot frame.
-    index: Vec<(u64, u64, i64)>,
+    /// (byte_offset, compressed_len, timestamp, uncompressed_len) for each snapshot frame.
+    index: Vec<(u64, u64, i64, u32)>,
     interner_offset: u64,
     interner_compressed_len: u64,
-    /// Raw file data — kept in memory for reading individual frames.
-    /// This is the file mmap alternative: read whole file once, then
-    /// seek into it. File sizes are typically 2-4 MB.
+    /// Prepared decoder dictionary for fast repeated decompression.
+    decoder_dict: zstd::dict::DecoderDictionary<'static>,
+    /// Raw file data kept in memory for reading individual frames.
     data: Vec<u8>,
 }
 
 impl ChunkReader {
-    /// Opens a chunk file and reads only the header + index (no snapshot decompression).
+    /// Opens a chunk file: reads header + index + dictionary (no snapshot decompression).
     pub fn open(path: &Path) -> io::Result<Self> {
         let data = std::fs::read(path)?;
 
@@ -63,7 +75,7 @@ impl ChunkReader {
         let magic = &data[0..4];
         if magic != MAGIC {
             return Err(io::Error::other(format!(
-                "invalid magic: expected RPG2, got {:?}",
+                "invalid magic: expected RPG3, got {:?}",
                 magic
             )));
         }
@@ -79,7 +91,9 @@ impl ChunkReader {
         let snapshot_count = u16::from_le_bytes([data[6], data[7]]) as usize;
         let interner_offset = u64::from_le_bytes(data[8..16].try_into().unwrap());
         let interner_compressed_len = u64::from_le_bytes(data[16..24].try_into().unwrap());
-        // bytes 24..28 = reserved
+        let dict_offset = u64::from_le_bytes(data[24..32].try_into().unwrap());
+        let dict_len = u64::from_le_bytes(data[32..40].try_into().unwrap());
+        // bytes 40..44 = reserved
 
         let index_size = snapshot_count * INDEX_ENTRY_SIZE;
         let expected_min = HEADER_SIZE + index_size;
@@ -94,14 +108,25 @@ impl ChunkReader {
             let offset = u64::from_le_bytes(data[base..base + 8].try_into().unwrap());
             let compressed_len = u64::from_le_bytes(data[base + 8..base + 16].try_into().unwrap());
             let timestamp = i64::from_le_bytes(data[base + 16..base + 24].try_into().unwrap());
-            index.push((offset, compressed_len, timestamp));
+            let uncompressed_len =
+                u32::from_le_bytes(data[base + 24..base + 28].try_into().unwrap());
+            index.push((offset, compressed_len, timestamp, uncompressed_len));
         }
+
+        // Load dictionary
+        let dict_start = dict_offset as usize;
+        let dict_end = dict_start + dict_len as usize;
+        if dict_end > data.len() {
+            return Err(io::Error::other("dictionary extends past end of file"));
+        }
+        let decoder_dict = zstd::dict::DecoderDictionary::copy(&data[dict_start..dict_end]);
 
         Ok(Self {
             snapshot_count,
             index,
             interner_offset,
             interner_compressed_len,
+            decoder_dict,
             data,
         })
     }
@@ -113,11 +138,10 @@ impl ChunkReader {
 
     /// Returns timestamps of all snapshots from the index table (no decompression).
     pub fn timestamps(&self) -> Vec<i64> {
-        self.index.iter().map(|(_, _, ts)| *ts).collect()
+        self.index.iter().map(|(_, _, ts, _)| *ts).collect()
     }
 
-    /// Reads and decompresses a single snapshot at the given index.
-    /// Peak RAM: ~30 KB (one compressed frame + one decompressed snapshot).
+    /// Reads and decompresses a single snapshot at the given index using the dictionary.
     pub fn read_snapshot(&self, idx: usize) -> io::Result<Snapshot> {
         if idx >= self.snapshot_count {
             return Err(io::Error::other(format!(
@@ -126,7 +150,7 @@ impl ChunkReader {
             )));
         }
 
-        let (offset, compressed_len, _timestamp) = self.index[idx];
+        let (offset, compressed_len, _timestamp, uncompressed_len) = self.index[idx];
         let start = offset as usize;
         let end = start + compressed_len as usize;
 
@@ -134,13 +158,16 @@ impl ChunkReader {
             return Err(io::Error::other("snapshot frame extends past end of file"));
         }
 
-        let decompressed = zstd::decode_all(&self.data[start..end])?;
+        let mut decompressor =
+            zstd::bulk::Decompressor::with_prepared_dictionary(&self.decoder_dict)?;
+        let decompressed =
+            decompressor.decompress(&self.data[start..end], uncompressed_len as usize)?;
         let snapshot: Snapshot = bincode::deserialize(&decompressed).map_err(io::Error::other)?;
 
         Ok(snapshot)
     }
 
-    /// Reads and decompresses the interner frame.
+    /// Reads and decompresses the interner frame (no dictionary — different data structure).
     pub fn read_interner(&self) -> io::Result<StringInterner> {
         let start = self.interner_offset as usize;
         let end = start + self.interner_compressed_len as usize;
@@ -157,10 +184,11 @@ impl ChunkReader {
     }
 }
 
-/// Writes snapshots and interner in the new chunk format.
+/// Writes snapshots and interner in the chunk format with dictionary compression.
 ///
-/// Each snapshot is stored as an independent zstd frame for O(1) random access.
-/// The interner is stored as a separate zstd frame at the end.
+/// A zstd dictionary is trained on all snapshots, then each snapshot is compressed
+/// with that dictionary for O(1) random access with cross-snapshot redundancy.
+/// The interner is compressed without the dictionary.
 ///
 /// The file is written atomically via a `.tmp` intermediate file.
 pub fn write_chunk(
@@ -180,6 +208,17 @@ pub fn write_chunk(
 
     let snapshot_count = snapshots.len() as u16;
 
+    // Serialize all snapshots to bincode
+    let raw_snapshots: Vec<Vec<u8>> = snapshots
+        .iter()
+        .map(|s| bincode::serialize(s).map_err(io::Error::other))
+        .collect::<Result<_, _>>()?;
+
+    // Train dictionary on all serialized snapshots.
+    // Fall back to empty dictionary (= regular zstd) if training fails
+    // (e.g. too few or too small samples for meaningful dictionary).
+    let dictionary = zstd::dict::from_samples(&raw_snapshots, DICT_MAX_SIZE).unwrap_or_default();
+
     // Write placeholder header (will be updated later)
     let header_placeholder = [0u8; HEADER_SIZE];
     file.write_all(&header_placeholder)?;
@@ -188,18 +227,28 @@ pub fn write_chunk(
     let index_placeholder = vec![0u8; snapshot_count as usize * INDEX_ENTRY_SIZE];
     file.write_all(&index_placeholder)?;
 
-    // Write snapshot frames, recording offsets and timestamps
-    let mut index_entries: Vec<(u64, u64, i64)> = Vec::with_capacity(snapshot_count as usize);
+    // Write dictionary (raw bytes, not zstd compressed)
+    let dict_offset = file.stream_position()?;
+    let dict_len = dictionary.len() as u64;
+    file.write_all(&dictionary)?;
 
-    for snapshot in snapshots {
+    // Compress and write each snapshot WITH dictionary
+    let mut compressor = zstd::bulk::Compressor::with_dictionary(3, &dictionary)?;
+    let mut index_entries: Vec<(u64, u64, i64, u32)> = Vec::with_capacity(snapshot_count as usize);
+
+    for (i, raw) in raw_snapshots.iter().enumerate() {
         let offset = file.stream_position()?;
-        let raw = bincode::serialize(snapshot).map_err(io::Error::other)?;
-        let compressed = zstd::encode_all(&raw[..], 3)?;
+        let compressed = compressor.compress(raw)?;
         file.write_all(&compressed)?;
-        index_entries.push((offset, compressed.len() as u64, snapshot.timestamp));
+        index_entries.push((
+            offset,
+            compressed.len() as u64,
+            snapshots[i].timestamp,
+            raw.len() as u32,
+        ));
     }
 
-    // Write interner frame
+    // Write interner frame (without dictionary)
     let interner_offset = file.stream_position()?;
     let raw_interner = bincode::serialize(interner).map_err(io::Error::other)?;
     let compressed_interner = zstd::encode_all(&raw_interner[..], 3)?;
@@ -215,14 +264,17 @@ pub fn write_chunk(
     header[6..8].copy_from_slice(&snapshot_count.to_le_bytes());
     header[8..16].copy_from_slice(&interner_offset.to_le_bytes());
     header[16..24].copy_from_slice(&interner_compressed_len.to_le_bytes());
-    // bytes 24..28 = reserved (zeros)
+    header[24..32].copy_from_slice(&dict_offset.to_le_bytes());
+    header[32..40].copy_from_slice(&dict_len.to_le_bytes());
+    // bytes 40..44 = reserved (zeros)
     file.write_all(&header)?;
 
     // Write real index
-    for (offset, compressed_len, timestamp) in &index_entries {
+    for (offset, compressed_len, timestamp, uncompressed_len) in &index_entries {
         file.write_all(&offset.to_le_bytes())?;
         file.write_all(&compressed_len.to_le_bytes())?;
         file.write_all(&timestamp.to_le_bytes())?;
+        file.write_all(&uncompressed_len.to_le_bytes())?;
     }
 
     file.sync_all()?;
@@ -287,7 +339,6 @@ mod tests {
         let reader = ChunkReader::open(&path).unwrap();
         assert_eq!(reader.snapshot_count(), 10);
 
-        // Read each snapshot and verify
         for i in 0..10 {
             let snap = reader.read_snapshot(i).unwrap();
             assert_eq!(snap.timestamp, 100 + i as i64 * 10);
@@ -371,5 +422,56 @@ mod tests {
         let interner = StringInterner::new();
 
         assert!(write_chunk(&path, &[], &interner).is_err());
+    }
+
+    #[test]
+    fn test_dictionary_compression_reduces_size() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("test.zst");
+
+        // Create many similar snapshots (simulating real workload)
+        let snapshots: Vec<Snapshot> = (0..50)
+            .map(|i| Snapshot {
+                timestamp: 1000 + i as i64 * 10,
+                blocks: vec![DataBlock::Processes(
+                    (0..100)
+                        .map(|p| ProcessInfo {
+                            pid: p as u32,
+                            ppid: 1,
+                            uid: 1000,
+                            euid: 1000,
+                            name_hash: 42,
+                            cmdline_hash: 43,
+                            num_threads: 4,
+                            ..ProcessInfo::default()
+                        })
+                        .collect(),
+                )],
+            })
+            .collect();
+        let interner = StringInterner::new();
+
+        write_chunk(&path, &snapshots, &interner).unwrap();
+
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        let total_raw: usize = snapshots
+            .iter()
+            .map(|s| bincode::serialize(s).unwrap().len())
+            .sum();
+
+        // Dictionary compression should achieve at least 3x ratio on similar data
+        assert!(
+            file_size < total_raw as u64 / 3,
+            "file_size={file_size}, total_raw={total_raw}, ratio={}",
+            total_raw as f64 / file_size as f64
+        );
+
+        // Verify all snapshots read back correctly
+        let reader = ChunkReader::open(&path).unwrap();
+        assert_eq!(reader.snapshot_count(), 50);
+        for i in 0..50 {
+            let snap = reader.read_snapshot(i).unwrap();
+            assert_eq!(snap.timestamp, 1000 + i as i64 * 10);
+        }
     }
 }
