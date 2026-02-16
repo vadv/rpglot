@@ -271,6 +271,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     },
   );
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null);
 
   // Persist analysis report to sessionStorage so it survives SSO refreshes
   useEffect(() => {
@@ -398,6 +399,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const handleAnalyze = useCallback(async () => {
     if (!hourRange || analyzing) return;
     setAnalyzing(true);
+    setAnalyzeStartedAt(Date.now());
     try {
       const report = await fetchAnalysis(hourRange.start, hourRange.end);
       setAnalysisReport(report);
@@ -405,6 +407,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       console.error("Analysis failed:", err);
     } finally {
       setAnalyzing(false);
+      setAnalyzeStartedAt(null);
     }
   }, [hourRange, analyzing]);
 
@@ -516,6 +519,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         currentHour={hourRange?.hour}
         version={schema.version}
         analyzing={analyzing}
+        analyzeStartedAt={analyzeStartedAt}
         onAnalyze={handleAnalyze}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
@@ -795,6 +799,7 @@ function Header({
   currentHour,
   version,
   analyzing,
+  analyzeStartedAt,
   onAnalyze,
 }: {
   mode: string;
@@ -811,11 +816,25 @@ function Header({
   currentHour?: number;
   version?: string;
   analyzing?: boolean;
+  analyzeStartedAt?: number | null;
   onAnalyze?: () => void;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const dateButtonRef = useRef<HTMLButtonElement>(null);
+  const [analyzeElapsed, setAnalyzeElapsed] = useState(0);
+
+  useEffect(() => {
+    if (!analyzeStartedAt) {
+      setAnalyzeElapsed(0);
+      return;
+    }
+    setAnalyzeElapsed(Math.floor((Date.now() - analyzeStartedAt) / 1000));
+    const id = setInterval(() => {
+      setAnalyzeElapsed(Math.floor((Date.now() - analyzeStartedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [analyzeStartedAt]);
 
   const ts = timestamp ?? 0;
   const tz = timezoneHook.timezone;
@@ -921,7 +940,7 @@ function Header({
             title="Analyze current hour for anomalies and recommendations"
           >
             <Zap size={10} />
-            {analyzing ? "Analyzing\u2026" : "Analyze"}
+            {analyzing ? `Analyzing ${analyzeElapsed}s\u2026` : "Analyze"}
           </button>
         )}
       </div>

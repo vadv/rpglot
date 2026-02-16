@@ -54,6 +54,7 @@ const CATEGORY_TAB: Record<string, TabKey> = {
   pg_statements: "pgs",
   pg_locks: "pgl",
   pg_tables: "pgt",
+  pg_indexes: "pgi",
   pg_bgwriter: "pge",
   pg_errors: "pge",
 };
@@ -68,6 +69,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   pg_activity: "PG Activity",
   pg_statements: "PG Queries",
   pg_tables: "PG Tables",
+  pg_indexes: "PG Indexes",
   pg_bgwriter: "PG BGWriter",
   pg_locks: "PG Locks",
   pg_errors: "PG Errors",
@@ -130,7 +132,7 @@ export function AnalysisModal({
   onJump,
 }: AnalysisModalProps) {
   const [copied, setCopied] = useState(false);
-  const [recsOpen, setRecsOpen] = useState(true);
+  const [recsOpen, setRecsOpen] = useState(false);
   const [criticalOpen, setCriticalOpen] = useState(true);
   const [warningOpen, setWarningOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);

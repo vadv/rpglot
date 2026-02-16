@@ -23,6 +23,7 @@ pub enum Category {
     PgStatements,
     PgLocks,
     PgTables,
+    PgIndexes,
     PgBgwriter,
     PgErrors,
     Cgroup,

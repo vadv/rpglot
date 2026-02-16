@@ -117,7 +117,7 @@ impl AnalysisRule for IndexReadSpikeRule {
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "index_read_spike",
-            category: Category::PgTables,
+            category: Category::PgIndexes,
             severity,
             title: format!("Index {name}: {rate_human} disk reads"),
             detail: Some(detail),
@@ -217,9 +217,9 @@ impl AnalysisRule for IndexCacheHitDropRule {
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "index_cache_miss",
-            category: Category::PgTables,
+            category: Category::PgIndexes,
             severity,
-            title: format!("Index {name}: cache hit ratio {worst_ratio:.0}%"),
+            title: format!("Index {name}: cache hit ratio {worst_ratio:.0}% (interval)"),
             detail: Some(detail),
             value: 100.0 - worst_ratio,
         }]

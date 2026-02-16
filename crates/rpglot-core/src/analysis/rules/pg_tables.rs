@@ -446,7 +446,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
             rule_id: "cache_hit_ratio_drop",
             category: Category::PgTables,
             severity,
-            title: format!("Table {name}: cache hit ratio {worst_ratio:.0}%"),
+            title: format!("Table {name}: cache hit ratio {worst_ratio:.0}% (interval)"),
             detail: Some(detail),
             value: 100.0 - worst_ratio, // value = miss percentage (higher = worse)
         }]
