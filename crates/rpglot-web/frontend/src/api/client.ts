@@ -72,6 +72,15 @@ export async function fetchTimeline(): Promise<TimelineInfo> {
   return res.json();
 }
 
+export async function fetchTimelineLatest(): Promise<{
+  end: number;
+  total_snapshots: number;
+}> {
+  const res = await authFetch(`${BASE}/timeline/latest`);
+  if (!res.ok) throw new Error(`timeline/latest: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchHeatmap(
   start: number,
   end: number,

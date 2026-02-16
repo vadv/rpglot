@@ -146,3 +146,18 @@ body {
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) transparent;
 }
+
+/* ========== Animations ========== */
+@keyframes pulse-btn {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.animate-pulse-btn {
+    animation: pulse-btn 1.5s ease-in-out infinite;
+}

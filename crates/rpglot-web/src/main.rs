@@ -365,6 +365,7 @@ async fn async_main(args: Args) {
         .route("/api/v1/snapshot", get(handle_snapshot))
         .route("/api/v1/stream", get(handle_stream))
         .route("/api/v1/timeline", get(handle_timeline))
+        .route("/api/v1/timeline/latest", get(handle_timeline_latest))
         .route("/api/v1/timeline/heatmap", get(handle_heatmap))
         .route(
             "/api/v1/auth/config",
@@ -1227,6 +1228,26 @@ async fn handle_timeline(State(state_tuple): AppState) -> Result<Json<TimelineIn
         end: inner.history_end.unwrap_or(0),
         total_snapshots: inner.total_snapshots.unwrap_or(0),
         dates,
+    }))
+}
+
+// Lightweight struct for /api/v1/timeline/latest (O(1), no date index computation).
+#[derive(serde::Serialize)]
+struct TimelineLatest {
+    end: i64,
+    total_snapshots: usize,
+}
+
+async fn handle_timeline_latest(
+    State(state_tuple): AppState,
+) -> Result<Json<TimelineLatest>, StatusCode> {
+    let inner = state_tuple.0.lock().unwrap();
+    if inner.mode != Mode::History {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(TimelineLatest {
+        end: inner.history_end.unwrap_or(0),
+        total_snapshots: inner.total_snapshots.unwrap_or(0),
     }))
 }
 

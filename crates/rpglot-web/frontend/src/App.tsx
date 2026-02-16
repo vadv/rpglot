@@ -12,7 +12,12 @@ import {
   HelpCircle,
   HeartPulse,
 } from "lucide-react";
-import { fetchTimeline, fetchHeatmap, fetchAuthConfig } from "./api/client";
+import {
+  fetchTimeline,
+  fetchTimelineLatest,
+  fetchHeatmap,
+  fetchAuthConfig,
+} from "./api/client";
 import { useSchema } from "./hooks/useSchema";
 import { useLiveSnapshot, useHistorySnapshot } from "./hooks/useSnapshot";
 import { readUrlState, useUrlSync } from "./hooks/useUrlState";
@@ -248,6 +253,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const [heatmapBuckets, setHeatmapBuckets] = useState<HeatmapBucket[]>([]);
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+  const [playSpeed, setPlaySpeed] = useState<number | null>(null);
+  const [liveFollow, setLiveFollow] = useState(false);
 
   // Compute current hour boundaries from timestamp
   const hourRange = useMemo(() => {
@@ -323,7 +330,76 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     [jumpToTimestamp, urlSync],
   );
 
-  // Keyboard: Left/Right to step, Shift+Left/Right to step ±1 hour
+  // Manual navigation — disables both Play and Live
+  const handleManualJump = useCallback(
+    (ts: number, direction?: "floor" | "ceil") => {
+      setPlaySpeed(null);
+      setLiveFollow(false);
+      handleTimestampJump(ts, direction);
+    },
+    [handleTimestampJump],
+  );
+
+  // Play: cycle speed x1 → x2 → x4 → x8 → off
+  const handlePlayToggle = useCallback(() => {
+    setLiveFollow(false);
+    setPlaySpeed((prev) => {
+      if (prev == null) return 1;
+      if (prev === 1) return 2;
+      if (prev === 2) return 4;
+      if (prev === 4) return 8;
+      return null; // x8 → off
+    });
+  }, []);
+
+  // Live: toggle follow-latest
+  const handleLiveToggle = useCallback(() => {
+    setPlaySpeed(null);
+    setLiveFollow((prev) => !prev);
+  }, []);
+
+  // Play effect — sequential playback using next_timestamp
+  useEffect(() => {
+    if (playSpeed == null) return;
+    const intervalMs = 1000 / playSpeed;
+
+    const interval = setInterval(() => {
+      const nextTs = snapshotRef.current?.next_timestamp;
+      if (nextTs != null) {
+        handleTimestampJump(nextTs);
+      } else {
+        setPlaySpeed(null);
+      }
+    }, intervalMs);
+
+    return () => clearInterval(interval);
+  }, [playSpeed, handleTimestampJump]);
+
+  // Live effect — aggressive polling + auto-jump to latest
+  useEffect(() => {
+    if (!liveFollow) return;
+
+    if (timeline) {
+      handleTimestampJump(timeline.end);
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const latest = await fetchTimelineLatest();
+        const currentTs = snapshotRef.current?.timestamp ?? 0;
+        if (latest.end > currentTs) {
+          handleTimestampJump(latest.end);
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 5_000);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveFollow, handleTimestampJump]);
+
+  // Keyboard: Left/Right to step, Shift+Left/Right to step ±1 hour, Space to stop
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
@@ -340,33 +416,40 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       ) {
         (target as HTMLInputElement).blur();
       }
+      // Space: stop Play/Live
+      if (e.key === " ") {
+        e.preventDefault();
+        setPlaySpeed(null);
+        setLiveFollow(false);
+        return;
+      }
       // Shift+Arrow: step ±1 hour
       if (e.shiftKey && e.key === "ArrowLeft") {
         e.preventDefault();
         const ts = snapshotRef.current?.timestamp;
-        if (ts) handleTimestampJump(ts - 3600);
+        if (ts) handleManualJump(ts - 3600);
         return;
       }
       if (e.shiftKey && e.key === "ArrowRight") {
         e.preventDefault();
         const ts = snapshotRef.current?.timestamp;
-        if (ts) handleTimestampJump(ts + 3600);
+        if (ts) handleManualJump(ts + 3600);
         return;
       }
       // Arrow: step ±1 snapshot via prev/next timestamp
       if (e.key === "ArrowLeft") {
         e.preventDefault();
         const prevTs = snapshotRef.current?.prev_timestamp;
-        if (prevTs != null) handleTimestampJump(prevTs);
+        if (prevTs != null) handleManualJump(prevTs);
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
         const nextTs = snapshotRef.current?.next_timestamp;
-        if (nextTs != null) handleTimestampJump(nextTs);
+        if (nextTs != null) handleManualJump(nextTs);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleTimestampJump]);
+  }, [handleManualJump]);
 
   return (
     <div className="flex flex-col h-screen">
@@ -378,7 +461,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         timezoneHook={timezoneHook}
         onHelpOpen={() => tabState.setHelpOpen(true)}
         timeline={timeline ?? undefined}
-        onTimestampJump={handleTimestampJump}
+        onTimestampJump={handleManualJump}
         snapshot={snapshot}
         currentHour={hourRange?.hour}
         version={schema.version}
@@ -413,7 +496,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       {timeline && (
         <Timeline
           timeline={timeline}
-          onTimestampJump={handleTimestampJump}
+          onTimestampJump={handleManualJump}
           timestamp={snapshot?.timestamp}
           prevTimestamp={snapshot?.prev_timestamp}
           nextTimestamp={snapshot?.next_timestamp}
@@ -421,6 +504,10 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
           heatmapBuckets={heatmapBuckets}
           hourStart={hourRange?.start}
           hourEnd={hourRange?.end}
+          playSpeed={playSpeed}
+          onPlayToggle={handlePlayToggle}
+          liveFollow={liveFollow}
+          onLiveToggle={handleLiveToggle}
         />
       )}
     </div>

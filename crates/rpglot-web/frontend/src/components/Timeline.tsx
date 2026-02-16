@@ -29,6 +29,10 @@ interface TimelineProps {
   heatmapBuckets?: HeatmapBucket[];
   hourStart?: number;
   hourEnd?: number;
+  playSpeed?: number | null;
+  onPlayToggle?: () => void;
+  liveFollow?: boolean;
+  onLiveToggle?: () => void;
 }
 
 export function Timeline({
@@ -41,6 +45,10 @@ export function Timeline({
   heatmapBuckets,
   hourStart,
   hourEnd,
+  playSpeed,
+  onPlayToggle,
+  liveFollow,
+  onLiveToggle,
 }: TimelineProps) {
   const total = timeline.total_snapshots;
   if (total === 0) return null;
@@ -165,11 +173,53 @@ export function Timeline({
       {/* Next snapshot */}
       <StepButton
         onClick={handleNext}
-        disabled={nextTimestamp == null}
+        disabled={nextTimestamp == null || !!liveFollow}
         title="Next snapshot"
       >
         <ChevronRight size={14} />
       </StepButton>
+
+      {/* Play button */}
+      {onPlayToggle && (
+        <button
+          onClick={onPlayToggle}
+          className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+            playSpeed != null
+              ? "bg-[var(--accent)] text-white animate-pulse-btn"
+              : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+          title={
+            playSpeed != null
+              ? `Playing x${playSpeed} — click to speed up, Space to stop`
+              : "Play forward (1 snap/sec)"
+          }
+        >
+          {playSpeed == null && "\u25B6 Play"}
+          {playSpeed === 1 && "\u25B6"}
+          {playSpeed === 2 && "\u25B6\u25B6"}
+          {playSpeed === 4 && "\u25B6\u25B6\u25B6"}
+          {playSpeed === 8 && "\u25B6\u25B6\u25B6\u25B6"}
+        </button>
+      )}
+
+      {/* Live button */}
+      {onLiveToggle && (
+        <button
+          onClick={onLiveToggle}
+          className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+            liveFollow
+              ? "bg-[var(--status-success-bg)] text-[var(--status-success)] animate-pulse-btn"
+              : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+          }`}
+          title={
+            liveFollow
+              ? "Following latest \u2014 click or Space to stop"
+              : "Follow latest snapshots"
+          }
+        >
+          {liveFollow ? "\u25CF Live" : "\u25C9 Live"}
+        </button>
+      )}
     </div>
   );
 }
