@@ -101,6 +101,8 @@ const RULE_LABEL: Record<string, string> = {
   heap_read_spike: "Heap reads",
   table_write_spike: "Table writes",
   cache_hit_ratio_drop: "Cache miss",
+  index_read_spike: "Idx reads",
+  index_cache_miss: "Idx cache miss",
   autovacuum_impact: "Autovacuum",
   blocked_sessions: "Blocked",
   pg_errors: "PG errors",
