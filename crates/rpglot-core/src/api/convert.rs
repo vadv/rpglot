@@ -1106,14 +1106,22 @@ fn extract_pga(
                     let mean = stmts_by_qid.get(&a.query_id).map(|s| s.mean_exec_time);
                     let max = stmts_by_qid.get(&a.query_id).map(|s| s.max_exec_time);
                     let calls_s = pgs_rates.get(&a.query_id).and_then(|r| r.calls_s);
-                    let hit_pct = stmts_by_qid.get(&a.query_id).and_then(|s| {
-                        let total = s.shared_blks_hit + s.shared_blks_read;
-                        if total > 0 {
-                            Some(s.shared_blks_hit as f64 * 100.0 / total as f64)
-                        } else {
-                            None
+                    let hit_pct = {
+                        let rate = pgs_rates.get(&a.query_id);
+                        let rate_hit = rate.and_then(|r| r.shared_blks_hit_s);
+                        let rate_read = rate.and_then(|r| r.shared_blks_read_s);
+                        match (rate_hit, rate_read) {
+                            (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                            _ => stmts_by_qid.get(&a.query_id).and_then(|s| {
+                                let total = s.shared_blks_hit + s.shared_blks_read;
+                                if total > 0 {
+                                    Some(s.shared_blks_hit as f64 * 100.0 / total as f64)
+                                } else {
+                                    None
+                                }
+                            }),
                         }
-                    });
+                    };
                     (mean, max, calls_s, hit_pct)
                 } else {
                     (None, None, None, None)
@@ -1182,11 +1190,22 @@ fn extract_pgs(
                 None
             };
 
-            let total_blks = s.shared_blks_hit + s.shared_blks_read;
-            let hit_pct = if total_blks > 0 {
-                Some(s.shared_blks_hit as f64 * 100.0 / total_blks as f64)
-            } else {
-                None
+            // Prefer rate-based HIT% (delta over interval) over cumulative
+            let hit_pct = {
+                let rate_hit = r.and_then(|r| r.shared_blks_hit_s);
+                let rate_read = r.and_then(|r| r.shared_blks_read_s);
+                match (rate_hit, rate_read) {
+                    (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                    _ => {
+                        // Fallback to cumulative when no rates available
+                        let total_blks = s.shared_blks_hit + s.shared_blks_read;
+                        if total_blks > 0 {
+                            Some(s.shared_blks_hit as f64 * 100.0 / total_blks as f64)
+                        } else {
+                            None
+                        }
+                    }
+                }
             };
 
             PgStatementsRow {
