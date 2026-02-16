@@ -1,300 +1,253 @@
 # rpglot
 
-**rpglot** — инструмент для анализа проблем PostgreSQL, объединяющий системные метрики (CPU, память, диск, сеть) и метрики PostgreSQL (сессии, запросы, таблицы, индексы, блокировки, ошибки) в едином интерфейсе. Написан на Rust.
+**rpglot** — инструмент для анализа проблем PostgreSQL. Объединяет системные метрики и метрики PostgreSQL в едином интерфейсе с навигацией по времени.
 
-Основной сценарий использования — **post-mortem анализ**: демон `rpglotd` непрерывно записывает метрики на диск, а `rpglot-web` позволяет просматривать историю через браузер, перемещаясь по timeline и сопоставляя системную нагрузку с поведением PostgreSQL.
-
----
-
-## Зачем это нужно
-
-Когда PostgreSQL тормозит, причина может быть где угодно: высокий CPU от autovacuum, нехватка памяти и swap thrashing, блокировки между сессиями, плохие запросы без индексов, I/O saturation от checkpoint. Обычно приходится собирать данные из разных источников (`pg_stat_activity`, `pg_stat_statements`, `htop`, `iostat`, логи) и сопоставлять их по времени вручную.
-
-rpglot собирает всё в одном месте и привязывает к единой шкале времени. Можно увидеть что в 14:32 был всплеск CPU, и в это же время в PGA появились 20 active сессий с одним и тем же запросом, а в PGS видно что этот запрос делает seq scan, а в PGT — что таблица давно не vacuum-илась.
+Демон `rpglotd` непрерывно записывает метрики, `rpglot-web` позволяет просматривать историю через браузер. Можно перемотать на момент инцидента и увидеть полную картину: что происходило с CPU, диском, памятью, какие запросы выполнялись, какие сессии были активны, были ли блокировки и ошибки.
 
 ---
 
-## Что стоит смотреть в первую очередь
+## Quick Start
 
-**1. Summary panel** (верхняя панель) — общая картина: CPU, memory, disk I/O, network, load average. Если CPU > 80% или disk util > 90% — это точка входа.
+```bash
+# На сервере с PostgreSQL — запустить демон сбора
+rpglotd -o /var/lib/rpglot
 
-**2. PGA (PostgreSQL Activity)** — активные сессии. Что делает PostgreSQL прямо сейчас? Сколько active сессий? Есть ли long-running запросы? Какие wait events?
+# Запустить веб-интерфейс для анализа
+rpglot-web --history /var/lib/rpglot --listen 0.0.0.0:8080
+```
 
-**3. PGS (Statements)** — статистика запросов. Какой запрос потребляет больше всего времени? Какой вызывается чаще всего? У какого низкий cache hit ratio?
-
-**4. PGE (Events)** — ошибки и события из лога PostgreSQL. Есть ли ошибки? Как часто и какие checkpoints? Работает ли autovacuum?
-
-**5. PGL (Locks)** — дерево блокировок. Кто кого блокирует?
+Открыть `http://server:8080` в браузере.
 
 ---
 
 ## Три бинарника
 
-### rpglotd — демон сбора метрик
+| Бинарник | Назначение |
+|----------|-----------|
+| `rpglotd` | Демон — собирает метрики каждые 10 сек и пишет на диск |
+| `rpglot-web` | Веб-сервер — REST API + React фронтенд для анализа в браузере |
+| `rpglot` | TUI — терминальный интерфейс в стиле atop/htop |
 
-Фоновый процесс, собирает системные и PostgreSQL метрики каждые N секунд и записывает на диск. Запускается рядом с PostgreSQL и работает непрерывно.
-
-```bash
-rpglotd                                # интервал 10 сек, директория ./data
-rpglotd -i 5 -o /var/lib/rpglot       # интервал 5 сек, кастомная директория
-```
-
-| Флаг | Описание | По умолчанию |
-|------|----------|-------------|
-| `-i, --interval` | Интервал сбора (секунды) | 10 |
-| `-o, --output` | Директория хранения | ./data |
-| `--max-size` | Максимальный объём файлов | 1G |
-| `--max-days` | Максимальный возраст файлов | 7 дней |
-| `--postgres` | Сбор PostgreSQL метрик | true |
-
-Данные хранятся в часовых chunk-файлах (postcard + zstd), ротация по размеру и возрасту.
-
-### rpglot-web — веб-интерфейс (основной способ просмотра)
-
-REST API сервер со встроенным React-фронтендом. Основной режим работы — **history**: подключается к директории с данными rpglotd и предоставляет веб-интерфейс для анализа.
+**rpglot-web** — основной способ просмотра. Работает в двух режимах:
+- **history** (основной) — читает файлы с диска, навигация по timeline
+- **live** — сбор и отображение метрик в реальном времени
 
 ```bash
-# History mode (основной сценарий)
-rpglot-web --history /var/lib/rpglot
-
-# Live mode (сбор + просмотр в одном процессе)
-rpglot-web
-
-# Указание адреса
-rpglot-web --listen 0.0.0.0:9090 --history /var/lib/rpglot
+rpglot-web --history /var/lib/rpglot   # history mode
+rpglot-web                              # live mode
 ```
 
-| Флаг | Env var | Описание | По умолчанию |
-|------|---------|----------|-------------|
-| `--listen` | `RPGLOT_LISTEN` | Адрес:порт | 0.0.0.0:8080 |
-| `--history` | `RPGLOT_HISTORY` | Путь к директории с данными | — (live mode) |
-| `--interval` | `RPGLOT_INTERVAL` | Интервал для live mode | 1 сек |
-| `--auth-user` | `RPGLOT_AUTH_USER` | Basic Auth username | — |
-| `--auth-password` | `RPGLOT_AUTH_PASSWORD` | Basic Auth password | — |
-| `--sso-proxy-url` | `RPGLOT_SSO_PROXY_URL` | SSO proxy URL | — |
-
-### rpglot — TUI-просмотрщик
-
-Терминальный интерфейс в стиле atop/htop. Работает в live или history режиме.
+**rpglotd** — фоновый демон, запускается как systemd unit:
 
 ```bash
-rpglot                     # live mode, интервал 1 сек
-rpglot -r /var/lib/rpglot  # history mode
-rpglot -r -b -1h           # history, начиная с часа назад
+rpglotd -i 10 -o /var/lib/rpglot --max-size 2G --max-days 14
 ```
-
----
-
-## Вкладки
-
-Переключение: цифры `1`-`7` или `Tab`/`Shift+Tab`.
-
-### PRC — Процессы
-
-Все процессы системы с CPU, памятью, I/O. PostgreSQL процессы подсвечиваются и показывают текущий SQL в колонке CMD.
-
-**View modes:** Generic (`g`), Command (`c`), Memory (`m`), Disk (`d`)
-
-### PGA — PostgreSQL Activity
-
-Активные сессии из `pg_stat_activity`, обогащённые OS-метриками (CPU%, RSS) через привязку по PID.
-
-**View modes:**
-- Generic (`g`) — PID, CPU%, RSS, DB, User, State, Wait Event, Query Duration, Query
-- Stats (`v`) — обогащение данными из pg_stat_statements: Mean/Max время, Calls/s, HIT%
-
-**Подсветка аномалий в Stats режиме:**
-- Жёлтый: QDUR > 2x Mean или HIT% < 80%
-- Красный: QDUR > 5x Mean, QDUR > Max или HIT% < 50%
-
-**Фильтры (web):** скрытие idle и system сессий
-
-### PGS — PostgreSQL Statements
-
-TOP 500 запросов из `pg_stat_statements` по total_exec_time. Все метрики — rate (/s), вычисленные из дельт между снимками.
-
-**View modes:** Time (`t`), Calls (`c`), I/O (`i`), Temp (`e`)
-
-### PGT — PostgreSQL Tables
-
-Статистика по таблицам из `pg_stat_user_tables` + `pg_statio_user_tables`. Собирается со **всех доступных баз** на инстансе.
-
-**View modes:** I/O (default), Reads, Writes, Scans, Maintenance, Schema, Database
-
-View modes Schema и Database — клиентская агрегация: суммируют метрики всех таблиц по имени схемы или базы данных.
-
-### PGI — PostgreSQL Indexes
-
-Статистика по индексам из `pg_stat_user_indexes` + `pg_statio_user_indexes`. Также собирается со всех баз.
-
-**View modes:** I/O (default), Usage, Unused, Schema, Database
-
-View Unused — индексы с нулём сканирований, кандидаты на удаление.
-
-### PGE — PostgreSQL Events
-
-События из лога PostgreSQL: ошибки, checkpoints, autovacuum/autoanalyze.
-
-**View modes:** Errors, Checkpoints, Autovacuum
-
-Checkpoints view показывает timing, buffers written, WAL files, sync duration. Autovacuum view — детали каждого autovacuum/autoanalyze.
-
-### PGL — PostgreSQL Locks
-
-Дерево блокировок: кто кого блокирует. Отображается как плоская таблица с индентацией по глубине.
-
----
-
-## Drill-down навигация
-
-Клавиша `>` или `J` позволяет провалиться от общего к частному:
-
-```
-PRC (процессы) → PGA (сессии) → PGS (статистика запросов)
-PGT (таблицы)  → PGI (индексы этой таблицы)
-PGL (locks)    → PGA (сессия, держащая lock)
-```
-
-**Пример:** В PRC видите процесс postgres с CPU 95%. Нажимаете `>` — попадаете в PGA к этой сессии. Видите active запрос с QDUR 45s. Нажимаете `>` — попадаете в PGS и видите что этот запрос делает 0% cache hits и 50k shared_blks_read/s.
-
----
-
-## Summary panel
-
-Верхняя панель с общей картиной системы:
-
-| Секция | Что показывает |
-|--------|---------------|
-| CPU | usr%, sys%, irq%, iow%, steal%, idle% |
-| LOAD | load average 1/5/15 мин |
-| MEM | total, available, buffers, cache, slab |
-| SWP | total, free, dirty, writeback |
-| DSK | per-disk: read/write MB/s, IOPS, util% |
-| NET | per-interface: RX/TX MB/s, packets, errors |
-| PSI | Pressure Stall Information (CPU, Memory, I/O) |
-| VMS | vmstat rates: pgin/pgout/swin/swout/ctx/s |
-| PG | connections, transactions, commits, rollbacks |
-| BGWR | checkpoints, buffers written |
-| CGROUP | CPU/Memory/PIDs limits и usage (в контейнерах) |
-
-Цветовая индикация: жёлтый — warning, красный — critical.
 
 ---
 
 ## Веб-интерфейс
 
-### Timeline и heatmap
+### Общий вид
 
-В history mode доступна шкала времени с heatmap — визуализация активности за каждый час. Тёмные области = высокая нагрузка. Клик по heatmap переносит к нужному моменту.
-
-**Навигация:**
-- `←/→` — шаг по снимкам
-- `Shift+←/→` — шаг ±1 час
-- Календарь для выбора даты
-- Прямой ввод времени
+Интерфейс состоит из:
+- **Header** — дата/время, health score, настройки
+- **Summary panel** — карточки с CPU, память, диск, сеть, PostgreSQL метрики
+- **Табы** — PRC, PGA, PGS, PGT, PGI, PGE, PGL
+- **Timeline с heatmap** — навигация по времени с визуализацией активности
+- **Таблица данных** — основная рабочая область
+- **Detail panel** — боковая панель с деталями выбранной строки
 
 ### Health Score
 
-Индикатор здоровья системы 0-100 в header. Учитывает количество active сессий, CPU, disk I/O. Зелёный (80+), жёлтый (50-79), красный (<50).
+В header отображается индикатор здоровья 0-100. Учитывает количество активных сессий, CPU, disk I/O. Цвет: зелёный (80+), жёлтый (50-79), красный (<50). Позволяет мгновенно оценить состояние системы при навигации по timeline.
 
-### Detail panel
+### Timeline и heatmap
 
-Клик по строке + Enter — боковая панель с детальной информацией. Для PGA показывает полный текст запроса, для PGS — breakdown по timing и I/O, для PRC — полную информацию о процессе включая /proc/pid/io.
+Цветная полоса под timeline показывает активность за выбранный период. Позволяет визуально найти моменты пиковой нагрузки, не просматривая каждый снапшот. Тёмные участки = высокая активность.
+
+Heatmap включает:
+- CPU usage
+- Активные PostgreSQL сессии
+- Ошибки из лога PostgreSQL (красные маркеры)
+- Checkpoint events
+- Autovacuum events
+
+Навигация:
+- Клик по heatmap — перейти к нужному моменту
+- `←/→` — шаг по снимкам
+- `Shift+←/→` — шаг ±1 час
+- Календарь для выбора даты и часа
+
+### Цветовая подсветка
+
+Все значения в таблицах подсвечиваются по пороговым правилам:
+
+| Цвет | Что означает | Примеры |
+|------|-------------|---------|
+| Красный | Требует внимания | CPU > 90%, HIT% < 90%, DEAD% > 20%, query > 30s |
+| Жёлтый | Стоит мониторить | CPU 50-90%, HIT% 90-99%, idle in transaction |
+| Зелёный | Норма | HIT% >= 99%, swap = 0 |
+| Серый | Нет активности | Rate = 0, idle |
+
+### Summary panel
+
+Карточки с ключевыми метриками системы. Каждая метрика подсвечена по порогам. В контейнерах вместо хостовых метрик CPU/Memory показываются cgroup limits и usage.
+
+Секции: CPU, Load, Memory, Swap, Disk (per-device), Network (per-interface), PSI, PostgreSQL (hit ratio, deadlocks, errors), BGWriter (checkpoints, buffers).
+
+### Контекстная справка
+
+Наведение на заголовок колонки показывает tooltip с описанием метрики, пороговыми значениями, практическим советом и ссылкой на PostgreSQL документацию. Клавиша `?` открывает полную справку по текущей вкладке.
 
 ### Темы и timezone
 
-- Dark / Light / System theme
-- Timezone: LOCAL / UTC / Moscow
+- Три темы: Light, Dark, System (следует за OS)
+- Три timezone: Local, UTC, Moscow
+- Настройки сохраняются в браузере
 
-### Keyboard shortcuts (web)
+---
+
+## Вкладки
+
+### PRC — Процессы
+
+Все процессы системы. PostgreSQL бэкенды подсвечиваются и показывают текущий SQL запрос. View modes: Generic, Command, Memory, Disk.
+
+### PGA — PostgreSQL Activity
+
+Активные сессии из `pg_stat_activity` с системными метриками (CPU%, RSS) через привязку по PID.
+
+**View modes:**
+- **Generic** — PID, CPU%, RSS, DB, User, State, Wait Event, Query Duration, Query
+- **Stats** — обогащение из pg_stat_statements: среднее/максимальное время запроса, calls/s, cache HIT%. Подсвечивает аномалии: если текущий запрос выполняется в 5x дольше среднего — красный
+
+**Фильтры:** скрытие idle сессий, скрытие системных бэкендов
+
+### PGS — PostgreSQL Statements
+
+TOP 500 запросов из pg_stat_statements. Метрики вычисляются как rate (в секунду) из дельт между снимками.
+
+**View modes:**
+- **Calls** — самые часто вызываемые запросы
+- **Time** — самые медленные по суммарному времени
+- **I/O** — запросы с максимальным buffer I/O, cache hit ratio
+- **Temp** — запросы, использующие temp файлы (work_mem overflow)
+
+### PGT — PostgreSQL Tables
+
+Статистика таблиц со всех баз на инстансе. Колонка Database показывает источник.
+
+**View modes:**
+- **I/O** — physical reads/hits по heap и index blocks, cache hit ratio
+- **Reads** — seq scan reads, index fetches, total tuples read
+- **Writes** — inserts, updates, deletes, HOT updates
+- **Scans** — соотношение sequential vs index scans (высокий SEQ% = нет индекса)
+- **Maintenance** — dead tuples, DEAD%, last vacuum/analyze
+- **Schema** — агрегация по schema name
+- **Database** — агрегация по database name
+
+### PGI — PostgreSQL Indexes
+
+Статистика индексов со всех баз.
+
+**View modes:**
+- **I/O** — block reads/hits, cache hit ratio
+- **Usage** — scans, tuple reads/fetches
+- **Unused** — индексы с нулём сканирований, кандидаты на DROP
+- **Schema** / **Database** — агрегация
+
+### PGE — PostgreSQL Events
+
+События из лога PostgreSQL.
+
+**View modes:**
+- **Errors** — ERROR, FATAL, PANIC из лога, сгруппированные по паттерну
+- **Checkpoints** — timing, buffers written, WAL files, sync duration
+- **Autovacuum** — детали каждого autovacuum/autoanalyze: timing, buffers, dead tuples removed
+
+### PGL — PostgreSQL Locks
+
+Дерево блокировок: кто кого блокирует. Отображается как плоская таблица с индентацией по глубине. Позволяет быстро найти корневой блокировщик.
+
+---
+
+## Drill-down
+
+Клавиша `>` позволяет провалиться от общего к частному:
+
+| Откуда | Куда | По какому полю |
+|--------|------|---------------|
+| PRC | PGA | PID процесса |
+| PGA | PGS | query_id |
+| PGT | PGI | relid (индексы этой таблицы) |
+| PGL | PGA | PID сессии |
+
+**Пример:** В PRC видите postgres процесс с CPU 95%. `>` → PGA: видите active запрос с QDUR 45s. `>` → PGS: видите что запрос делает 0% cache hits и 50k reads/s.
+
+---
+
+## Detail panel
+
+Клик по строке открывает боковую панель с полной информацией:
+- **PRC** — процесс: CPU, memory, disk I/O, /proc/pid/io
+- **PGA** — сессия: timing, wait events, OS metrics, полный текст запроса
+- **PGS** — запрос: rates, timing breakdown, I/O, temp/WAL usage, нормализованный SQL
+- **PGT** — таблица: size, scans, reads/writes, vacuum/analyze stats
+- **PGI** — индекс: scans, usage, I/O
+
+Кнопка Copy для копирования SQL запросов. Drill-down кнопка для перехода к связанной сущности.
+
+---
+
+## Keyboard shortcuts
 
 | Клавиша | Действие |
 |---------|----------|
 | `1`-`7` | Переключение табов |
-| `?` | Справка |
-| `Space` | Пауза (live mode) |
-| `←/→` | Навигация по истории |
-| `j/k` | Перемещение по строкам |
+| `j/k` или `↑/↓` | Навигация по строкам |
 | `Enter` | Открыть detail panel |
+| `>` | Drill-down |
 | `Escape` | Закрыть detail / снять выделение |
 | `/` | Фильтр |
+| `?` | Справка |
+| `Space` | Пауза (live mode) |
+| `←/→` | Навигация по снимкам (history) |
+| `Shift+←/→` | ±1 час (history) |
 
 ---
 
-## Собираемые метрики
+## Что собирается
 
-### Системные (Linux /proc)
+**Система:** CPU (per-core), memory, swap, disk I/O (per-device), network (per-interface), load average, PSI, vmstat, cgroup metrics
 
-- **Процессы**: PID, state, CPU time (user/system), memory (VSZ/RSS/PSS/swap), I/O (read/write bytes), context switches, threads
-- **CPU**: per-core usage, context switches, interrupts
-- **Memory**: total, free, available, buffers, cache, slab, dirty, writeback
-- **Swap**: total, free, dirty
-- **Disk**: per-device read/write bytes и ops, util%
-- **Network**: per-interface RX/TX bytes и packets, errors, drops
-- **Load average**: 1m, 5m, 15m
-- **PSI**: CPU/Memory/I/O pressure stall
-- **Vmstat**: paging, context switches, faults
-- **Cgroup**: CPU/Memory/PIDs limits и usage (автоопределение контейнера)
-
-### PostgreSQL
-
-- **pg_stat_activity**: все backends — state, wait events, query, duration
-- **pg_stat_statements**: TOP 500 запросов — timing, calls, I/O, temp, WAL
-- **pg_stat_user_tables**: per-table — scans, reads, writes, vacuum, I/O (все базы)
-- **pg_stat_user_indexes**: per-index — scans, usage, I/O (все базы)
-- **pg_stat_database**: connections, transactions, commits, rollbacks
-- **pg_stat_bgwriter**: checkpoints, buffers written
-- **pg_locks**: lock types, holders, waiters
-- **PostgreSQL log**: errors, checkpoints, autovacuum events
+**PostgreSQL:** pg_stat_activity, pg_stat_statements (TOP 500), pg_stat_user_tables (все базы), pg_stat_user_indexes (все базы), pg_stat_database, pg_stat_bgwriter, pg_locks, PostgreSQL log (errors, checkpoints, autovacuum)
 
 **Минимальная версия PostgreSQL: 10**
 
 ---
 
-## Мультибазовая коллекция
-
-Метрики таблиц (PGT) и индексов (PGI) собираются со **всех доступных баз** на PostgreSQL инстансе. Коллектор автоматически поддерживает пул подключений ко всем базам, обновляя список каждые 10 минут.
-
-Колонка Database в PGT/PGI показывает из какой базы пришла каждая строка. View modes Database и Schema агрегируют данные на клиенте.
-
----
-
 ## Хранение данных
 
-Данные записываются в часовые chunk-файлы:
+Данные записываются в часовые chunk-файлы с zstd-сжатием. Каждый снапшот доступен по индексу без декомпрессии всего файла. Рядом с каждым chunk хранится heatmap sidecar для быстрой отрисовки timeline без чтения снапшотов.
 
+Подробности формата: [docs/storage.md](docs/storage.md)
+
+```bash
+rpglotd --max-size 2G --max-days 14  # ротация по размеру и возрасту
 ```
-/var/lib/rpglot/
-  2026-02-16.00.chunk
-  2026-02-16.01.chunk
-  ...
-  wal.log              # текущий WAL до flush в chunk
-  heatmap.bin          # кэш heatmap для timeline
-```
-
-**Формат chunk:** postcard (binary serialization) + zstd (dictionary compression). Random access по индексу в footer файла — чтение конкретного снапшота без распаковки всего файла.
-
-**Ротация:** по `--max-size` (default 1G) и `--max-days` (default 7). Старые файлы удаляются автоматически.
 
 ---
 
 ## Аутентификация
 
-### Basic Auth
-
 ```bash
-rpglot-web --auth-user admin --auth-password secret --history /data
-```
+# Basic Auth
+rpglot-web --auth-user admin --auth-password secret
 
-### SSO Proxy (JWT)
-
-```bash
-rpglot-web \
-  --sso-proxy-url https://sso.example.com/oauth2/start \
-  --sso-proxy-key-file /etc/rpglot/sso-public.pem \
-  --sso-proxy-audience rpglot \
-  --sso-proxy-allowed-users "alice,bob" \
-  --history /data
+# SSO Proxy (JWT)
+rpglot-web --sso-proxy-url https://sso.example.com/oauth2/start \
+           --sso-proxy-key-file /etc/rpglot/public.pem \
+           --sso-proxy-allowed-users "alice,bob"
 ```
 
 ---
@@ -305,27 +258,7 @@ rpglot-web \
 cargo build --release
 ```
 
-Бинарники: `target/release/rpglotd`, `target/release/rpglot-web`, `target/release/rpglot`.
-
-Версия включает git SHA: `rpglotd --version` → `0.1.9-abc1234`.
-
----
-
-## Типичный deployment
-
-```bash
-# На сервере с PostgreSQL:
-
-# 1. Запустить демон сбора (systemd unit)
-rpglotd -i 10 -o /var/lib/rpglot --max-size 2G --max-days 14
-
-# 2. Запустить веб-сервер для просмотра истории
-rpglot-web --history /var/lib/rpglot --listen 0.0.0.0:8080
-```
-
-Веб-интерфейс доступен на `http://server:8080`. Навигация по timeline, анализ любого момента в прошлом.
-
----
+Версия включает git SHA: `rpglotd --version` → `0.1.9-abc1234`
 
 ## Лицензия
 
