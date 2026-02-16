@@ -5,15 +5,21 @@ import type {
   AnalysisReport,
   AnalysisIncident,
   AnalysisRecommendation,
+  TabKey,
 } from "../api/types";
 import type { TimezoneMode } from "../utils/formatters";
 import { formatTime, formatTimestamp } from "../utils/formatters";
+
+export interface AnalysisJump {
+  timestamp: number;
+  tab?: TabKey;
+}
 
 interface AnalysisModalProps {
   report: AnalysisReport;
   timezone: TimezoneMode;
   onClose: () => void;
-  onTimestampJump: (ts: number) => void;
+  onJump: (jump: AnalysisJump) => void;
 }
 
 type Severity = "info" | "warning" | "critical";
@@ -30,11 +36,26 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   info: "Info",
 };
 
+const CATEGORY_TAB: Record<string, TabKey> = {
+  cpu: "prc",
+  memory: "prc",
+  disk: "prc",
+  network: "prc",
+  psi: "prc",
+  cgroup: "prc",
+  pg_activity: "pga",
+  pg_statements: "pgs",
+  pg_locks: "pgl",
+  pg_tables: "pgt",
+  pg_bgwriter: "pge",
+  pg_errors: "pge",
+};
+
 export function AnalysisModal({
   report,
   timezone,
   onClose,
-  onTimestampJump,
+  onJump,
 }: AnalysisModalProps) {
   const [copied, setCopied] = useState(false);
   const [recsOpen, setRecsOpen] = useState(true);
@@ -77,11 +98,14 @@ export function AnalysisModal({
   }, [report, timezone]);
 
   const handleJump = useCallback(
-    (ts: number) => {
-      onTimestampJump(ts);
+    (incident: AnalysisIncident) => {
+      onJump({
+        timestamp: incident.peak_ts,
+        tab: CATEGORY_TAB[incident.category],
+      });
       onClose();
     },
-    [onTimestampJump, onClose],
+    [onJump, onClose],
   );
 
   return createPortal(
@@ -253,10 +277,8 @@ function SeverityBadge({
   count: number;
 }) {
   const colors: Record<Severity, string> = {
-    critical:
-      "bg-[var(--status-critical-bg)] text-[var(--status-critical)]",
-    warning:
-      "bg-[var(--status-warning-bg)] text-[var(--status-warning)]",
+    critical: "bg-[var(--status-critical-bg)] text-[var(--status-critical)]",
+    warning: "bg-[var(--status-warning-bg)] text-[var(--status-warning)]",
     info: "bg-[var(--status-info-bg,var(--accent-bg))] text-[var(--status-info,var(--accent-text))]",
   };
 
@@ -340,7 +362,7 @@ function IncidentCard({
 }: {
   incident: AnalysisIncident;
   timezone: TimezoneMode;
-  onJump: (ts: number) => void;
+  onJump: (incident: AnalysisIncident) => void;
 }) {
   const timeRange =
     incident.first_ts === incident.last_ts
@@ -368,7 +390,7 @@ function IncidentCard({
         </div>
       </div>
       <button
-        onClick={() => onJump(incident.peak_ts)}
+        onClick={() => onJump(incident)}
         className="shrink-0 text-[10px] px-1.5 py-0.5 rounded text-[var(--accent-text)] hover:bg-[var(--accent-bg)] transition-colors whitespace-nowrap"
         title={`Jump to peak at ${formatTime(incident.peak_ts, timezone)}`}
       >
@@ -410,10 +432,7 @@ function reportToMarkdown(report: AnalysisReport, tz: TimezoneMode): string {
     }
   }
 
-  if (
-    report.incidents.length === 0 &&
-    report.recommendations.length === 0
-  ) {
+  if (report.incidents.length === 0 && report.recommendations.length === 0) {
     md += `No incidents detected — everything looks healthy.\n`;
   }
 

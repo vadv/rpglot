@@ -39,6 +39,7 @@ import { DetailPanel } from "./components/DetailPanel";
 import { Timeline, CalendarPopover, TimeInput } from "./components/Timeline";
 import { HelpModal } from "./components/HelpModal";
 import { AnalysisModal } from "./components/AnalysisModal";
+import type { AnalysisJump } from "./components/AnalysisModal";
 import { RichTooltip } from "./components/RichTooltip";
 import {
   computeHealthScore,
@@ -382,6 +383,17 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     setLiveFollow((prev) => !prev);
   }, []);
 
+  // Handle jump from analysis modal — switch tab + jump to timestamp
+  const handleAnalysisJump = useCallback(
+    (jump: AnalysisJump) => {
+      if (jump.tab) {
+        tabState.handleTabChange(jump.tab);
+      }
+      handleManualJump(jump.timestamp);
+    },
+    [handleManualJump, tabState],
+  );
+
   // Analyze current hour
   const handleAnalyze = useCallback(async () => {
     if (!hourRange || analyzing) return;
@@ -555,7 +567,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
           report={analysisReport}
           timezone={timezoneHook.timezone}
           onClose={() => setAnalysisReport(null)}
-          onTimestampJump={handleManualJump}
+          onJump={handleAnalysisJump}
         />
       )}
     </div>
