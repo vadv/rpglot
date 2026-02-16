@@ -787,6 +787,21 @@ fn extract_prc(
         return Vec::new();
     };
 
+    // Compute I/O inherited from died children (Linux adds child's
+    // cumulative /proc/pid/io counters to parent on wait()).
+    let died_io = prev
+        .and_then(|ps| {
+            find_block(ps, |b| {
+                if let DataBlock::Processes(v) = b {
+                    Some(v.as_slice())
+                } else {
+                    None
+                }
+            })
+        })
+        .map(|prev_procs| crate::util::process_io::compute_died_children_io(processes, prev_procs))
+        .unwrap_or_default();
+
     // Previous processes by PID for delta computation
     let prev_procs: HashMap<u32, &ProcessInfo> = prev
         .and_then(|p| {
@@ -870,14 +885,31 @@ fn extract_prc(
                 (0, 0)
             };
 
-            // Disk I/O rates
+            // Disk I/O rates (subtract inherited I/O from died children)
             let (read_bytes_s, write_bytes_s, read_ops_s, write_ops_s) =
                 if let (Some(pp), true) = (prev_p, has_prev) {
+                    let inherited = died_io.get(&p.pid);
+                    let adj_rsz = inherited.map_or(0, |d| d.rsz);
+                    let adj_wsz = inherited.map_or(0, |d| d.wsz);
+                    let adj_rio = inherited.map_or(0, |d| d.rio);
+                    let adj_wio = inherited.map_or(0, |d| d.wio);
                     (
-                        Some(p.dsk.rsz.saturating_sub(pp.dsk.rsz) as f64 / delta_time),
-                        Some(p.dsk.wsz.saturating_sub(pp.dsk.wsz) as f64 / delta_time),
-                        Some(p.dsk.rio.saturating_sub(pp.dsk.rio) as f64 / delta_time),
-                        Some(p.dsk.wio.saturating_sub(pp.dsk.wio) as f64 / delta_time),
+                        Some(
+                            p.dsk.rsz.saturating_sub(pp.dsk.rsz).saturating_sub(adj_rsz) as f64
+                                / delta_time,
+                        ),
+                        Some(
+                            p.dsk.wsz.saturating_sub(pp.dsk.wsz).saturating_sub(adj_wsz) as f64
+                                / delta_time,
+                        ),
+                        Some(
+                            p.dsk.rio.saturating_sub(pp.dsk.rio).saturating_sub(adj_rio) as f64
+                                / delta_time,
+                        ),
+                        Some(
+                            p.dsk.wio.saturating_sub(pp.dsk.wio).saturating_sub(adj_wio) as f64
+                                / delta_time,
+                        ),
                     )
                 } else {
                     (None, None, None, None)
@@ -1005,27 +1037,36 @@ fn extract_pga(
         return Vec::new();
     };
 
-    // OS processes by PID for CPU%/RSS enrichment
-    let processes: HashMap<u32, &ProcessInfo> = find_block(snap, |b| {
+    // OS processes for CPU%/RSS/IO enrichment
+    let proc_slice = find_block(snap, |b| {
         if let DataBlock::Processes(v) = b {
             Some(v.as_slice())
         } else {
             None
         }
-    })
-    .map(|ps| ps.iter().map(|p| (p.pid, p)).collect())
-    .unwrap_or_default();
-
-    let prev_procs: HashMap<u32, &ProcessInfo> = prev
-        .and_then(|p| {
-            find_block(p, |b| {
-                if let DataBlock::Processes(v) = b {
-                    Some(v.as_slice())
-                } else {
-                    None
-                }
-            })
+    });
+    let prev_proc_slice = prev.and_then(|p| {
+        find_block(p, |b| {
+            if let DataBlock::Processes(v) = b {
+                Some(v.as_slice())
+            } else {
+                None
+            }
         })
+    });
+
+    // Subtract inherited I/O from died children
+    let died_io = match (proc_slice, prev_proc_slice) {
+        (Some(curr), Some(prev_ps)) => {
+            crate::util::process_io::compute_died_children_io(curr, prev_ps)
+        }
+        _ => HashMap::new(),
+    };
+
+    let processes: HashMap<u32, &ProcessInfo> = proc_slice
+        .map(|ps| ps.iter().map(|p| (p.pid, p)).collect())
+        .unwrap_or_default();
+    let prev_procs: HashMap<u32, &ProcessInfo> = prev_proc_slice
         .map(|ps| ps.iter().map(|p| (p.pid, p)).collect())
         .unwrap_or_default();
 
@@ -1095,13 +1136,44 @@ fn extract_pga(
                 };
                 let (rc_s, wc_s, rb_s, wb_s, ro_s, wo_s) =
                     if let (Some(pp), true) = (prev_p, has_prev) {
+                        let inh = died_io.get(&pid_u32);
+                        let a_rchar = inh.map_or(0, |d| d.rchar);
+                        let a_wchar = inh.map_or(0, |d| d.wchar);
+                        let a_rsz = inh.map_or(0, |d| d.rsz);
+                        let a_wsz = inh.map_or(0, |d| d.wsz);
+                        let a_rio = inh.map_or(0, |d| d.rio);
+                        let a_wio = inh.map_or(0, |d| d.wio);
                         (
-                            Some(p.dsk.rchar.saturating_sub(pp.dsk.rchar) as f64 / delta_time),
-                            Some(p.dsk.wchar.saturating_sub(pp.dsk.wchar) as f64 / delta_time),
-                            Some(p.dsk.rsz.saturating_sub(pp.dsk.rsz) as f64 / delta_time),
-                            Some(p.dsk.wsz.saturating_sub(pp.dsk.wsz) as f64 / delta_time),
-                            Some(p.dsk.rio.saturating_sub(pp.dsk.rio) as f64 / delta_time),
-                            Some(p.dsk.wio.saturating_sub(pp.dsk.wio) as f64 / delta_time),
+                            Some(
+                                p.dsk
+                                    .rchar
+                                    .saturating_sub(pp.dsk.rchar)
+                                    .saturating_sub(a_rchar) as f64
+                                    / delta_time,
+                            ),
+                            Some(
+                                p.dsk
+                                    .wchar
+                                    .saturating_sub(pp.dsk.wchar)
+                                    .saturating_sub(a_wchar) as f64
+                                    / delta_time,
+                            ),
+                            Some(
+                                p.dsk.rsz.saturating_sub(pp.dsk.rsz).saturating_sub(a_rsz) as f64
+                                    / delta_time,
+                            ),
+                            Some(
+                                p.dsk.wsz.saturating_sub(pp.dsk.wsz).saturating_sub(a_wsz) as f64
+                                    / delta_time,
+                            ),
+                            Some(
+                                p.dsk.rio.saturating_sub(pp.dsk.rio).saturating_sub(a_rio) as f64
+                                    / delta_time,
+                            ),
+                            Some(
+                                p.dsk.wio.saturating_sub(pp.dsk.wio).saturating_sub(a_wio) as f64
+                                    / delta_time,
+                            ),
                         )
                     } else {
                         (None, None, None, None, None, None)

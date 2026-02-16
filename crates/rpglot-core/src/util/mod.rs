@@ -1,6 +1,7 @@
 //! Utility modules for rpglot.
 
 mod container;
+pub mod process_io;
 mod time_parser;
 
 pub use container::is_container;

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::model::DataBlock;
+use crate::util::process_io::{compute_died_children_io, find_parent_pids};
 
 /// The top process must do at least 10 MB/s to be considered a hog.
 const MIN_HOG_IO_BYTES_S: f64 = 10_000_000.0;
@@ -52,6 +53,14 @@ impl AnalysisRule for ProcessIoHogRule {
             .map(|(i, p)| (p.pid, i))
             .collect();
 
+        // Subtract inherited I/O from died children
+        let died_io = compute_died_children_io(procs, prev_procs);
+
+        // Exclude parent (supervisor) processes — their I/O accounting is
+        // unreliable because Linux adds died children's cumulative counters
+        // to the parent via wait(), and we can't know the child's final I/O.
+        let parent_pids = find_parent_pids(procs);
+
         // Compute per-process I/O rate
         struct ProcIo {
             pid: u32,
@@ -66,13 +75,26 @@ impl AnalysisRule for ProcessIoHogRule {
         let mut total_io: f64 = 0.0;
 
         for p in procs {
+            if parent_pids.contains(&p.pid) {
+                continue;
+            }
             let Some(&prev_idx) = prev_by_pid.get(&p.pid) else {
                 continue;
             };
             let prev = &prev_procs[prev_idx];
 
-            let delta_read = p.dsk.rsz.saturating_sub(prev.dsk.rsz) as f64;
-            let delta_write = p.dsk.wsz.saturating_sub(prev.dsk.wsz) as f64;
+            let adj_rsz = died_io.get(&p.pid).map_or(0, |d| d.rsz);
+            let adj_wsz = died_io.get(&p.pid).map_or(0, |d| d.wsz);
+            let delta_read = p
+                .dsk
+                .rsz
+                .saturating_sub(prev.dsk.rsz)
+                .saturating_sub(adj_rsz) as f64;
+            let delta_write = p
+                .dsk
+                .wsz
+                .saturating_sub(prev.dsk.wsz)
+                .saturating_sub(adj_wsz) as f64;
             let read_s = delta_read / ctx.dt;
             let write_s = delta_write / ctx.dt;
             let total_s = read_s + write_s;
