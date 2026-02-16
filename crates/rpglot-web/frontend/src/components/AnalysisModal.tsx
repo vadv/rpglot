@@ -164,8 +164,8 @@ export function AnalysisModal({
   );
 
   const handleCopyMarkdown = useCallback(() => {
-    const md = reportToMarkdown(report, timezone);
-    navigator.clipboard.writeText(md).then(() => {
+    const text = reportToText(report, timezone);
+    copyToClipboard(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -208,14 +208,14 @@ export function AnalysisModal({
             <button
               onClick={handleCopyMarkdown}
               className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
-              title="Copy report as Markdown"
+              title="Copy report to clipboard"
             >
               {copied ? (
                 <Check size={14} className="text-[var(--status-success)]" />
               ) : (
                 <Copy size={14} />
               )}
-              {copied ? "Copied" : "Copy MD"}
+              {copied ? "Copied" : "Copy"}
             </button>
             <button
               onClick={onClose}
@@ -715,33 +715,77 @@ function severityEmoji(s: Severity): string {
   return SEVERITY_ICON[s] ?? "";
 }
 
-function reportToMarkdown(report: AnalysisReport, tz: TimezoneMode): string {
-  let md = `# Hourly Analysis Report\n\n`;
-  md += `**Period:** ${formatTimestamp(report.start_ts, tz)} — ${formatTime(report.end_ts, tz)}\n`;
-  md += `**Snapshots:** ${report.snapshots_analyzed}\n`;
-  md += `**Incidents:** ${report.summary.critical_count} critical, ${report.summary.warning_count} warning, ${report.summary.info_count} info\n\n`;
-
-  if (report.recommendations.length > 0) {
-    md += `## Recommendations\n\n`;
-    for (const r of report.recommendations) {
-      md += `### ${severityEmoji(r.severity)} ${r.title}\n\n`;
-      md += `${r.description}\n\n`;
+/** Copy text to clipboard with fallback for HTTP contexts */
+async function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // fallback below
     }
   }
+  // Fallback: textarea + execCommand
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand("copy");
+  document.body.removeChild(ta);
+}
 
-  if (report.incidents.length > 0) {
-    md += `## Incidents\n\n`;
-    for (const i of report.incidents) {
-      md += `- **${severityEmoji(i.severity)} ${i.title}**\n`;
-      md += `  ${formatTime(i.first_ts, tz)} — ${formatTime(i.last_ts, tz)} (${i.snapshot_count} snapshots, peak: ${i.peak_value.toFixed(1)})\n`;
-      if (i.detail) md += `  ${i.detail}\n`;
-      md += `\n`;
+/** Messenger-friendly plain text report (Telegram, Slack, etc.) */
+function reportToText(report: AnalysisReport, tz: TimezoneMode): string {
+  const lines: string[] = [];
+  lines.push(
+    `rpglot: ${formatTimestamp(report.start_ts, tz)} \u2014 ${formatTime(report.end_ts, tz)}`,
+  );
+
+  const counts: string[] = [];
+  if (report.summary.critical_count > 0)
+    counts.push(`${report.summary.critical_count} critical`);
+  if (report.summary.warning_count > 0)
+    counts.push(`${report.summary.warning_count} warning`);
+  if (report.summary.info_count > 0)
+    counts.push(`${report.summary.info_count} info`);
+  if (counts.length > 0) lines.push(counts.join(", "));
+  lines.push("");
+
+  // Group incidents by severity
+  const bySeverity: [Severity, AnalysisIncident[]][] = [
+    ["critical", report.incidents.filter((i) => i.severity === "critical")],
+    ["warning", report.incidents.filter((i) => i.severity === "warning")],
+    ["info", report.incidents.filter((i) => i.severity === "info")],
+  ];
+
+  for (const [, incidents] of bySeverity) {
+    if (incidents.length === 0) continue;
+    for (const inc of incidents) {
+      const time =
+        inc.first_ts === inc.last_ts
+          ? formatTime(inc.first_ts, tz)
+          : `${formatTime(inc.first_ts, tz)}\u2014${formatTime(inc.last_ts, tz)}`;
+      lines.push(`${severityEmoji(inc.severity)} ${inc.title}`);
+      lines.push(`  ${time} (${inc.snapshot_count} snaps)`);
+      if (inc.detail) lines.push(`  ${inc.detail}`);
     }
+    lines.push("");
+  }
+
+  if (report.recommendations.length > 0) {
+    lines.push("Recommendations:");
+    for (const r of report.recommendations) {
+      lines.push(`${severityEmoji(r.severity)} ${r.title}`);
+      lines.push(`  ${r.description}`);
+    }
+    lines.push("");
   }
 
   if (report.incidents.length === 0 && report.recommendations.length === 0) {
-    md += `No incidents detected — everything looks healthy.\n`;
+    lines.push("No incidents \u2014 everything looks healthy.");
   }
 
-  return md;
+  return lines.join("\n").trimEnd();
 }
