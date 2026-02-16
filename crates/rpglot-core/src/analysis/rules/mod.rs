@@ -44,6 +44,9 @@ pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
         // PG Tables
         Box::new(pg_tables::DeadTuplesHighRule),
         Box::new(pg_tables::SeqScanDominantRule),
+        Box::new(pg_tables::HeapReadSpikeRule),
+        Box::new(pg_tables::TableWriteSpikeRule),
+        Box::new(pg_tables::CacheHitRatioDropRule),
         // PG BGWriter
         Box::new(pg_bgwriter::CheckpointSpikeRule),
         Box::new(pg_bgwriter::BackendBuffersRule),

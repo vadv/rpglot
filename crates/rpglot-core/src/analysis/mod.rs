@@ -85,6 +85,7 @@ pub struct AnalysisSummary {
 
 pub struct AnalysisContext<'a> {
     pub snapshot: &'a Snapshot,
+    pub prev_snapshot: Option<&'a Snapshot>,
     pub interner: &'a StringInterner,
     pub timestamp: i64,
     pub ewma: &'a EwmaState,
@@ -502,6 +503,7 @@ impl Analyzer {
 
         let mut ewma = EwmaState::new(0.1);
         let mut prev_sample: Option<PrevSample> = None;
+        let mut prev_snap: Option<Snapshot> = None;
         let mut anomalies: Vec<Anomaly> = Vec::new();
         let mut snapshots_analyzed: usize = 0;
 
@@ -519,6 +521,7 @@ impl Analyzer {
 
             let ctx = AnalysisContext {
                 snapshot: &snapshot,
+                prev_snapshot: prev_snap.as_ref(),
                 interner: &interner,
                 timestamp: snapshot.timestamp,
                 ewma: &ewma,
@@ -531,6 +534,7 @@ impl Analyzer {
             }
 
             prev_sample = Some(PrevSample::extract(&snapshot));
+            prev_snap = Some(snapshot);
             snapshots_analyzed += 1;
         }
 
