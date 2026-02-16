@@ -103,7 +103,7 @@ export function AnalysisModal({
   onJump,
 }: AnalysisModalProps) {
   const [copied, setCopied] = useState(false);
-  const [recsOpen, setRecsOpen] = useState(true);
+  const [recsOpen, setRecsOpen] = useState(false);
   const [criticalOpen, setCriticalOpen] = useState(true);
   const [warningOpen, setWarningOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -159,7 +159,7 @@ export function AnalysisModal({
       onClick={onClose}
     >
       <div
-        className="relative w-[720px] max-h-[85vh] flex flex-col bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl"
+        className="relative w-[90vw] max-w-[1100px] min-w-[600px] max-h-[85vh] flex flex-col bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -266,7 +266,7 @@ export function AnalysisModal({
               onToggle={() => setCriticalOpen((o) => !o)}
               severity="critical"
             >
-              <div className="space-y-1.5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {criticalIncidents.map((inc, i) => (
                   <IncidentCard
                     key={i}
@@ -287,7 +287,7 @@ export function AnalysisModal({
               onToggle={() => setWarningOpen((o) => !o)}
               severity="warning"
             >
-              <div className="space-y-1.5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {warningIncidents.map((inc, i) => (
                   <IncidentCard
                     key={i}
@@ -308,7 +308,7 @@ export function AnalysisModal({
               onToggle={() => setInfoOpen((o) => !o)}
               severity="info"
             >
-              <div className="space-y-1.5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
                 {infoIncidents.map((inc, i) => (
                   <IncidentCard
                     key={i}
@@ -331,9 +331,9 @@ export function AnalysisModal({
 // Incident Timeline — swim-lane visualization
 // ============================================================
 
-const LANE_HEIGHT = 22;
-const AXIS_HEIGHT = 20;
-const LABEL_WIDTH = 76;
+const LANE_HEIGHT = 28;
+const AXIS_HEIGHT = 24;
+const LABEL_WIDTH = 80;
 
 function IncidentTimeline({
   incidents,
@@ -423,6 +423,8 @@ function IncidentTimeline({
           style={{
             top: AXIS_HEIGHT + laneIdx * LANE_HEIGHT,
             height: LANE_HEIGHT,
+            backgroundColor:
+              laneIdx % 2 === 1 ? "rgba(255,255,255,0.02)" : undefined,
           }}
         >
           {/* Lane label */}
@@ -438,25 +440,20 @@ function IncidentTimeline({
               const leftPct = ((inc.first_ts - startTs) / range) * 100;
               const widthPct = Math.max(
                 ((inc.last_ts - inc.first_ts) / range) * 100,
-                0.3,
+                0.5,
               );
-              const peakPct =
-                inc.first_ts === inc.last_ts
-                  ? 50
-                  : ((inc.peak_ts - inc.first_ts) /
-                      (inc.last_ts - inc.first_ts)) *
-                    100;
               return (
                 <div
                   key={i}
-                  className="absolute top-[4px] rounded-sm cursor-pointer transition-opacity duration-150 hover:opacity-100"
+                  className="absolute top-[5px] rounded cursor-pointer transition-opacity duration-150 hover:opacity-100"
                   style={{
                     left: `${leftPct}%`,
                     width: `${widthPct}%`,
-                    minWidth: 4,
-                    height: LANE_HEIGHT - 8,
+                    minWidth: 6,
+                    height: LANE_HEIGHT - 10,
+                    marginRight: 1,
                     backgroundColor: SEVERITY_COLOR[inc.severity],
-                    opacity: 0.65,
+                    opacity: 0.7,
                   }}
                   onClick={() => onJump(inc)}
                   onMouseEnter={(e) =>
@@ -472,16 +469,7 @@ function IncidentTimeline({
                     )
                   }
                   onMouseLeave={() => setHovered(null)}
-                >
-                  {/* Peak marker */}
-                  <div
-                    className="absolute top-[-2px] w-[5px] h-[5px] -translate-x-1/2 rounded-full bg-white shadow-sm"
-                    style={{
-                      left: `${peakPct}%`,
-                      opacity: 0.9,
-                    }}
-                  />
-                </div>
+                />
               );
             })}
           </div>
@@ -492,7 +480,7 @@ function IncidentTimeline({
       {hovered &&
         createPortal(
           <div
-            className="fixed z-[9999] px-2.5 py-1.5 rounded-lg text-xs shadow-md pointer-events-none max-w-xs"
+            className="fixed z-[9999] px-2.5 py-1.5 rounded-lg text-xs shadow-md pointer-events-none max-w-sm"
             style={{
               left: hovered.x + 14,
               top: hovered.y - 10,
@@ -631,42 +619,35 @@ function IncidentCard({
 
   return (
     <div
-      className="flex items-start justify-between gap-2 p-2 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] transition-colors"
+      className="flex items-start gap-1.5 p-2 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
       style={{
         borderLeft: `3px solid ${SEVERITY_COLOR[incident.severity]}`,
       }}
+      onClick={() => onJump(incident)}
+      title={`Jump to peak at ${formatTime(incident.peak_ts, timezone)}`}
     >
-      <div className="flex items-start gap-1.5 min-w-0">
-        <span className="text-xs leading-none mt-0.5">
-          {SEVERITY_ICON[incident.severity]}
-        </span>
-        <div className="min-w-0">
-          <div className="text-xs font-medium text-[var(--text-primary)] truncate">
-            {incident.title}
-          </div>
-          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-            <CategoryBadge category={incident.category} />
-            <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
-              {timeRange}
-            </span>
-            <span className="text-[10px] text-[var(--text-tertiary)]">
-              ({incident.snapshot_count} snaps)
-            </span>
-          </div>
-          {incident.detail && (
-            <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">
-              {incident.detail}
-            </div>
-          )}
+      <span className="text-xs leading-none mt-0.5">
+        {SEVERITY_ICON[incident.severity]}
+      </span>
+      <div className="min-w-0">
+        <div className="text-xs font-medium text-[var(--text-primary)] truncate">
+          {incident.title}
         </div>
+        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+          <CategoryBadge category={incident.category} />
+          <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
+            {timeRange}
+          </span>
+          <span className="text-[10px] text-[var(--text-tertiary)]">
+            ({incident.snapshot_count} snaps)
+          </span>
+        </div>
+        {incident.detail && (
+          <div className="text-[10px] text-[var(--text-secondary)] mt-0.5 truncate">
+            {incident.detail}
+          </div>
+        )}
       </div>
-      <button
-        onClick={() => onJump(incident)}
-        className="shrink-0 text-[10px] px-1.5 py-0.5 rounded text-[var(--accent-text)] hover:bg-[var(--accent-bg)] cursor-pointer transition-colors whitespace-nowrap"
-        title={`Jump to peak at ${formatTime(incident.peak_ts, timezone)}`}
-      >
-        &rarr; Jump
-      </button>
     </div>
   );
 }
