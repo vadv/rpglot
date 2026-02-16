@@ -276,3 +276,55 @@ impl AnalysisRule for HighActiveSessionsRule {
         }]
     }
 }
+
+// ============================================================
+// TpsSpikeRule — transaction throughput spike
+// ============================================================
+
+pub struct TpsSpikeRule;
+
+impl AnalysisRule for TpsSpikeRule {
+    fn id(&self) -> &'static str {
+        "tps_spike"
+    }
+
+    fn evaluate(&self, ctx: &AnalysisContext) -> Vec<Anomaly> {
+        let prev = match ctx.prev {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        if ctx.dt <= 0.0 {
+            return Vec::new();
+        }
+
+        let Some(dbs) = find_block(ctx.snapshot, |b| match b {
+            DataBlock::PgStatDatabase(v) => Some(v.as_slice()),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+
+        let commits: i64 = dbs.iter().map(|d| d.xact_commit).sum();
+        let rollbacks: i64 = dbs.iter().map(|d| d.xact_rollback).sum();
+        let d_c = (commits - prev.pg_xact_commit).max(0) as f64;
+        let d_r = (rollbacks - prev.pg_xact_rollback).max(0) as f64;
+        let tps = (d_c + d_r) / ctx.dt;
+
+        let avg = ctx.ewma.tps;
+        if !ctx.ewma.is_spike(tps, avg, 2.0) {
+            return Vec::new();
+        }
+
+        let factor = if avg > 0.0 { tps / avg } else { 0.0 };
+
+        vec![Anomaly {
+            timestamp: ctx.timestamp,
+            rule_id: "tps_spike",
+            category: Category::PgActivity,
+            severity: Severity::Warning,
+            title: format!("TPS spike: {tps:.0} tx/s ({factor:.1}x above normal)"),
+            detail: Some(format!("Baseline avg: {avg:.0} tx/s")),
+            value: tps,
+        }]
+    }
+}

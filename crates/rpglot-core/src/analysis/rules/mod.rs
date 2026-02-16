@@ -1,6 +1,7 @@
 pub mod cgroup;
 pub mod cpu;
 pub mod disk;
+pub mod load;
 pub mod memory;
 pub mod network;
 pub mod pg_activity;
@@ -19,10 +20,11 @@ pub trait AnalysisRule: Send + Sync {
 
 pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
     vec![
-        // CPU
+        // CPU / Load
         Box::new(cpu::CpuHighRule),
         Box::new(cpu::IowaitHighRule),
         Box::new(cpu::StealHighRule),
+        Box::new(load::LoadAverageHighRule),
         // Memory
         Box::new(memory::MemoryLowRule),
         Box::new(memory::SwapUsageRule),
@@ -37,8 +39,10 @@ pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
         Box::new(pg_activity::WaitSyncReplicaRule),
         Box::new(pg_activity::WaitLockRule),
         Box::new(pg_activity::HighActiveSessionsRule),
+        Box::new(pg_activity::TpsSpikeRule),
         // PG Statements
         Box::new(pg_statements::MeanTimeSpikeRule),
+        Box::new(pg_statements::QueryCallSpikeRule),
         // PG Locks
         Box::new(pg_locks::BlockedSessionsRule),
         // PG Tables
