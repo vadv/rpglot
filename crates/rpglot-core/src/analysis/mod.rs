@@ -190,11 +190,21 @@ impl EwmaState {
         {
             let total_rsz: u64 = disks.iter().map(|d| d.rsz).sum();
             let total_wsz: u64 = disks.iter().map(|d| d.wsz).sum();
-            let total_io_ms: u64 = disks.iter().map(|d| d.io_ms).sum();
             let read_s = (total_rsz.saturating_sub(p.disk_rsz) as f64 * 512.0) / dt;
             let write_s = (total_wsz.saturating_sub(p.disk_wsz) as f64 * 512.0) / dt;
-            let io_ms_d = total_io_ms.saturating_sub(p.disk_io_ms) as f64;
-            let util = (io_ms_d / (dt * 1000.0) * 100.0).min(100.0);
+            // Per-device utilization: max across all devices
+            let mut max_util = 0.0_f64;
+            for d in disks {
+                let prev_io_ms = p
+                    .disk_io_ms_per_dev
+                    .get(&d.device_hash)
+                    .copied()
+                    .unwrap_or(0);
+                let io_ms_d = d.io_ms.saturating_sub(prev_io_ms) as f64;
+                let util = (io_ms_d / (dt * 1000.0) * 100.0).min(100.0);
+                max_util = max_util.max(util);
+            }
+            let util = max_util;
             Self::update_val(self.n, self.alpha, util, &mut self.disk_util_pct);
             Self::update_val(self.n, self.alpha, read_s, &mut self.disk_read_bytes_s);
             Self::update_val(self.n, self.alpha, write_s, &mut self.disk_write_bytes_s);
@@ -301,7 +311,8 @@ pub struct PrevSample {
     pub cpu_steal: u64,
     pub disk_rsz: u64,
     pub disk_wsz: u64,
-    pub disk_io_ms: u64,
+    /// Per-device io_ms (device_hash → cumulative io_ms).
+    pub disk_io_ms_per_dev: std::collections::HashMap<u64, u64>,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
     pub pg_xact_commit: i64,
@@ -320,7 +331,7 @@ impl PrevSample {
             cpu_steal: 0,
             disk_rsz: 0,
             disk_wsz: 0,
-            disk_io_ms: 0,
+            disk_io_ms_per_dev: std::collections::HashMap::new(),
             net_rx_bytes: 0,
             net_tx_bytes: 0,
             pg_xact_commit: 0,
@@ -342,7 +353,9 @@ impl PrevSample {
         }) {
             s.disk_rsz = disks.iter().map(|d| d.rsz).sum();
             s.disk_wsz = disks.iter().map(|d| d.wsz).sum();
-            s.disk_io_ms = disks.iter().map(|d| d.io_ms).sum();
+            for d in disks {
+                s.disk_io_ms_per_dev.insert(d.device_hash, d.io_ms);
+            }
         }
 
         if let Some(nets) = find_block(snapshot, |b| match b {

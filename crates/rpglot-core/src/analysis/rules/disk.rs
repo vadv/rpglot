@@ -30,10 +30,18 @@ impl AnalysisRule for DiskUtilHighRule {
             return Vec::new();
         };
 
-        // Compute aggregate util from total io_ms delta.
-        let total_io_ms: u64 = disks.iter().map(|d| d.io_ms).sum();
-        let io_ms_d = total_io_ms.saturating_sub(prev.disk_io_ms) as f64;
-        let util_pct = (io_ms_d / (ctx.dt * 1000.0) * 100.0).min(100.0);
+        // Per-device utilization: take the max across all devices.
+        let mut util_pct = 0.0_f64;
+        for d in disks {
+            let prev_io_ms = prev
+                .disk_io_ms_per_dev
+                .get(&d.device_hash)
+                .copied()
+                .unwrap_or(0);
+            let io_ms_d = d.io_ms.saturating_sub(prev_io_ms) as f64;
+            let dev_util = (io_ms_d / (ctx.dt * 1000.0) * 100.0).min(100.0);
+            util_pct = util_pct.max(dev_util);
+        }
 
         let severity = if util_pct >= 90.0 {
             Severity::Critical
