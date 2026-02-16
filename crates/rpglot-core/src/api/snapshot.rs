@@ -406,6 +406,10 @@ pub struct PgActivityRow {
     pub read_bytes_s: Option<f64>,
     /// Physical write bytes/s (write_bytes delta / dt) from /proc/[pid]/io.
     pub write_bytes_s: Option<f64>,
+    /// Read ops/s (syscr delta / dt) from /proc/[pid]/io.
+    pub read_ops_s: Option<f64>,
+    /// Write ops/s (syscw delta / dt) from /proc/[pid]/io.
+    pub write_ops_s: Option<f64>,
     /// Mean exec time from pg_stat_statements (if query_id matched).
     pub stmt_mean_exec_time_ms: Option<f64>,
     /// Max exec time from pg_stat_statements.

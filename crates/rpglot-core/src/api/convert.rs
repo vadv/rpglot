@@ -1068,37 +1068,48 @@ fn extract_pga(
 
             // OS process enrichment
             let pid_u32 = a.pid as u32;
-            let (cpu_pct, rss_kb, rchar_s, wchar_s, read_bytes_s, write_bytes_s) =
-                if let Some(p) = processes.get(&pid_u32) {
-                    let prev_p = prev_procs.get(&pid_u32);
-                    let cpu = if let (Some(pp), Some(tc), Some(ptc), true) =
-                        (prev_p, total_cpu, prev_total_cpu, has_prev)
-                    {
-                        let d_proc =
-                            (p.cpu.utime + p.cpu.stime).saturating_sub(pp.cpu.utime + pp.cpu.stime);
-                        let d_total = tc.saturating_sub(ptc);
-                        if d_total > 0 {
-                            Some(d_proc as f64 / d_total as f64 * 100.0)
-                        } else {
-                            Some(0.0)
-                        }
+            let (
+                cpu_pct,
+                rss_kb,
+                rchar_s,
+                wchar_s,
+                read_bytes_s,
+                write_bytes_s,
+                read_ops_s,
+                write_ops_s,
+            ) = if let Some(p) = processes.get(&pid_u32) {
+                let prev_p = prev_procs.get(&pid_u32);
+                let cpu = if let (Some(pp), Some(tc), Some(ptc), true) =
+                    (prev_p, total_cpu, prev_total_cpu, has_prev)
+                {
+                    let d_proc =
+                        (p.cpu.utime + p.cpu.stime).saturating_sub(pp.cpu.utime + pp.cpu.stime);
+                    let d_total = tc.saturating_sub(ptc);
+                    if d_total > 0 {
+                        Some(d_proc as f64 / d_total as f64 * 100.0)
                     } else {
-                        None
-                    };
-                    let (rc_s, wc_s, rb_s, wb_s) = if let (Some(pp), true) = (prev_p, has_prev) {
+                        Some(0.0)
+                    }
+                } else {
+                    None
+                };
+                let (rc_s, wc_s, rb_s, wb_s, ro_s, wo_s) =
+                    if let (Some(pp), true) = (prev_p, has_prev) {
                         (
                             Some(p.dsk.rchar.saturating_sub(pp.dsk.rchar) as f64 / delta_time),
                             Some(p.dsk.wchar.saturating_sub(pp.dsk.wchar) as f64 / delta_time),
                             Some(p.dsk.rsz.saturating_sub(pp.dsk.rsz) as f64 / delta_time),
                             Some(p.dsk.wsz.saturating_sub(pp.dsk.wsz) as f64 / delta_time),
+                            Some(p.dsk.rio.saturating_sub(pp.dsk.rio) as f64 / delta_time),
+                            Some(p.dsk.wio.saturating_sub(pp.dsk.wio) as f64 / delta_time),
                         )
                     } else {
-                        (None, None, None, None)
+                        (None, None, None, None, None, None)
                     };
-                    (cpu, Some(p.mem.rmem), rc_s, wc_s, rb_s, wb_s)
-                } else {
-                    (None, None, None, None, None, None)
-                };
+                (cpu, Some(p.mem.rmem), rc_s, wc_s, rb_s, wb_s, ro_s, wo_s)
+            } else {
+                (None, None, None, None, None, None, None, None)
+            };
 
             // pg_stat_statements enrichment
             let (stmt_mean_exec_time_ms, stmt_max_exec_time_ms, stmt_calls_s, stmt_hit_pct) =
@@ -1151,6 +1162,8 @@ fn extract_pga(
                 wchar_s,
                 read_bytes_s,
                 write_bytes_s,
+                read_ops_s,
+                write_ops_s,
                 stmt_mean_exec_time_ms,
                 stmt_max_exec_time_ms,
                 stmt_calls_s,
