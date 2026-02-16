@@ -42,16 +42,17 @@ impl AnalysisRule for NetworkSpikeRule {
         }
 
         let mb_s = bytes_s / 1_048_576.0;
+        let avg_mb_s = avg / 1_048_576.0;
+        let factor = if avg > 0.0 { bytes_s / avg } else { 0.0 };
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "network_spike",
             category: Category::Network,
             severity: Severity::Warning,
-            title: format!("Network traffic spike {mb_s:.1} MB/s"),
+            title: format!("Network traffic spike {mb_s:.1} MB/s ({factor:.1}x above normal)",),
             detail: Some(format!(
-                "Current: {mb_s:.1} MB/s, EWMA avg: {:.1} MB/s",
-                avg / 1_048_576.0
+                "Current: {mb_s:.1} MB/s, baseline avg: {avg_mb_s:.1} MB/s",
             )),
             value: bytes_s,
         }]

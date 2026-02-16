@@ -258,20 +258,20 @@ impl AnalysisRule for HighActiveSessionsRule {
             .filter(|s| s.state_hash == active_hash)
             .count() as f64;
 
-        if !ctx.ewma.is_spike(count, ctx.ewma.active_sessions, 2.0) {
+        let avg = ctx.ewma.active_sessions;
+        if !ctx.ewma.is_spike(count, avg, 2.0) {
             return Vec::new();
         }
+
+        let factor = if avg > 0.0 { count / avg } else { 0.0 };
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "high_active_sessions",
             category: Category::PgActivity,
             severity: Severity::Warning,
-            title: format!(
-                "{count:.0} active sessions (avg {avg:.0})",
-                avg = ctx.ewma.active_sessions
-            ),
-            detail: None,
+            title: format!("{count:.0} active sessions ({factor:.1}x above normal)",),
+            detail: Some(format!("Baseline avg: {avg:.0} sessions")),
             value: count,
         }]
     }
