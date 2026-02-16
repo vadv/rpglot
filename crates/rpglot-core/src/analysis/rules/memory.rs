@@ -1,4 +1,4 @@
-use crate::analysis::{find_block, AnalysisContext, Anomaly, Category, Severity};
+use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::model::DataBlock;
 
 use super::AnalysisRule;

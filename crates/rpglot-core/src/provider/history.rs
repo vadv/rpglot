@@ -540,6 +540,31 @@ impl HistoryProvider {
         self.snapshot_cloned(position)
     }
 
+    /// Returns an owned snapshot together with its StringInterner at the given position.
+    /// Used by the analysis module which needs to resolve interned strings.
+    pub fn snapshot_with_interner_at(
+        &mut self,
+        position: usize,
+    ) -> Option<(Snapshot, StringInterner)> {
+        match self.resolve_position(position) {
+            Some(SnapshotLocation::Wal(wal_idx)) => self
+                .wal
+                .as_ref()
+                .and_then(|w| w.load_snapshot_with_interner(wal_idx)),
+            Some(SnapshotLocation::Chunk {
+                chunk_idx,
+                offset_in_chunk,
+            }) => Self::load_from_chunk(
+                &mut self.interner_cache,
+                &self.chunks,
+                chunk_idx,
+                offset_in_chunk,
+            )
+            .ok(),
+            None => None,
+        }
+    }
+
     /// Refreshes snapshot metadata from disk, discovering new chunk files and WAL entries.
     ///
     /// Returns the number of newly discovered snapshots.

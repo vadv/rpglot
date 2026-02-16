@@ -17,6 +17,7 @@ import {
   fetchTimelineLatest,
   fetchHeatmap,
   fetchAuthConfig,
+  fetchAnalysis,
 } from "./api/client";
 import { useSchema } from "./hooks/useSchema";
 import { useLiveSnapshot, useHistorySnapshot } from "./hooks/useSnapshot";
@@ -36,6 +37,7 @@ import { DataTable } from "./components/DataTable";
 import { DetailPanel } from "./components/DetailPanel";
 import { Timeline, CalendarPopover, TimeInput } from "./components/Timeline";
 import { HelpModal } from "./components/HelpModal";
+import { AnalysisModal } from "./components/AnalysisModal";
 import { RichTooltip } from "./components/RichTooltip";
 import {
   computeHealthScore,
@@ -51,6 +53,7 @@ import {
   startTokenRefresh,
 } from "./auth";
 import type {
+  AnalysisReport,
   ApiSnapshot,
   ApiSchema,
   TabKey,
@@ -255,6 +258,10 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   snapshotRef.current = snapshot;
   const [playSpeed, setPlaySpeed] = useState<number | null>(null);
   const [liveFollow, setLiveFollow] = useState(false);
+  const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(
+    null,
+  );
+  const [analyzing, setAnalyzing] = useState(false);
 
   // Compute current hour boundaries from timestamp
   const hourRange = useMemo(() => {
@@ -357,6 +364,20 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     setPlaySpeed(null);
     setLiveFollow((prev) => !prev);
   }, []);
+
+  // Analyze current hour
+  const handleAnalyze = useCallback(async () => {
+    if (!hourRange || analyzing) return;
+    setAnalyzing(true);
+    try {
+      const report = await fetchAnalysis(hourRange.start, hourRange.end);
+      setAnalysisReport(report);
+    } catch (err) {
+      console.error("Analysis failed:", err);
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [hourRange, analyzing]);
 
   // Play effect — sequential playback using next_timestamp
   useEffect(() => {
@@ -508,6 +529,16 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
           onPlayToggle={handlePlayToggle}
           liveFollow={liveFollow}
           onLiveToggle={handleLiveToggle}
+          analyzing={analyzing}
+          onAnalyze={handleAnalyze}
+        />
+      )}
+      {analysisReport && (
+        <AnalysisModal
+          report={analysisReport}
+          timezone={timezoneHook.timezone}
+          onClose={() => setAnalysisReport(null)}
+          onTimestampJump={handleManualJump}
         />
       )}
     </div>

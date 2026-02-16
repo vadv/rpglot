@@ -1,4 +1,5 @@
 import type {
+  AnalysisReport,
   ApiSchema,
   ApiSnapshot,
   HeatmapBucket,
@@ -92,6 +93,18 @@ export async function fetchHeatmap(
   if (buckets) url.searchParams.set("buckets", String(buckets));
   const res = await authFetch(url.toString());
   if (!res.ok) return [];
+  return res.json();
+}
+
+export async function fetchAnalysis(
+  start: number,
+  end: number,
+): Promise<AnalysisReport> {
+  const url = new URL(`${BASE}/analysis`, window.location.origin);
+  url.searchParams.set("start", String(start));
+  url.searchParams.set("end", String(end));
+  const res = await authFetch(url.toString());
+  if (!res.ok) throw new Error(`analysis: ${res.status}`);
   return res.json();
 }
 

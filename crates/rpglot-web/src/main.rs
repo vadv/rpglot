@@ -367,6 +367,7 @@ async fn async_main(args: Args) {
         .route("/api/v1/timeline", get(handle_timeline))
         .route("/api/v1/timeline/latest", get(handle_timeline_latest))
         .route("/api/v1/timeline/heatmap", get(handle_heatmap))
+        .route("/api/v1/analysis", get(handle_analysis))
         .route(
             "/api/v1/auth/config",
             get({
@@ -1249,6 +1250,46 @@ async fn handle_timeline_latest(
         end: inner.history_end.unwrap_or(0),
         total_snapshots: inner.total_snapshots.unwrap_or(0),
     }))
+}
+
+// ============================================================
+// Analysis endpoint
+// ============================================================
+
+#[derive(serde::Deserialize)]
+struct AnalysisQuery {
+    start: i64,
+    end: i64,
+}
+
+async fn handle_analysis(
+    State(state_tuple): AppState,
+    axum::extract::Query(query): axum::extract::Query<AnalysisQuery>,
+) -> Result<Json<rpglot_core::analysis::AnalysisReport>, StatusCode> {
+    if query.end <= query.start {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let state = state_tuple.0.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let mut inner = state.lock().unwrap();
+        if inner.mode != Mode::History {
+            return Err(StatusCode::NOT_FOUND);
+        }
+
+        let provider = inner
+            .provider
+            .as_any_mut()
+            .and_then(|a| a.downcast_mut::<HistoryProvider>())
+            .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        let analyzer = rpglot_core::analysis::Analyzer::new();
+        let report = analyzer.analyze(provider, query.start, query.end);
+        Ok(Json(report))
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 
 /// Build a per-date index from HistoryProvider timestamps (no snapshot loading).

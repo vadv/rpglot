@@ -32,6 +32,9 @@ pub mod util;
 pub mod provider;
 
 #[cfg(feature = "api")]
+pub mod analysis;
+
+#[cfg(feature = "api")]
 pub mod api;
 
 #[cfg(feature = "tui")]

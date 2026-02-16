@@ -496,3 +496,45 @@ export interface HeatmapBucket {
 
 // Tab key type
 export type TabKey = "prc" | "pga" | "pgs" | "pgt" | "pgi" | "pge" | "pgl";
+
+// ============================================================
+// Analysis Report
+// ============================================================
+
+export interface AnalysisReport {
+  start_ts: number;
+  end_ts: number;
+  snapshots_analyzed: number;
+  incidents: AnalysisIncident[];
+  recommendations: AnalysisRecommendation[];
+  summary: AnalysisSummary;
+}
+
+export interface AnalysisIncident {
+  rule_id: string;
+  category: string;
+  severity: "info" | "warning" | "critical";
+  first_ts: number;
+  last_ts: number;
+  peak_ts: number;
+  peak_value: number;
+  title: string;
+  detail: string | null;
+  snapshot_count: number;
+}
+
+export interface AnalysisRecommendation {
+  id: string;
+  severity: "info" | "warning" | "critical";
+  title: string;
+  description: string;
+  related_incidents: string[];
+}
+
+export interface AnalysisSummary {
+  total_incidents: number;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  categories_affected: string[];
+}
