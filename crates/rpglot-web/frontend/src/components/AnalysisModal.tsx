@@ -10,17 +10,18 @@ import type {
 import type { TimezoneMode } from "../utils/formatters";
 import { formatTime, formatTimestamp } from "../utils/formatters";
 
+// ============================================================
+// Public types
+// ============================================================
+
 export interface AnalysisJump {
   timestamp: number;
   tab?: TabKey;
 }
 
-interface AnalysisModalProps {
-  report: AnalysisReport;
-  timezone: TimezoneMode;
-  onClose: () => void;
-  onJump: (jump: AnalysisJump) => void;
-}
+// ============================================================
+// Constants
+// ============================================================
 
 type Severity = "info" | "warning" | "critical";
 
@@ -34,6 +35,12 @@ const SEVERITY_LABEL: Record<Severity, string> = {
   critical: "Critical",
   warning: "Warning",
   info: "Info",
+};
+
+const SEVERITY_COLOR: Record<Severity, string> = {
+  critical: "var(--status-critical)",
+  warning: "var(--status-warning)",
+  info: "var(--status-info, var(--accent))",
 };
 
 const CATEGORY_TAB: Record<string, TabKey> = {
@@ -50,6 +57,44 @@ const CATEGORY_TAB: Record<string, TabKey> = {
   pg_bgwriter: "pge",
   pg_errors: "pge",
 };
+
+const CATEGORY_LABEL: Record<string, string> = {
+  cpu: "CPU",
+  memory: "Memory",
+  disk: "Disk",
+  network: "Network",
+  psi: "PSI",
+  cgroup: "Cgroup",
+  pg_activity: "PG Activity",
+  pg_statements: "PG Queries",
+  pg_tables: "PG Tables",
+  pg_bgwriter: "PG BGWriter",
+  pg_locks: "PG Locks",
+  pg_errors: "PG Errors",
+};
+
+const SWIM_LANES: { label: string; categories: string[] }[] = [
+  {
+    label: "System",
+    categories: ["cpu", "memory", "disk", "network", "psi", "cgroup"],
+  },
+  { label: "PG Activity", categories: ["pg_activity"] },
+  { label: "PG Queries", categories: ["pg_statements"] },
+  { label: "PG Storage", categories: ["pg_tables", "pg_bgwriter"] },
+  { label: "PG Locks", categories: ["pg_locks"] },
+  { label: "PG Errors", categories: ["pg_errors"] },
+];
+
+// ============================================================
+// Main component
+// ============================================================
+
+interface AnalysisModalProps {
+  report: AnalysisReport;
+  timezone: TimezoneMode;
+  onClose: () => void;
+  onJump: (jump: AnalysisJump) => void;
+}
 
 export function AnalysisModal({
   report,
@@ -114,7 +159,7 @@ export function AnalysisModal({
       onClick={onClose}
     >
       <div
-        className="relative w-[640px] max-h-[80vh] flex flex-col bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl"
+        className="relative w-[720px] max-h-[85vh] flex flex-col bg-[var(--bg-surface)] border border-[var(--border-default)] rounded-lg shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -133,7 +178,7 @@ export function AnalysisModal({
           <div className="flex items-center gap-2">
             <button
               onClick={handleCopyMarkdown}
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
               title="Copy report as Markdown"
             >
               {copied ? (
@@ -145,7 +190,7 @@ export function AnalysisModal({
             </button>
             <button
               onClick={onClose}
-              className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+              className="p-1 rounded text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
             >
               <X size={16} />
             </button>
@@ -174,12 +219,29 @@ export function AnalysisModal({
                 count={report.summary.info_count}
               />
             )}
-            {report.summary.total_incidents === 0 && (
-              <span className="text-xs text-[var(--status-success)] font-medium">
-                No incidents detected — everything looks healthy
-              </span>
-            )}
           </div>
+
+          {/* Incident Timeline or All-clear */}
+          {report.incidents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-6 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)]">
+              <Check size={28} className="text-[var(--status-success)] mb-2" />
+              <span className="text-sm font-medium text-[var(--status-success)]">
+                All clear for this hour
+              </span>
+              <span className="text-xs text-[var(--text-tertiary)] mt-1">
+                No incidents detected across {report.snapshots_analyzed}{" "}
+                snapshots
+              </span>
+            </div>
+          ) : (
+            <IncidentTimeline
+              incidents={report.incidents}
+              startTs={report.start_ts}
+              endTs={report.end_ts}
+              timezone={timezone}
+              onJump={handleJump}
+            />
+          )}
 
           {/* Recommendations */}
           {report.recommendations.length > 0 && (
@@ -266,6 +328,195 @@ export function AnalysisModal({
 }
 
 // ============================================================
+// Incident Timeline — swim-lane visualization
+// ============================================================
+
+const LANE_HEIGHT = 22;
+const AXIS_HEIGHT = 20;
+const LABEL_WIDTH = 76;
+
+function IncidentTimeline({
+  incidents,
+  startTs,
+  endTs,
+  timezone,
+  onJump,
+}: {
+  incidents: AnalysisIncident[];
+  startTs: number;
+  endTs: number;
+  timezone: TimezoneMode;
+  onJump: (incident: AnalysisIncident) => void;
+}) {
+  const [hovered, setHovered] = useState<{
+    incident: AnalysisIncident;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const range = endTs - startTs;
+
+  const populatedLanes = useMemo(() => {
+    return SWIM_LANES.map((lane) => ({
+      ...lane,
+      incidents: incidents.filter((i) => lane.categories.includes(i.category)),
+    })).filter((lane) => lane.incidents.length > 0);
+  }, [incidents]);
+
+  const timeMarkers = useMemo(() => {
+    const markers: { pct: number; label: string }[] = [];
+    const step = 600; // 10 minutes
+    let t = Math.ceil(startTs / step) * step;
+    while (t <= endTs) {
+      markers.push({
+        pct: ((t - startTs) / range) * 100,
+        label: formatTime(t, timezone).slice(0, 5), // HH:MM
+      });
+      t += step;
+    }
+    return markers;
+  }, [startTs, endTs, range, timezone]);
+
+  if (range <= 0) return null;
+
+  const totalHeight = AXIS_HEIGHT + populatedLanes.length * LANE_HEIGHT + 4;
+
+  return (
+    <div
+      className="relative w-full rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden select-none"
+      style={{ height: totalHeight }}
+    >
+      {/* Time axis */}
+      <div
+        className="absolute top-0 right-0 border-b border-[var(--border-default)]"
+        style={{ left: LABEL_WIDTH, height: AXIS_HEIGHT }}
+      >
+        <div className="relative w-full h-full">
+          {timeMarkers.map((m, i) => (
+            <span
+              key={i}
+              className="absolute bottom-1 font-mono text-[9px] text-[var(--text-tertiary)] -translate-x-1/2"
+              style={{ left: `${m.pct}%` }}
+            >
+              {m.label}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Vertical grid lines */}
+      {timeMarkers.map((m, i) => (
+        <div
+          key={i}
+          className="absolute top-0 bottom-0 border-l border-[var(--border-default)] opacity-30"
+          style={{
+            left: `calc(${LABEL_WIDTH}px + (100% - ${LABEL_WIDTH}px) * ${m.pct / 100})`,
+          }}
+        />
+      ))}
+
+      {/* Swim lanes */}
+      {populatedLanes.map((lane, laneIdx) => (
+        <div
+          key={lane.label}
+          className="absolute left-0 right-0 flex"
+          style={{
+            top: AXIS_HEIGHT + laneIdx * LANE_HEIGHT,
+            height: LANE_HEIGHT,
+          }}
+        >
+          {/* Lane label */}
+          <div
+            className="flex items-center justify-end pr-2 text-[9px] text-[var(--text-tertiary)] font-medium shrink-0 truncate"
+            style={{ width: LABEL_WIDTH }}
+          >
+            {lane.label}
+          </div>
+          {/* Bar area */}
+          <div className="relative flex-1 border-b border-[var(--border-default)] border-opacity-20">
+            {lane.incidents.map((inc, i) => {
+              const leftPct = ((inc.first_ts - startTs) / range) * 100;
+              const widthPct = Math.max(
+                ((inc.last_ts - inc.first_ts) / range) * 100,
+                0.3,
+              );
+              const peakPct =
+                inc.first_ts === inc.last_ts
+                  ? 50
+                  : ((inc.peak_ts - inc.first_ts) /
+                      (inc.last_ts - inc.first_ts)) *
+                    100;
+              return (
+                <div
+                  key={i}
+                  className="absolute top-[4px] rounded-sm cursor-pointer transition-opacity duration-150 hover:opacity-100"
+                  style={{
+                    left: `${leftPct}%`,
+                    width: `${widthPct}%`,
+                    minWidth: 4,
+                    height: LANE_HEIGHT - 8,
+                    backgroundColor: SEVERITY_COLOR[inc.severity],
+                    opacity: 0.65,
+                  }}
+                  onClick={() => onJump(inc)}
+                  onMouseEnter={(e) =>
+                    setHovered({
+                      incident: inc,
+                      x: e.clientX,
+                      y: e.clientY,
+                    })
+                  }
+                  onMouseMove={(e) =>
+                    setHovered((prev) =>
+                      prev ? { ...prev, x: e.clientX, y: e.clientY } : null,
+                    )
+                  }
+                  onMouseLeave={() => setHovered(null)}
+                >
+                  {/* Peak marker */}
+                  <div
+                    className="absolute top-[-2px] w-[5px] h-[5px] -translate-x-1/2 rounded-full bg-white shadow-sm"
+                    style={{
+                      left: `${peakPct}%`,
+                      opacity: 0.9,
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {/* Hover tooltip */}
+      {hovered &&
+        createPortal(
+          <div
+            className="fixed z-[9999] px-2.5 py-1.5 rounded-lg text-xs shadow-md pointer-events-none max-w-xs"
+            style={{
+              left: hovered.x + 14,
+              top: hovered.y - 10,
+              backgroundColor: "var(--bg-elevated)",
+              color: "var(--text-primary)",
+              border: "1px solid var(--border-default)",
+            }}
+          >
+            <div className="font-medium">{hovered.incident.title}</div>
+            <div className="text-[var(--text-tertiary)] text-[10px] mt-0.5 font-mono">
+              {formatTime(hovered.incident.first_ts, timezone)} &mdash;{" "}
+              {formatTime(hovered.incident.last_ts, timezone)}
+            </div>
+            <div className="text-[var(--accent-text)] text-[10px] mt-0.5">
+              Click to jump
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+// ============================================================
 // Sub-components
 // ============================================================
 
@@ -316,7 +567,7 @@ function CollapsibleSection({
     <div>
       <button
         onClick={onToggle}
-        className="flex items-center gap-1 text-xs font-semibold hover:underline"
+        className="flex items-center gap-1 text-xs font-semibold cursor-pointer hover:underline"
       >
         {open ? (
           <ChevronDown size={14} className="text-[var(--text-tertiary)]" />
@@ -355,6 +606,15 @@ function RecommendationCard({ rec }: { rec: AnalysisRecommendation }) {
   );
 }
 
+function CategoryBadge({ category }: { category: string }) {
+  const label = CATEGORY_LABEL[category] ?? category;
+  return (
+    <span className="inline-flex items-center px-1.5 py-0 rounded text-[9px] font-medium bg-[var(--bg-hover)] text-[var(--text-secondary)]">
+      {label}
+    </span>
+  );
+}
+
 function IncidentCard({
   incident,
   timezone,
@@ -370,7 +630,12 @@ function IncidentCard({
       : `${formatTime(incident.first_ts, timezone)} \u2014 ${formatTime(incident.last_ts, timezone)}`;
 
   return (
-    <div className="flex items-start justify-between gap-2 p-2 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)]">
+    <div
+      className="flex items-start justify-between gap-2 p-2 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] transition-colors"
+      style={{
+        borderLeft: `3px solid ${SEVERITY_COLOR[incident.severity]}`,
+      }}
+    >
       <div className="flex items-start gap-1.5 min-w-0">
         <span className="text-xs leading-none mt-0.5">
           {SEVERITY_ICON[incident.severity]}
@@ -379,8 +644,14 @@ function IncidentCard({
           <div className="text-xs font-medium text-[var(--text-primary)] truncate">
             {incident.title}
           </div>
-          <div className="text-[10px] text-[var(--text-tertiary)] mt-0.5">
-            {timeRange} ({incident.snapshot_count} snapshots)
+          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+            <CategoryBadge category={incident.category} />
+            <span className="text-[10px] text-[var(--text-tertiary)] font-mono">
+              {timeRange}
+            </span>
+            <span className="text-[10px] text-[var(--text-tertiary)]">
+              ({incident.snapshot_count} snaps)
+            </span>
           </div>
           {incident.detail && (
             <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">
@@ -391,7 +662,7 @@ function IncidentCard({
       </div>
       <button
         onClick={() => onJump(incident)}
-        className="shrink-0 text-[10px] px-1.5 py-0.5 rounded text-[var(--accent-text)] hover:bg-[var(--accent-bg)] transition-colors whitespace-nowrap"
+        className="shrink-0 text-[10px] px-1.5 py-0.5 rounded text-[var(--accent-text)] hover:bg-[var(--accent-bg)] cursor-pointer transition-colors whitespace-nowrap"
         title={`Jump to peak at ${formatTime(incident.peak_ts, timezone)}`}
       >
         &rarr; Jump
