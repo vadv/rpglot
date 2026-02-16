@@ -440,8 +440,6 @@ fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
                 incident.peak_value = anomaly.value;
                 incident.peak_ts = anomaly.timestamp;
                 incident.title = anomaly.title;
-            }
-            if incident.detail.is_none() && anomaly.detail.is_some() {
                 incident.detail = anomaly.detail;
             }
         } else {
