@@ -83,6 +83,10 @@ impl AnalysisRule for SeqScanDominantRule {
         let mut worst_name_hash: u64 = 0;
 
         for t in tables {
+            // Small tables: seq scan is optimal, planner picks it intentionally
+            if t.n_live_tup < 10_000 {
+                continue;
+            }
             let total = t.seq_scan + t.idx_scan;
             if total <= 100 {
                 continue;
