@@ -12,6 +12,7 @@ import {
   HelpCircle,
   HeartPulse,
   Zap,
+  FileText,
 } from "lucide-react";
 import {
   fetchTimeline,
@@ -272,6 +273,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   );
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null);
+  const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
 
   // Persist analysis report to sessionStorage so it survives SSO refreshes
   useEffect(() => {
@@ -403,6 +405,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     try {
       const report = await fetchAnalysis(hourRange.start, hourRange.end);
       setAnalysisReport(report);
+      setAnalysisModalOpen(true);
     } catch (err) {
       console.error("Analysis failed:", err);
     } finally {
@@ -521,6 +524,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         analyzing={analyzing}
         analyzeStartedAt={analyzeStartedAt}
         onAnalyze={handleAnalyze}
+        hasReport={!!analysisReport}
+        onShowReport={() => setAnalysisModalOpen(true)}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -566,11 +571,11 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
           onLiveToggle={handleLiveToggle}
         />
       )}
-      {analysisReport && (
+      {analysisModalOpen && analysisReport && (
         <AnalysisModal
           report={analysisReport}
           timezone={timezoneHook.timezone}
-          onClose={() => setAnalysisReport(null)}
+          onClose={() => setAnalysisModalOpen(false)}
           onJump={handleAnalysisJump}
         />
       )}
@@ -801,6 +806,8 @@ function Header({
   analyzing,
   analyzeStartedAt,
   onAnalyze,
+  hasReport,
+  onShowReport,
 }: {
   mode: string;
   timestamp?: number;
@@ -818,6 +825,8 @@ function Header({
   analyzing?: boolean;
   analyzeStartedAt?: number | null;
   onAnalyze?: () => void;
+  hasReport?: boolean;
+  onShowReport?: () => void;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -941,6 +950,16 @@ function Header({
           >
             <Zap size={10} />
             {analyzing ? `Analyzing ${analyzeElapsed}s\u2026` : "Analyze"}
+          </button>
+        )}
+        {hasReport && !analyzing && onShowReport && (
+          <button
+            onClick={onShowReport}
+            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors border border-[var(--border-default)]"
+            title="Show analysis report"
+          >
+            <FileText size={10} />
+            Report
           </button>
         )}
       </div>
