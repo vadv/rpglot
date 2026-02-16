@@ -68,9 +68,11 @@ export function formatValue(
   if (format === "bytes") {
     let base: number;
     if (unit === "kb") base = num * 1024;
-    else if (unit === "buffers") base = num * 8192;
+    else if (unit === "buffers" || unit === "blks/s") base = num * 8192;
+    else if (unit === "bytes/s") base = num;
     else base = num;
-    return formatBytes(base);
+    const suffix = unit === "blks/s" || unit === "bytes/s" ? "/s" : "";
+    return formatBytes(base) + suffix;
   }
   if (format === "duration") {
     const secs = unit === "ms" ? num / 1000 : num;
