@@ -62,10 +62,21 @@ pub struct Incident {
 }
 
 #[derive(Serialize)]
+pub struct IncidentGroup {
+    pub id: u32,
+    pub first_ts: i64,
+    pub last_ts: i64,
+    pub severity: Severity,
+    pub persistent: bool,
+    pub incidents: Vec<Incident>,
+}
+
+#[derive(Serialize)]
 pub struct AnalysisReport {
     pub start_ts: i64,
     pub end_ts: i64,
     pub snapshots_analyzed: usize,
+    pub groups: Vec<IncidentGroup>,
     pub incidents: Vec<Incident>,
     pub recommendations: Vec<advisor::Recommendation>,
     pub summary: AnalysisSummary,
@@ -468,6 +479,111 @@ fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
 }
 
 // ============================================================
+// Correlate incidents into groups
+// ============================================================
+
+/// Group temporally overlapping incidents.
+///
+/// - Persistent incidents (duration > 30% of the analysis window) get their own group.
+/// - Short incidents are grouped by interval merging with a 30s gap.
+/// - Every incident ends up in exactly one group (even singletons).
+fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> Vec<IncidentGroup> {
+    let window = (end_ts - start_ts).max(1);
+    let persistent_threshold = window * 30 / 100; // 30% of hour
+    const CORRELATION_GAP: i64 = 30;
+
+    let mut persistent = Vec::new();
+    let mut transient = Vec::new();
+
+    for inc in incidents {
+        let duration = inc.last_ts - inc.first_ts;
+        if duration > persistent_threshold {
+            persistent.push(inc);
+        } else {
+            transient.push(inc);
+        }
+    }
+
+    // Sort transient by first_ts for interval merging
+    transient.sort_by_key(|i| i.first_ts);
+
+    let mut groups: Vec<IncidentGroup> = Vec::new();
+    let mut group_id: u32 = 0;
+
+    // Persistent: each gets its own group
+    // Sort persistent by severity desc, then first_ts
+    persistent.sort_by(|a, b| {
+        b.severity
+            .cmp(&a.severity)
+            .then(a.first_ts.cmp(&b.first_ts))
+    });
+    for inc in persistent {
+        let g = IncidentGroup {
+            id: group_id,
+            first_ts: inc.first_ts,
+            last_ts: inc.last_ts,
+            severity: inc.severity,
+            persistent: true,
+            incidents: vec![inc],
+        };
+        groups.push(g);
+        group_id += 1;
+    }
+
+    // Transient: interval merging with GAP
+    let mut pending: Vec<Incident> = Vec::new();
+    let mut group_end: i64 = i64::MIN;
+
+    for inc in transient {
+        if !pending.is_empty() && inc.first_ts <= group_end + CORRELATION_GAP {
+            // Extend current group
+            group_end = group_end.max(inc.last_ts);
+            pending.push(inc);
+        } else {
+            // Flush previous group
+            if !pending.is_empty() {
+                groups.push(flush_group(&mut pending, group_id, false));
+                group_id += 1;
+            }
+            group_end = inc.last_ts;
+            pending.push(inc);
+        }
+    }
+    if !pending.is_empty() {
+        groups.push(flush_group(&mut pending, group_id, false));
+    }
+
+    groups
+}
+
+fn flush_group(incidents: &mut Vec<Incident>, id: u32, persistent: bool) -> IncidentGroup {
+    let mut taken = std::mem::take(incidents);
+    // Sort within group: severity desc, peak_value desc
+    taken.sort_by(|a, b| {
+        b.severity.cmp(&a.severity).then(
+            b.peak_value
+                .partial_cmp(&a.peak_value)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    let first_ts = taken.iter().map(|i| i.first_ts).min().unwrap_or(0);
+    let last_ts = taken.iter().map(|i| i.last_ts).max().unwrap_or(0);
+    let severity = taken
+        .iter()
+        .map(|i| i.severity)
+        .max()
+        .unwrap_or(Severity::Info);
+    IncidentGroup {
+        id,
+        first_ts,
+        last_ts,
+        severity,
+        persistent,
+        incidents: taken,
+    }
+}
+
+// ============================================================
 // Analyzer — orchestrator
 // ============================================================
 
@@ -540,7 +656,7 @@ impl Analyzer {
         // Layer 2: merge
         let incidents = merge_anomalies(anomalies);
 
-        // Layer 3: advisors
+        // Layer 3: advisors (run before correlate consumes incidents)
         let mut recommendations = Vec::new();
         for adv in &self.advisors {
             recommendations.extend(adv.evaluate(&incidents));
@@ -569,11 +685,33 @@ impl Analyzer {
             },
         };
 
+        // Layer 4: correlate into groups
+        let groups = correlate_incidents(incidents, start_ts, end_ts);
+
+        // Flat incidents list for backward compatibility
+        let flat_incidents: Vec<Incident> = groups
+            .iter()
+            .flat_map(|g| &g.incidents)
+            .map(|i| Incident {
+                rule_id: i.rule_id.clone(),
+                category: i.category,
+                severity: i.severity,
+                first_ts: i.first_ts,
+                last_ts: i.last_ts,
+                peak_ts: i.peak_ts,
+                peak_value: i.peak_value,
+                title: i.title.clone(),
+                detail: i.detail.clone(),
+                snapshot_count: i.snapshot_count,
+            })
+            .collect();
+
         AnalysisReport {
             start_ts,
             end_ts,
             snapshots_analyzed,
-            incidents,
+            groups,
+            incidents: flat_incidents,
             recommendations,
             summary,
         }

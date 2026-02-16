@@ -501,10 +501,20 @@ export type TabKey = "prc" | "pga" | "pgs" | "pgt" | "pgi" | "pge" | "pgl";
 // Analysis Report
 // ============================================================
 
+export interface IncidentGroup {
+  id: number;
+  first_ts: number;
+  last_ts: number;
+  severity: "info" | "warning" | "critical";
+  persistent: boolean;
+  incidents: AnalysisIncident[];
+}
+
 export interface AnalysisReport {
   start_ts: number;
   end_ts: number;
   snapshots_analyzed: number;
+  groups: IncidentGroup[];
   incidents: AnalysisIncident[];
   recommendations: AnalysisRecommendation[];
   summary: AnalysisSummary;

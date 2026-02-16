@@ -5,6 +5,7 @@ import type {
   AnalysisReport,
   AnalysisIncident,
   AnalysisRecommendation,
+  IncidentGroup,
   TabKey,
 } from "../api/types";
 import type { TimezoneMode } from "../utils/formatters";
@@ -42,6 +43,9 @@ const SEVERITY_COLOR: Record<Severity, string> = {
   warning: "var(--status-warning)",
   info: "var(--status-info, var(--accent))",
 };
+
+/** Muted blue for persistent/background incidents */
+const PERSISTENT_COLOR = "var(--accent)";
 
 const CATEGORY_TAB: Record<string, TabKey> = {
   cpu: "prc",
@@ -150,17 +154,27 @@ export function AnalysisModal({
     return () => window.removeEventListener("keydown", handleKeyDown, true);
   }, [onClose]);
 
-  const criticalIncidents = useMemo(
-    () => report.incidents.filter((i) => i.severity === "critical"),
-    [report],
+  // Split groups into persistent vs transient, then by severity
+  const groups = report.groups ?? [];
+  const persistentGroups = useMemo(
+    () => groups.filter((g) => g.persistent),
+    [groups],
   );
-  const warningIncidents = useMemo(
-    () => report.incidents.filter((i) => i.severity === "warning"),
-    [report],
+  const transientGroups = useMemo(
+    () => groups.filter((g) => !g.persistent),
+    [groups],
   );
-  const infoIncidents = useMemo(
-    () => report.incidents.filter((i) => i.severity === "info"),
-    [report],
+  const criticalGroups = useMemo(
+    () => transientGroups.filter((g) => g.severity === "critical"),
+    [transientGroups],
+  );
+  const warningGroups = useMemo(
+    () => transientGroups.filter((g) => g.severity === "warning"),
+    [transientGroups],
+  );
+  const infoGroups = useMemo(
+    () => transientGroups.filter((g) => g.severity === "info"),
+    [transientGroups],
   );
 
   const handleCopyMarkdown = useCallback(() => {
@@ -265,6 +279,7 @@ export function AnalysisModal({
           ) : (
             <IncidentTimeline
               incidents={report.incidents}
+              groups={groups}
               startTs={report.start_ts}
               endTs={report.end_ts}
               timezone={timezone}
@@ -287,19 +302,28 @@ export function AnalysisModal({
             </CollapsibleSection>
           )}
 
-          {/* Critical incidents */}
-          {criticalIncidents.length > 0 && (
+          {/* Persistent incidents */}
+          {persistentGroups.length > 0 && (
+            <PersistentSection
+              groups={persistentGroups}
+              timezone={timezone}
+              onJump={handleJump}
+            />
+          )}
+
+          {/* Critical groups */}
+          {criticalGroups.length > 0 && (
             <CollapsibleSection
-              title={`Critical (${criticalIncidents.length})`}
+              title={`Critical (${criticalGroups.reduce((n, g) => n + g.incidents.length, 0)})`}
               open={criticalOpen}
               onToggle={() => setCriticalOpen((o) => !o)}
               severity="critical"
             >
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                {criticalIncidents.map((inc, i) => (
-                  <IncidentCard
-                    key={i}
-                    incident={inc}
+              <div className="space-y-2">
+                {criticalGroups.map((g) => (
+                  <GroupCard
+                    key={g.id}
+                    group={g}
                     timezone={timezone}
                     onJump={handleJump}
                   />
@@ -308,19 +332,19 @@ export function AnalysisModal({
             </CollapsibleSection>
           )}
 
-          {/* Warning incidents */}
-          {warningIncidents.length > 0 && (
+          {/* Warning groups */}
+          {warningGroups.length > 0 && (
             <CollapsibleSection
-              title={`Warning (${warningIncidents.length})`}
+              title={`Warning (${warningGroups.reduce((n, g) => n + g.incidents.length, 0)})`}
               open={warningOpen}
               onToggle={() => setWarningOpen((o) => !o)}
               severity="warning"
             >
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                {warningIncidents.map((inc, i) => (
-                  <IncidentCard
-                    key={i}
-                    incident={inc}
+              <div className="space-y-2">
+                {warningGroups.map((g) => (
+                  <GroupCard
+                    key={g.id}
+                    group={g}
                     timezone={timezone}
                     onJump={handleJump}
                   />
@@ -329,19 +353,19 @@ export function AnalysisModal({
             </CollapsibleSection>
           )}
 
-          {/* Info incidents */}
-          {infoIncidents.length > 0 && (
+          {/* Info groups */}
+          {infoGroups.length > 0 && (
             <CollapsibleSection
-              title={`Info (${infoIncidents.length})`}
+              title={`Info (${infoGroups.reduce((n, g) => n + g.incidents.length, 0)})`}
               open={infoOpen}
               onToggle={() => setInfoOpen((o) => !o)}
               severity="info"
             >
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
-                {infoIncidents.map((inc, i) => (
-                  <IncidentCard
-                    key={i}
-                    incident={inc}
+              <div className="space-y-2">
+                {infoGroups.map((g) => (
+                  <GroupCard
+                    key={g.id}
+                    group={g}
                     timezone={timezone}
                     onJump={handleJump}
                   />
@@ -366,12 +390,14 @@ const LABEL_WIDTH = 80;
 
 function IncidentTimeline({
   incidents,
+  groups,
   startTs,
   endTs,
   timezone,
   onJump,
 }: {
   incidents: AnalysisIncident[];
+  groups: IncidentGroup[];
   startTs: number;
   endTs: number;
   timezone: TimezoneMode;
@@ -382,8 +408,38 @@ function IncidentTimeline({
     x: number;
     y: number;
   } | null>(null);
+  const [hoveredGroupId, setHoveredGroupId] = useState<number | null>(null);
 
   const range = endTs - startTs;
+
+  // Build incident → group lookup
+  const incidentGroupMap = useMemo(() => {
+    const m = new Map<string, number>(); // "rule_id:first_ts:last_ts" → group_id
+    for (const g of groups) {
+      for (const inc of g.incidents) {
+        m.set(`${inc.rule_id}:${inc.first_ts}:${inc.last_ts}`, g.id);
+      }
+    }
+    return m;
+  }, [groups]);
+
+  // Build persistent incident set
+  const persistentSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const g of groups) {
+      if (!g.persistent) continue;
+      for (const inc of g.incidents) {
+        s.add(`${inc.rule_id}:${inc.first_ts}:${inc.last_ts}`);
+      }
+    }
+    return s;
+  }, [groups]);
+
+  // Non-persistent multi-incident groups for vertical stripes
+  const stripeGroups = useMemo(
+    () => groups.filter((g) => !g.persistent && g.incidents.length >= 2),
+    [groups],
+  );
 
   const populatedLanes = useMemo(() => {
     const byRule = new Map<string, AnalysisIncident[]>();
@@ -455,6 +511,32 @@ function IncidentTimeline({
         />
       ))}
 
+      {/* Vertical stripes behind correlated groups (2+ incidents, not persistent) */}
+      {stripeGroups.map((g) => {
+        const leftPct = ((g.first_ts - startTs) / range) * 100;
+        const widthPct = Math.max(
+          ((g.last_ts - g.first_ts) / range) * 100,
+          0.3,
+        );
+        const isHighlighted = hoveredGroupId === g.id;
+        return (
+          <div
+            key={`stripe-${g.id}`}
+            className="absolute pointer-events-none"
+            style={{
+              left: `calc(${LABEL_WIDTH}px + (100% - ${LABEL_WIDTH}px) * ${leftPct / 100})`,
+              width: `calc((100% - ${LABEL_WIDTH}px) * ${widthPct / 100})`,
+              top: AXIS_HEIGHT,
+              bottom: 0,
+              backgroundColor: isHighlighted
+                ? "rgba(255,255,255,0.08)"
+                : "rgba(255,255,255,0.03)",
+              transition: "background-color 0.15s",
+            }}
+          />
+        );
+      })}
+
       {/* Swim lanes */}
       {populatedLanes.map((lane, laneIdx) => (
         <div
@@ -482,33 +564,55 @@ function IncidentTimeline({
                 ((inc.last_ts - inc.first_ts) / range) * 100,
                 0.5,
               );
+              const incKey = `${inc.rule_id}:${inc.first_ts}:${inc.last_ts}`;
+              const isPersistent = persistentSet.has(incKey);
+              const groupId = incidentGroupMap.get(incKey);
+              const isGroupHighlighted =
+                hoveredGroupId != null && groupId === hoveredGroupId;
+
+              const barColor = isPersistent
+                ? PERSISTENT_COLOR
+                : SEVERITY_COLOR[inc.severity];
+              const barOpacity = isPersistent
+                ? 0.35
+                : isGroupHighlighted
+                  ? 1.0
+                  : 0.7;
+
               return (
                 <div
                   key={i}
-                  className="absolute top-[5px] rounded cursor-pointer transition-opacity duration-150 hover:opacity-100"
+                  className="absolute top-[5px] rounded cursor-pointer transition-opacity duration-150"
                   style={{
                     left: `${leftPct}%`,
                     width: `${widthPct}%`,
                     minWidth: 6,
                     height: LANE_HEIGHT - 10,
                     marginRight: 1,
-                    backgroundColor: SEVERITY_COLOR[inc.severity],
-                    opacity: 0.7,
+                    backgroundColor: barColor,
+                    opacity: barOpacity,
+                    outline: isGroupHighlighted
+                      ? "1px solid rgba(255,255,255,0.5)"
+                      : "none",
                   }}
                   onClick={() => onJump(inc)}
-                  onMouseEnter={(e) =>
+                  onMouseEnter={(e) => {
                     setHovered({
                       incident: inc,
                       x: e.clientX,
                       y: e.clientY,
-                    })
-                  }
+                    });
+                    if (groupId != null) setHoveredGroupId(groupId);
+                  }}
                   onMouseMove={(e) =>
                     setHovered((prev) =>
                       prev ? { ...prev, x: e.clientX, y: e.clientY } : null,
                     )
                   }
-                  onMouseLeave={() => setHovered(null)}
+                  onMouseLeave={() => {
+                    setHovered(null);
+                    setHoveredGroupId(null);
+                  }}
                 />
               );
             })}
@@ -649,6 +753,137 @@ function RecommendationCard({ rec }: { rec: AnalysisRecommendation }) {
   );
 }
 
+// ============================================================
+// PersistentSection — compact rows for background issues
+// ============================================================
+
+function PersistentSection({
+  groups,
+  timezone,
+  onJump,
+}: {
+  groups: IncidentGroup[];
+  timezone: TimezoneMode;
+  onJump: (incident: AnalysisIncident) => void;
+}) {
+  const totalIncidents = groups.reduce((n, g) => n + g.incidents.length, 0);
+  return (
+    <div>
+      <div
+        className="flex items-center gap-1 text-xs font-semibold"
+        style={{ color: PERSISTENT_COLOR }}
+      >
+        Persistent issues ({totalIncidents})
+      </div>
+      <div className="mt-1.5 ml-4 space-y-1">
+        {groups.flatMap((g) =>
+          g.incidents.map((inc) => {
+            const timeRange =
+              inc.first_ts === inc.last_ts
+                ? formatTime(inc.first_ts, timezone)
+                : `${formatTime(inc.first_ts, timezone)} \u2014 ${formatTime(inc.last_ts, timezone)}`;
+            return (
+              <div
+                key={`${g.id}-${inc.rule_id}`}
+                className="flex items-center gap-2 px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
+                style={{ borderLeft: `3px solid ${PERSISTENT_COLOR}` }}
+                onClick={() => onJump(inc)}
+                title={`Jump to peak at ${formatTime(inc.peak_ts, timezone)}`}
+              >
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: PERSISTENT_COLOR }}
+                />
+                <span className="text-xs font-medium text-[var(--text-primary)] truncate flex-1">
+                  {inc.title}
+                </span>
+                <span className="text-[10px] text-[var(--text-tertiary)] font-mono shrink-0">
+                  {timeRange}
+                </span>
+              </div>
+            );
+          }),
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// GroupCard — expandable card for correlated incident groups
+// ============================================================
+
+function GroupCard({
+  group,
+  timezone,
+  onJump,
+}: {
+  group: IncidentGroup;
+  timezone: TimezoneMode;
+  onJump: (incident: AnalysisIncident) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Single-incident group — render plain IncidentCard
+  if (group.incidents.length === 1) {
+    return (
+      <IncidentCard
+        incident={group.incidents[0]}
+        timezone={timezone}
+        onJump={onJump}
+      />
+    );
+  }
+
+  // Multi-incident group — collapsible wrapper
+  const timeRange = `${formatTime(group.first_ts, timezone)} \u2014 ${formatTime(group.last_ts, timezone)}`;
+
+  return (
+    <div
+      className="rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden"
+      style={{ borderLeft: `3px solid ${SEVERITY_COLOR[group.severity]}` }}
+    >
+      <div
+        className="flex items-center gap-1.5 px-2 py-1.5 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? (
+          <ChevronDown
+            size={12}
+            className="text-[var(--text-tertiary)] shrink-0"
+          />
+        ) : (
+          <ChevronRight
+            size={12}
+            className="text-[var(--text-tertiary)] shrink-0"
+          />
+        )}
+        <span className="text-xs leading-none">
+          {SEVERITY_ICON[group.severity]}
+        </span>
+        <span className="text-xs font-semibold text-[var(--text-primary)]">
+          {group.incidents.length} correlated incidents
+        </span>
+        <span className="text-[10px] text-[var(--text-tertiary)] font-mono ml-auto shrink-0">
+          {timeRange}
+        </span>
+      </div>
+      {expanded && (
+        <div className="px-2 pb-2 space-y-1.5">
+          {group.incidents.map((inc, i) => (
+            <IncidentCard
+              key={i}
+              incident={inc}
+              timezone={timezone}
+              onJump={onJump}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CategoryBadge({ category }: { category: string }) {
   const label = CATEGORY_LABEL[category] ?? category;
   return (
@@ -753,23 +988,54 @@ function reportToText(report: AnalysisReport, tz: TimezoneMode): string {
   if (counts.length > 0) lines.push(counts.join(", "));
   lines.push("");
 
-  // Group incidents by severity
-  const bySeverity: [Severity, AnalysisIncident[]][] = [
-    ["critical", report.incidents.filter((i) => i.severity === "critical")],
-    ["warning", report.incidents.filter((i) => i.severity === "warning")],
-    ["info", report.incidents.filter((i) => i.severity === "info")],
+  const groups = report.groups ?? [];
+  const persistentGroups = groups.filter((g) => g.persistent);
+  const transientGroups = groups.filter((g) => !g.persistent);
+
+  // Persistent issues
+  if (persistentGroups.length > 0) {
+    lines.push("Persistent issues:");
+    for (const g of persistentGroups) {
+      for (const inc of g.incidents) {
+        const time =
+          inc.first_ts === inc.last_ts
+            ? formatTime(inc.first_ts, tz)
+            : `${formatTime(inc.first_ts, tz)}\u2014${formatTime(inc.last_ts, tz)}`;
+        lines.push(`  \u25CB ${inc.title}  ${time}`);
+      }
+    }
+    lines.push("");
+  }
+
+  // Transient groups by severity
+  const bySeverity: [Severity, IncidentGroup[]][] = [
+    ["critical", transientGroups.filter((g) => g.severity === "critical")],
+    ["warning", transientGroups.filter((g) => g.severity === "warning")],
+    ["info", transientGroups.filter((g) => g.severity === "info")],
   ];
 
-  for (const [, incidents] of bySeverity) {
-    if (incidents.length === 0) continue;
-    for (const inc of incidents) {
-      const time =
-        inc.first_ts === inc.last_ts
-          ? formatTime(inc.first_ts, tz)
-          : `${formatTime(inc.first_ts, tz)}\u2014${formatTime(inc.last_ts, tz)}`;
-      lines.push(`${severityEmoji(inc.severity)} ${inc.title}`);
-      lines.push(`  ${time} (${inc.snapshot_count} snaps)`);
-      if (inc.detail) lines.push(`  ${inc.detail}`);
+  for (const [, sGroups] of bySeverity) {
+    if (sGroups.length === 0) continue;
+    for (const g of sGroups) {
+      if (g.incidents.length > 1) {
+        const gTime = `${formatTime(g.first_ts, tz)}\u2014${formatTime(g.last_ts, tz)}`;
+        lines.push(
+          `${severityEmoji(g.severity)} ${g.incidents.length} correlated incidents  ${gTime}`,
+        );
+        for (const inc of g.incidents) {
+          lines.push(`  ${severityEmoji(inc.severity)} ${inc.title}`);
+          if (inc.detail) lines.push(`    ${inc.detail}`);
+        }
+      } else {
+        const inc = g.incidents[0];
+        const time =
+          inc.first_ts === inc.last_ts
+            ? formatTime(inc.first_ts, tz)
+            : `${formatTime(inc.first_ts, tz)}\u2014${formatTime(inc.last_ts, tz)}`;
+        lines.push(`${severityEmoji(inc.severity)} ${inc.title}`);
+        lines.push(`  ${time} (${inc.snapshot_count} snaps)`);
+        if (inc.detail) lines.push(`  ${inc.detail}`);
+      }
     }
     lines.push("");
   }
