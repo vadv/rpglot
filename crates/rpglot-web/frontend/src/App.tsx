@@ -260,9 +260,25 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const [playSpeed, setPlaySpeed] = useState<number | null>(null);
   const [liveFollow, setLiveFollow] = useState(false);
   const [analysisReport, setAnalysisReport] = useState<AnalysisReport | null>(
-    null,
+    () => {
+      try {
+        const cached = sessionStorage.getItem("rpglot_analysis");
+        return cached ? JSON.parse(cached) : null;
+      } catch {
+        return null;
+      }
+    },
   );
   const [analyzing, setAnalyzing] = useState(false);
+
+  // Persist analysis report to sessionStorage so it survives SSO refreshes
+  useEffect(() => {
+    if (analysisReport) {
+      sessionStorage.setItem("rpglot_analysis", JSON.stringify(analysisReport));
+    } else {
+      sessionStorage.removeItem("rpglot_analysis");
+    }
+  }, [analysisReport]);
 
   // Compute current hour boundaries from timestamp
   const hourRange = useMemo(() => {
