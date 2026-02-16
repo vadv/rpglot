@@ -176,6 +176,8 @@ impl AnalysisRule for HeapReadSpikeRule {
         let mut worst_rate = 0.0_f64;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_delta: i64 = 0;
+        let mut worst_dt: f64 = 0.0;
 
         for t in tables {
             let Some(prev) = find_prev_table(prev_tables, t.relid) else {
@@ -198,6 +200,8 @@ impl AnalysisRule for HeapReadSpikeRule {
                 worst_rate = rate;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_delta = delta;
+                worst_dt = dt;
             }
         }
 
@@ -215,13 +219,17 @@ impl AnalysisRule for HeapReadSpikeRule {
             Severity::Warning
         };
 
+        let detail = format!(
+            "Δblks: {worst_delta}, dt: {worst_dt:.0}s, rate: {worst_delta}/{worst_dt:.0} = {worst_rate:.1} blk/s"
+        );
+
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "heap_read_spike",
             category: Category::PgTables,
             severity,
             title: format!("Table {name}: {worst_rate:.0} blk/s disk reads ({mb_per_s:.1} MiB/s)"),
-            detail: None,
+            detail: Some(detail),
             value: worst_rate,
         }]
     }
@@ -264,6 +272,10 @@ impl AnalysisRule for TableWriteSpikeRule {
         let mut worst_rate = 0.0_f64;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_ins: i64 = 0;
+        let mut worst_upd: i64 = 0;
+        let mut worst_del: i64 = 0;
+        let mut worst_dt: f64 = 0.0;
 
         for t in tables {
             let Some(prev) = find_prev_table(prev_tables, t.relid) else {
@@ -288,6 +300,10 @@ impl AnalysisRule for TableWriteSpikeRule {
                 worst_rate = rate;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_ins = ins;
+                worst_upd = upd;
+                worst_del = del;
+                worst_dt = dt;
             }
         }
 
@@ -304,13 +320,16 @@ impl AnalysisRule for TableWriteSpikeRule {
             Severity::Warning
         };
 
+        let detail =
+            format!("ins: {worst_ins}, upd: {worst_upd}, del: {worst_del}, dt: {worst_dt:.0}s");
+
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "table_write_spike",
             category: Category::PgTables,
             severity,
             title: format!("Table {name}: {worst_rate:.0} writes/s"),
-            detail: None,
+            detail: Some(detail),
             value: worst_rate,
         }]
     }
@@ -354,6 +373,8 @@ impl AnalysisRule for CacheHitRatioDropRule {
         let mut worst_ratio = 100.0_f64;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_read_d: i64 = 0;
+        let mut worst_hit_d: i64 = 0;
 
         for t in tables {
             let Some(prev) = find_prev_table(prev_tables, t.relid) else {
@@ -373,6 +394,8 @@ impl AnalysisRule for CacheHitRatioDropRule {
                 worst_ratio = hit_ratio;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_read_d = read_d;
+                worst_hit_d = hit_d;
             }
         }
 
@@ -389,13 +412,16 @@ impl AnalysisRule for CacheHitRatioDropRule {
             Severity::Warning
         };
 
+        let detail =
+            format!("Δhit: {worst_hit_d} blks, Δread: {worst_read_d} blks (delta, not cumulative)");
+
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "cache_hit_ratio_drop",
             category: Category::PgTables,
             severity,
             title: format!("Table {name}: cache hit ratio {worst_ratio:.0}%"),
-            detail: None,
+            detail: Some(detail),
             value: 100.0 - worst_ratio, // value = miss percentage (higher = worse)
         }]
     }
