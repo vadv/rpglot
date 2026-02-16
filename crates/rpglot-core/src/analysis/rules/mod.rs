@@ -7,6 +7,7 @@ pub mod network;
 pub mod pg_activity;
 pub mod pg_bgwriter;
 pub mod pg_errors;
+pub mod pg_events;
 pub mod pg_locks;
 pub mod pg_statements;
 pub mod pg_tables;
@@ -51,6 +52,8 @@ pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
         Box::new(pg_tables::HeapReadSpikeRule),
         Box::new(pg_tables::TableWriteSpikeRule),
         Box::new(pg_tables::CacheHitRatioDropRule),
+        // PG Events (log-based)
+        Box::new(pg_events::AutovacuumImpactRule),
         // PG BGWriter
         Box::new(pg_bgwriter::CheckpointSpikeRule),
         Box::new(pg_bgwriter::BackendBuffersRule),
