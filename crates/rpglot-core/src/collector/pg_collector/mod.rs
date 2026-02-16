@@ -30,6 +30,7 @@ mod statements;
 mod tables;
 
 use postgres::{Client, NoTls};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -315,11 +316,9 @@ impl PostgresCollector {
         };
 
         // Build set of currently connected databases (owned to avoid borrow conflicts).
-        let existing: std::collections::HashSet<String> =
-            self.db_clients.iter().map(|c| c.datname.clone()).collect();
+        let existing: HashSet<String> = self.db_clients.iter().map(|c| c.datname.clone()).collect();
 
-        let target_set: std::collections::HashSet<&str> =
-            databases.iter().map(|s| s.as_str()).collect();
+        let target_set: HashSet<&str> = databases.iter().map(|s| s.as_str()).collect();
 
         // Remove connections to databases that no longer exist.
         let before = self.db_clients.len();

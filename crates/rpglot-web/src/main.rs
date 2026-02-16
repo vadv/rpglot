@@ -23,7 +23,7 @@ fn release_memory_to_os() {
 #[cfg(target_env = "msvc")]
 fn release_memory_to_os() {}
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -180,7 +180,7 @@ type SharedState = Arc<Mutex<WebAppInner>>;
 
 enum AllowedUsers {
     Any,
-    List(std::collections::HashSet<String>),
+    List(HashSet<String>),
 }
 
 struct SsoConfig {

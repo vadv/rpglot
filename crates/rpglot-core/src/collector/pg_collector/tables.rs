@@ -6,6 +6,8 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatUserTablesInfo;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use std::collections::HashMap;
+
 use super::PgCollectError;
 use super::PostgresCollector;
 use super::queries::{build_stat_user_tables_query, build_statio_user_tables_query};
@@ -89,7 +91,7 @@ impl PostgresCollector {
                 .client
                 .query(statio_query, &[])
                 .unwrap_or_default();
-            let statio_map: std::collections::HashMap<u32, StatioRow> = statio_rows
+            let statio_map: HashMap<u32, StatioRow> = statio_rows
                 .iter()
                 .filter_map(|row| parse_statio_row(row).map(|s| (s.relid, s)))
                 .collect();

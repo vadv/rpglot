@@ -8,6 +8,7 @@ use crate::storage::model::{
 };
 use crate::tui::state::{PgActivityTabState, PgStatementsRates, PgStatementsTabState, SortKey};
 use crate::view::common::{RowStyleClass, TableViewModel, ViewCell, ViewRow};
+use std::collections::HashMap;
 
 const PGA_HEADERS_GENERIC: &[&str] = &[
     "PID", "CPU%", "RSS", "DB", "USER", "STATE", "WAIT", "QDUR", "XDUR", "BDUR", "BTYPE", "QUERY",
@@ -382,8 +383,7 @@ pub fn build_activity_view(
     }
 
     let processes = extract_processes(snapshot);
-    let process_map: std::collections::HashMap<u32, &ProcessInfo> =
-        processes.iter().map(|p| (p.pid, *p)).collect();
+    let process_map: HashMap<u32, &ProcessInfo> = processes.iter().map(|p| (p.pid, *p)).collect();
 
     let now = snapshot.timestamp;
     let view_mode = pga_state.view_mode;
@@ -536,9 +536,7 @@ fn extract_processes(snapshot: &Snapshot) -> Vec<&ProcessInfo> {
         .collect()
 }
 
-fn extract_pg_statements_map(
-    snapshot: &Snapshot,
-) -> std::collections::HashMap<i64, &PgStatStatementsInfo> {
+fn extract_pg_statements_map(snapshot: &Snapshot) -> HashMap<i64, &PgStatStatementsInfo> {
     snapshot
         .blocks
         .iter()

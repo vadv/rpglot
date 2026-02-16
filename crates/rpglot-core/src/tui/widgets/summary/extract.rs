@@ -5,6 +5,8 @@ use crate::storage::model::{
     SystemCpuInfo, SystemDiskInfo, SystemNetInfo, SystemPsiInfo, SystemStatInfo, SystemVmstatInfo,
 };
 
+use std::collections::HashSet;
+
 use super::{
     BgwSummary, CpuMetrics, DiskSummary, NetSummary, PgSummary, PsiSummary, SummaryMetrics,
     TOP_CPUS, TOP_DISKS, TOP_NETS, VmstatRates,
@@ -649,7 +651,7 @@ fn compute_backend_io_hit(snapshot: &Snapshot, previous: Option<&Snapshot>) -> f
     let Some(pga) = find_pg_activity(snapshot) else {
         return 100.0;
     };
-    let pg_pids: std::collections::HashSet<u32> = pga
+    let pg_pids: HashSet<u32> = pga
         .iter()
         .filter_map(|a| u32::try_from(a.pid).ok())
         .collect();
@@ -681,7 +683,7 @@ fn compute_backend_io_hit(snapshot: &Snapshot, previous: Option<&Snapshot>) -> f
 }
 
 /// Sums rchar and read_bytes for processes whose PID is in pg_pids.
-fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &std::collections::HashSet<u32>) -> (u64, u64) {
+fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
     let mut rchar = 0u64;
     let mut rsz = 0u64;
     for p in procs {

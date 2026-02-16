@@ -12,6 +12,7 @@ use crate::tui::state::{
     AppState, CachedWidths, ColumnType, DiffStatus, ProcessRow, ProcessViewMode, TableRow,
 };
 use crate::tui::style::Styles;
+use std::collections::HashMap;
 
 /// Renders the process table with the current view mode.
 pub fn render_processes(frame: &mut Frame, area: Rect, state: &mut AppState) {
@@ -188,9 +189,9 @@ pub fn extract_processes(
     snapshot: &crate::storage::model::Snapshot,
     interner: Option<&crate::storage::StringInterner>,
     user_resolver: Option<&crate::collector::UserResolver>,
-    prev_mem: &std::collections::HashMap<u32, (u64, u64)>,
-    prev_cpu: &std::collections::HashMap<u32, (u64, u64)>,
-    prev_dsk: &std::collections::HashMap<u32, (u64, u64, u64)>,
+    prev_mem: &HashMap<u32, (u64, u64)>,
+    prev_cpu: &HashMap<u32, (u64, u64)>,
+    prev_dsk: &HashMap<u32, (u64, u64, u64)>,
     prev_total_cpu_time: Option<u64>,
     current_total_cpu_time: u64,
     total_mem_kb: u64,
@@ -200,7 +201,7 @@ pub fn extract_processes(
 
     // Build a mapping from PostgreSQL backend PID to (query, backend_type)
     // We include all PIDs that have pg_stat_activity entry, even if query is empty
-    let pg_info: std::collections::HashMap<u32, (Option<String>, Option<String>)> = snapshot
+    let pg_info: HashMap<u32, (Option<String>, Option<String>)> = snapshot
         .blocks
         .iter()
         .filter_map(|block| {
@@ -379,7 +380,7 @@ pub fn extract_processes(
 /// Updates the prev_process_mem map with current memory values.
 pub fn update_prev_mem(
     snapshot: &crate::storage::model::Snapshot,
-    prev_mem: &mut std::collections::HashMap<u32, (u64, u64)>,
+    prev_mem: &mut HashMap<u32, (u64, u64)>,
 ) {
     use crate::storage::model::DataBlock;
 
@@ -409,7 +410,7 @@ pub fn get_total_memory(snapshot: &crate::storage::model::Snapshot) -> u64 {
 /// Updates the prev_process_cpu map with current CPU values.
 pub fn update_prev_cpu(
     snapshot: &crate::storage::model::Snapshot,
-    prev_cpu: &mut std::collections::HashMap<u32, (u64, u64)>,
+    prev_cpu: &mut HashMap<u32, (u64, u64)>,
 ) {
     use crate::storage::model::DataBlock;
 
@@ -426,7 +427,7 @@ pub fn update_prev_cpu(
 /// Updates the prev_process_dsk map with current disk I/O values.
 pub fn update_prev_dsk(
     snapshot: &crate::storage::model::Snapshot,
-    prev_dsk: &mut std::collections::HashMap<u32, (u64, u64, u64)>,
+    prev_dsk: &mut HashMap<u32, (u64, u64, u64)>,
 ) {
     use crate::storage::model::DataBlock;
 

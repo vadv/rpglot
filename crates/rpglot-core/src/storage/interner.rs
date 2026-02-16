@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use xxhash_rust::xxh3::xxh3_64;
 
 #[derive(Default, Serialize, Deserialize, Clone)]
@@ -39,7 +39,7 @@ impl StringInterner {
 
     /// Creates a new interner containing only strings with hashes in the given set.
     /// Used to optimize chunk storage by removing unused strings.
-    pub fn filter(&self, used_hashes: &std::collections::HashSet<u64>) -> StringInterner {
+    pub fn filter(&self, used_hashes: &HashSet<u64>) -> StringInterner {
         let strings = self
             .strings
             .iter()

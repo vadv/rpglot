@@ -5,7 +5,7 @@ use crate::provider::HistoryProvider;
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, Snapshot};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 // ============================================================
 // Core types
@@ -325,7 +325,7 @@ pub struct PrevSample {
     pub disk_rsz: u64,
     pub disk_wsz: u64,
     /// Per-device io_ms (device_hash → cumulative io_ms).
-    pub disk_io_ms_per_dev: std::collections::HashMap<u64, u64>,
+    pub disk_io_ms_per_dev: HashMap<u64, u64>,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
     pub pg_xact_commit: i64,
@@ -344,7 +344,7 @@ impl PrevSample {
             cpu_steal: 0,
             disk_rsz: 0,
             disk_wsz: 0,
-            disk_io_ms_per_dev: std::collections::HashMap::new(),
+            disk_io_ms_per_dev: HashMap::new(),
             net_rx_bytes: 0,
             net_tx_bytes: 0,
             pg_xact_commit: 0,
@@ -496,9 +496,8 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
     // for a given rule_id exceeds 30% of the analysis window, treat ALL
     // incidents of that rule_id as persistent. This catches "quasi-persistent"
     // issues like cache_miss that produce many short incidents spanning the hour.
-    let persistent_rules: std::collections::HashSet<String> = {
-        let mut duration_by_rule: std::collections::HashMap<&str, i64> =
-            std::collections::HashMap::new();
+    let persistent_rules: HashSet<String> = {
+        let mut duration_by_rule: HashMap<&str, i64> = HashMap::new();
         for inc in &incidents {
             *duration_by_rule.entry(&inc.rule_id).or_default() += inc.last_ts - inc.first_ts;
         }
@@ -527,8 +526,7 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
     let mut group_id: u32 = 0;
 
     // Persistent: group all incidents of the same rule_id together
-    let mut persistent_by_rule: std::collections::HashMap<String, Vec<Incident>> =
-        std::collections::HashMap::new();
+    let mut persistent_by_rule: HashMap<String, Vec<Incident>> = HashMap::new();
     for inc in persistent {
         persistent_by_rule
             .entry(inc.rule_id.clone())

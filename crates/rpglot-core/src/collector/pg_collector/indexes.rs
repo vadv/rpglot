@@ -6,6 +6,8 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatUserIndexesInfo;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use std::collections::HashMap;
+
 use super::PgCollectError;
 use super::PostgresCollector;
 use super::queries::{build_stat_user_indexes_query, build_statio_user_indexes_query};
@@ -92,7 +94,7 @@ impl PostgresCollector {
                 .client
                 .query(statio_query, &[])
                 .unwrap_or_default();
-            let statio_map: std::collections::HashMap<u32, IndexStatioRow> = statio_rows
+            let statio_map: HashMap<u32, IndexStatioRow> = statio_rows
                 .iter()
                 .filter_map(|row| parse_index_statio_row(row).map(|s| (s.indexrelid, s)))
                 .collect();

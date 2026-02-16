@@ -6,6 +6,7 @@
 //! snapshots from the same chunk share the same interner.
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use tracing::warn;
@@ -587,8 +588,7 @@ impl HistoryProvider {
         chunk_paths.sort();
 
         // Find new chunk files (not in current index)
-        let known_paths: std::collections::HashSet<PathBuf> =
-            self.chunks.iter().map(|c| c.path.clone()).collect();
+        let known_paths: HashSet<PathBuf> = self.chunks.iter().map(|c| c.path.clone()).collect();
 
         let mut global_offset = self
             .chunks
