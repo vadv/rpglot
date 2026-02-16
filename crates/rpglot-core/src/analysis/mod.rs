@@ -530,14 +530,17 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
         group_id += 1;
     }
 
-    // Transient: interval merging with GAP
+    // Transient: interval merging with GAP.
+    // Use first_ts as the merge anchor — a new incident joins the group
+    // if its first_ts is within GAP of the latest first_ts in the group.
+    // This prevents long bars from "stretching" the group far into the future.
     let mut pending: Vec<Incident> = Vec::new();
-    let mut group_end: i64 = i64::MIN;
+    let mut latest_first_ts: i64 = i64::MIN;
 
     for inc in transient {
-        if !pending.is_empty() && inc.first_ts <= group_end + CORRELATION_GAP {
-            // Extend current group
-            group_end = group_end.max(inc.last_ts);
+        if !pending.is_empty() && inc.first_ts <= latest_first_ts + CORRELATION_GAP {
+            // Add to current group
+            latest_first_ts = latest_first_ts.max(inc.first_ts);
             pending.push(inc);
         } else {
             // Flush previous group
@@ -545,7 +548,7 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
                 groups.push(flush_group(&mut pending, group_id, false));
                 group_id += 1;
             }
-            group_end = inc.last_ts;
+            latest_first_ts = inc.first_ts;
             pending.push(inc);
         }
     }
