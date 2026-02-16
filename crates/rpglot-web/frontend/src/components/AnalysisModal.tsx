@@ -73,18 +73,35 @@ const CATEGORY_LABEL: Record<string, string> = {
   pg_errors: "PG Errors",
 };
 
-const SWIM_LANES: { label: string; categories: string[] }[] = [
-  { label: "CPU", categories: ["cpu"] },
-  { label: "Memory", categories: ["memory"] },
-  { label: "Disk", categories: ["disk"] },
-  { label: "Network", categories: ["network"] },
-  { label: "PSI", categories: ["psi", "cgroup"] },
-  { label: "PG Activity", categories: ["pg_activity"] },
-  { label: "PG Queries", categories: ["pg_statements"] },
-  { label: "PG Storage", categories: ["pg_tables", "pg_bgwriter"] },
-  { label: "PG Locks", categories: ["pg_locks"] },
-  { label: "PG Errors", categories: ["pg_errors"] },
-];
+/** Human-readable label for each rule_id. Ordered — determines lane order in timeline. */
+const RULE_LABEL: Record<string, string> = {
+  cpu_high: "CPU high",
+  iowait_high: "IO Wait",
+  steal_high: "CPU steal",
+  memory_low: "Memory",
+  swap_usage: "Swap",
+  disk_util_high: "Disk util",
+  disk_io_spike: "Disk I/O",
+  network_spike: "Network",
+  cgroup_throttled: "Cgroup thr.",
+  cgroup_oom_kill: "OOM kill",
+  idle_in_transaction: "Idle in tx",
+  long_query: "Long query",
+  wait_sync_replica: "Sync repl.",
+  wait_lock: "Lock wait",
+  high_active_sessions: "Active sess.",
+  stmt_mean_time_spike: "Query time",
+  checkpoint_spike: "Checkpoint",
+  backend_buffers_high: "Backend buf.",
+  dead_tuples_high: "Dead tuples",
+  seq_scan_dominant: "Seq scans",
+  blocked_sessions: "Blocked",
+  pg_errors: "PG errors",
+  pg_fatal_panic: "FATAL/PANIC",
+};
+
+/** Ordered list of rule_ids — determines lane order in timeline. */
+const RULE_ORDER = Object.keys(RULE_LABEL);
 
 // ============================================================
 // Main component
@@ -358,10 +375,21 @@ function IncidentTimeline({
   const range = endTs - startTs;
 
   const populatedLanes = useMemo(() => {
-    return SWIM_LANES.map((lane) => ({
-      ...lane,
-      incidents: incidents.filter((i) => lane.categories.includes(i.category)),
-    })).filter((lane) => lane.incidents.length > 0);
+    const byRule = new Map<string, AnalysisIncident[]>();
+    for (const inc of incidents) {
+      const list = byRule.get(inc.rule_id) ?? [];
+      list.push(inc);
+      byRule.set(inc.rule_id, list);
+    }
+    // Order lanes by RULE_ORDER, then any unknown rule_ids at the end
+    const ordered = [
+      ...RULE_ORDER.filter((r) => byRule.has(r)),
+      ...[...byRule.keys()].filter((r) => !RULE_ORDER.includes(r)),
+    ];
+    return ordered.map((ruleId) => ({
+      label: RULE_LABEL[ruleId] ?? ruleId,
+      incidents: byRule.get(ruleId)!,
+    }));
   }, [incidents]);
 
   const timeMarkers = useMemo(() => {
