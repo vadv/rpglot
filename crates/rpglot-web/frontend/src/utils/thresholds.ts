@@ -402,10 +402,32 @@ const RULES: Record<string, Classifier> = {
   idx_blks_read_s: rateInactive,
   idx_blks_hit_s: rateInactive,
   idx_tup_read_s: rateInactive,
+  rchar_s: rateInactive,
+  wchar_s: rateInactive,
   read_bytes_s: rateInactive,
   write_bytes_s: rateInactive,
   read_ops_s: rateInactive,
   write_ops_s: rateInactive,
+  rss_kb: (v: unknown) => {
+    const n = Number(v);
+    return n > 4_000_000
+      ? "critical"
+      : n > 1_000_000
+        ? "warning"
+        : n > 0
+          ? "good"
+          : "inactive";
+  },
+  blkdelay: (v: unknown) => {
+    const n = Number(v);
+    return n > 1000
+      ? "critical"
+      : n > 100
+        ? "warning"
+        : n > 0
+          ? "good"
+          : "inactive";
+  },
   nvcsw_s: rateInactive,
   nivcsw_s: rateInactive,
   tot_tup_read_s: rateInactive,

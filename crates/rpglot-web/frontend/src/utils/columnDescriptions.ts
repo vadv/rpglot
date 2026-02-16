@@ -164,6 +164,6 @@ export const COLUMN_DESCRIPTIONS: Record<string, string> = {
   ins_s: "Total inserts per second across schema",
   upd_s: "Total updates per second across schema",
   del_s: "Total deletes per second across schema",
-  blk_rd_s: "Total block reads per second (heap + idx)",
-  blk_hit_s: "Total block hits per second (heap + idx)",
+  blk_rd_s: "Total disk reads per second (heap + idx)",
+  blk_hit_s: "Total buffer hits per second (heap + idx)",
 };

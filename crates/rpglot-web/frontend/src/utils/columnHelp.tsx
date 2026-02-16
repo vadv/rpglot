@@ -484,39 +484,39 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_STATEMENTS,
   },
   shared_blks_read_s: {
-    label: "Blk Rd/s",
+    label: "Sh Read/s",
     description:
       "Shared buffer blocks read from disk per second (physical I/O).",
     tip: "Physical reads are 100x slower than cache hits",
     docUrl: PG_STAT_STATEMENTS,
   },
   shared_blks_hit_s: {
-    label: "Blk Hit/s",
+    label: "Sh Hit/s",
     description:
       "Shared buffer blocks found in PostgreSQL buffer cache per second.",
     docUrl: PG_STAT_STATEMENTS,
   },
   shared_blks_dirtied_s: {
-    label: "Blk Dirty/s",
+    label: "Sh Dirty/s",
     description: "Shared buffer blocks dirtied per second (modified in cache).",
     docUrl: PG_STAT_STATEMENTS,
   },
   shared_blks_written_s: {
-    label: "Blk Wr/s",
+    label: "Sh Write/s",
     description:
       "Shared buffer blocks written to disk per second by this query.",
     tip: "High values indicate backend doing direct writes (bgwriter can't keep up)",
     docUrl: PG_STAT_STATEMENTS,
   },
   temp_blks_read_s: {
-    label: "Tmp Rd/s",
+    label: "Tmp Read/s",
     description:
       "Temp file blocks read per second. Sorts/hashes spilling to disk.",
     tip: "Increase work_mem to avoid temp files",
     docUrl: PG_STAT_STATEMENTS,
   },
   temp_blks_written_s: {
-    label: "Tmp Wr/s",
+    label: "Tmp Write/s",
     description: "Temp file blocks written per second.",
     docUrl: PG_STAT_STATEMENTS,
   },
@@ -528,12 +528,12 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_STATEMENTS,
   },
   local_blks_read_s: {
-    label: "Local Rd/s",
+    label: "Loc Read/s",
     description: "Local buffer blocks read per second (temporary tables).",
     docUrl: PG_STAT_STATEMENTS,
   },
   local_blks_written_s: {
-    label: "Local Wr/s",
+    label: "Loc Write/s",
     description: "Local buffer blocks written per second (temporary tables).",
     docUrl: PG_STAT_STATEMENTS,
   },
@@ -670,14 +670,14 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_USER_TABLES,
   },
   disk_blks_read_s: {
-    label: "DISK/s",
+    label: "Disk Read/s",
     description:
       "Physical disk read throughput (heap + index blocks, 8 KiB each).",
     thresholds: ">0 warning \u00b7 =0 inactive",
     tip: "Physical reads are slow. Improve HIT% or reduce table size",
   },
   heap_blks_read_s: {
-    label: "Heap Rd/s",
+    label: "Heap Read/s",
     description: "Heap (table data) blocks read from disk per second.",
     docUrl: PG_STAT_USER_TABLES,
   },
@@ -687,7 +687,7 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_USER_TABLES,
   },
   idx_blks_read_s: {
-    label: "Idx Rd/s",
+    label: "Idx Read/s",
     description: "Index blocks read from disk per second.",
     docUrl: PG_STAT_USER_TABLES,
   },
@@ -697,7 +697,7 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_USER_TABLES,
   },
   toast_blks_read_s: {
-    label: "Toast Rd/s",
+    label: "Toast Read/s",
     description: "TOAST table blocks read from disk per second.",
     tip: "High TOAST reads = large columns (text, json, bytea) causing I/O",
     docUrl: PG_STAT_USER_TABLES,
@@ -708,7 +708,7 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_USER_TABLES,
   },
   tidx_blks_read_s: {
-    label: "TIdx Rd/s",
+    label: "TIdx Read/s",
     description: "TOAST index blocks read from disk per second.",
     docUrl: PG_STAT_USER_TABLES,
   },

@@ -1381,6 +1381,10 @@ fn generate_pga_schema() -> TabSchema {
                     "stmt_max_exec_time_ms",
                     "stmt_calls_s",
                     "stmt_hit_pct",
+                    "read_bytes_s",
+                    "write_bytes_s",
+                    "read_ops_s",
+                    "write_ops_s",
                     "query",
                 ]
                 .into_iter()
@@ -1494,7 +1498,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "shared_blks_read_s",
-                "Blk Rd/s",
+                "Sh Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1503,7 +1507,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "shared_blks_hit_s",
-                "Blk Hit/s",
+                "Sh Hit/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1512,7 +1516,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "shared_blks_dirtied_s",
-                "Blk Dirt/s",
+                "Sh Dirty/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1521,7 +1525,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "shared_blks_written_s",
-                "Blk Wr/s",
+                "Sh Write/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1530,7 +1534,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "local_blks_read_s",
-                "Loc Rd/s",
+                "Loc Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1539,7 +1543,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "local_blks_written_s",
-                "Loc Wr/s",
+                "Loc Write/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1548,7 +1552,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "temp_blks_read_s",
-                "Tmp Rd/s",
+                "Tmp Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1557,7 +1561,7 @@ fn generate_pgs_schema() -> TabSchema {
             ),
             col(
                 "temp_blks_written_s",
-                "Tmp Wr/s",
+                "Tmp Write/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1880,7 +1884,7 @@ fn generate_pgt_schema() -> TabSchema {
             ),
             col(
                 "heap_blks_read_s",
-                "Heap Rd/s",
+                "Heap Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1898,7 +1902,7 @@ fn generate_pgt_schema() -> TabSchema {
             ),
             col(
                 "idx_blks_read_s",
-                "Idx Rd/s",
+                "Idx Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -1925,7 +1929,7 @@ fn generate_pgt_schema() -> TabSchema {
             ),
             col(
                 "disk_blks_read_s",
-                "DISK/s",
+                "Disk Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -2006,7 +2010,7 @@ fn generate_pgt_schema() -> TabSchema {
             ),
             col(
                 "toast_blks_read_s",
-                "Toast Rd/s",
+                "Toast Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -2024,7 +2028,7 @@ fn generate_pgt_schema() -> TabSchema {
             ),
             col(
                 "tidx_blks_read_s",
-                "TIdx Rd/s",
+                "TIdx Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -2258,7 +2262,7 @@ fn generate_pgi_schema() -> TabSchema {
             ),
             col(
                 "idx_blks_read_s",
-                "Blk Rd/s",
+                "Idx Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -2267,7 +2271,7 @@ fn generate_pgi_schema() -> TabSchema {
             ),
             col(
                 "idx_blks_hit_s",
-                "Blk Hit/s",
+                "Idx Hit/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),
@@ -2285,7 +2289,7 @@ fn generate_pgi_schema() -> TabSchema {
             ),
             col(
                 "disk_blks_read_s",
-                "DISK/s",
+                "Disk Read/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Bytes),

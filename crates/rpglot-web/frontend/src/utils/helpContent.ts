@@ -222,11 +222,11 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
         description: "Queries doing the most physical I/O.",
         metrics: [
           {
-            label: "Blk Rd/s",
+            label: "Sh Read/s",
             description: "Shared blocks read from disk per second",
           },
           {
-            label: "Blk Hit/s",
+            label: "Sh Hit/s",
             description: "Shared blocks served from cache per second",
           },
           {
@@ -385,8 +385,8 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       io: {
         description: "Index physical I/O \u2014 cache hit ratio.",
         metrics: [
-          { label: "Blk Rd/s", description: "Index blocks read from disk" },
-          { label: "Blk Hit/s", description: "Index blocks served from cache" },
+          { label: "Idx Read/s", description: "Index blocks read from disk" },
+          { label: "Idx Hit/s", description: "Index blocks served from cache" },
           {
             label: "HIT%",
             description: "Index buffer cache hit ratio",
