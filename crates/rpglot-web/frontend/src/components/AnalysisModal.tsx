@@ -103,7 +103,7 @@ export function AnalysisModal({
   onJump,
 }: AnalysisModalProps) {
   const [copied, setCopied] = useState(false);
-  const [recsOpen, setRecsOpen] = useState(false);
+  const [recsOpen, setRecsOpen] = useState(true);
   const [criticalOpen, setCriticalOpen] = useState(true);
   const [warningOpen, setWarningOpen] = useState(true);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -250,7 +250,7 @@ export function AnalysisModal({
               open={recsOpen}
               onToggle={() => setRecsOpen((o) => !o)}
             >
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {report.recommendations.map((rec, i) => (
                   <RecommendationCard key={i} rec={rec} />
                 ))}
@@ -570,26 +570,41 @@ function CollapsibleSection({
 }
 
 function RecommendationCard({ rec }: { rec: AnalysisRecommendation }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div className="p-2.5 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)]">
-      <div className="flex items-start gap-1.5">
-        <span className="text-sm leading-none mt-0.5">
+    <div
+      className="px-2 py-1.5 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] cursor-pointer hover:bg-[var(--bg-hover)] transition-colors"
+      onClick={() => setExpanded((v) => !v)}
+    >
+      <div className="flex items-center gap-1.5">
+        {expanded ? (
+          <ChevronDown
+            size={12}
+            className="text-[var(--text-tertiary)] shrink-0"
+          />
+        ) : (
+          <ChevronRight
+            size={12}
+            className="text-[var(--text-tertiary)] shrink-0"
+          />
+        )}
+        <span className="text-xs leading-none">
           {SEVERITY_ICON[rec.severity]}
         </span>
-        <div className="flex-1 min-w-0">
-          <div className="text-xs font-semibold text-[var(--text-primary)]">
-            {rec.title}
-          </div>
-          <p className="text-xs text-[var(--text-secondary)] mt-1 whitespace-pre-wrap">
-            {rec.description}
-          </p>
-          {rec.related_incidents.length > 0 && (
-            <div className="mt-1 text-[10px] text-[var(--text-tertiary)]">
-              Related: {rec.related_incidents.join(", ")}
-            </div>
-          )}
-        </div>
+        <span className="text-xs font-semibold text-[var(--text-primary)] truncate">
+          {rec.title}
+        </span>
+        {rec.related_incidents.length > 0 && (
+          <span className="text-[9px] text-[var(--text-tertiary)] shrink-0 ml-auto">
+            {rec.related_incidents.join(", ")}
+          </span>
+        )}
       </div>
+      {expanded && (
+        <p className="text-xs text-[var(--text-secondary)] mt-1.5 ml-5 whitespace-pre-wrap">
+          {rec.description}
+        </p>
+      )}
     </div>
   );
 }
