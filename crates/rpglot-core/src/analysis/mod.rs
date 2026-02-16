@@ -492,12 +492,28 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
     let persistent_threshold = window * 30 / 100; // 30% of hour
     const CORRELATION_GAP: i64 = 30;
 
+    // Determine persistent rule_ids: if the total duration of all incidents
+    // for a given rule_id exceeds 30% of the analysis window, treat ALL
+    // incidents of that rule_id as persistent. This catches "quasi-persistent"
+    // issues like cache_miss that produce many short incidents spanning the hour.
+    let persistent_rules: std::collections::HashSet<String> = {
+        let mut duration_by_rule: std::collections::HashMap<&str, i64> =
+            std::collections::HashMap::new();
+        for inc in &incidents {
+            *duration_by_rule.entry(&inc.rule_id).or_default() += inc.last_ts - inc.first_ts;
+        }
+        duration_by_rule
+            .into_iter()
+            .filter(|(_, d)| *d > persistent_threshold)
+            .map(|(r, _)| r.to_owned())
+            .collect()
+    };
+
     let mut persistent = Vec::new();
     let mut transient = Vec::new();
 
     for inc in incidents {
-        let duration = inc.last_ts - inc.first_ts;
-        if duration > persistent_threshold {
+        if persistent_rules.contains(&inc.rule_id) {
             persistent.push(inc);
         } else {
             transient.push(inc);
@@ -510,23 +526,33 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
     let mut groups: Vec<IncidentGroup> = Vec::new();
     let mut group_id: u32 = 0;
 
-    // Persistent: each gets its own group
-    // Sort persistent by severity desc, then first_ts
-    persistent.sort_by(|a, b| {
-        b.severity
-            .cmp(&a.severity)
-            .then(a.first_ts.cmp(&b.first_ts))
-    });
+    // Persistent: group all incidents of the same rule_id together
+    let mut persistent_by_rule: std::collections::HashMap<String, Vec<Incident>> =
+        std::collections::HashMap::new();
     for inc in persistent {
-        let g = IncidentGroup {
-            id: group_id,
-            first_ts: inc.first_ts,
-            last_ts: inc.last_ts,
-            severity: inc.severity,
-            persistent: true,
-            incidents: vec![inc],
-        };
-        groups.push(g);
+        persistent_by_rule
+            .entry(inc.rule_id.clone())
+            .or_default()
+            .push(inc);
+    }
+    // Sort rules by max severity desc
+    let mut persistent_entries: Vec<_> = persistent_by_rule.into_iter().collect();
+    persistent_entries.sort_by(|a, b| {
+        let sev_a =
+            a.1.iter()
+                .map(|i| i.severity)
+                .max()
+                .unwrap_or(Severity::Info);
+        let sev_b =
+            b.1.iter()
+                .map(|i| i.severity)
+                .max()
+                .unwrap_or(Severity::Info);
+        sev_b.cmp(&sev_a).then(a.0.cmp(&b.0))
+    });
+    for (_rule_id, mut incs) in persistent_entries {
+        incs.sort_by_key(|i| i.first_ts);
+        groups.push(flush_group(&mut incs, group_id, true));
         group_id += 1;
     }
 
