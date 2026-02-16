@@ -55,6 +55,7 @@ impl AnalysisRule for NetworkSpikeRule {
                 "Current: {mb_s:.1} MB/s, baseline avg: {avg_mb_s:.1} MB/s",
             )),
             value: bytes_s,
+            merge_key: None,
         }]
     }
 }

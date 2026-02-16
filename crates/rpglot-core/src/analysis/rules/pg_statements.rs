@@ -58,6 +58,7 @@ impl AnalysisRule for MeanTimeSpikeRule {
             title: format!("Statement mean time {mean:.0}ms"),
             detail,
             value: mean,
+            merge_key: None,
         }]
     }
 }
@@ -155,6 +156,7 @@ impl AnalysisRule for QueryCallSpikeRule {
             title: format!("Query spike: {worst_rate:.0} calls/s ({worst_calls} calls)"),
             detail,
             value: worst_rate,
+            merge_key: None,
         }]
     }
 }

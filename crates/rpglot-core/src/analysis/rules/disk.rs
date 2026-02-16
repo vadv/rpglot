@@ -59,6 +59,7 @@ impl AnalysisRule for DiskUtilHighRule {
             title: format!("Disk utilization {util_pct:.1}%"),
             detail: None,
             value: util_pct,
+            merge_key: None,
         }]
     }
 }
@@ -115,6 +116,7 @@ impl AnalysisRule for DiskIoSpikeRule {
                 "Current: {mb_s:.1} MB/s, baseline avg: {avg_mb_s:.1} MB/s",
             )),
             value: bytes_s,
+            merge_key: None,
         }]
     }
 }

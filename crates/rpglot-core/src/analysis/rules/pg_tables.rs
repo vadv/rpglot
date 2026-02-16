@@ -92,6 +92,7 @@ impl AnalysisRule for DeadTuplesHighRule {
             title: format!("Table {name} has {worst_pct:.0}% dead tuples"),
             detail: None,
             value: worst_pct,
+            merge_key: None,
         }]
     }
 }
@@ -150,6 +151,7 @@ impl AnalysisRule for SeqScanDominantRule {
             title: format!("Table {name}: {worst_pct:.0}% sequential scans"),
             detail: None,
             value: worst_pct,
+            merge_key: None,
         }]
     }
 }
@@ -254,6 +256,7 @@ impl AnalysisRule for HeapReadSpikeRule {
             title: format!("Table {name}: {rate_human} disk reads"),
             detail: Some(detail),
             value: worst_rate,
+            merge_key: None,
         }]
     }
 }
@@ -354,6 +357,7 @@ impl AnalysisRule for TableWriteSpikeRule {
             title: format!("Table {name}: {worst_rate:.0} writes/s"),
             detail: Some(detail),
             value: worst_rate,
+            merge_key: None,
         }]
     }
 }
@@ -449,6 +453,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
             title: format!("Table {name}: cache hit ratio {worst_ratio:.0}% (interval)"),
             detail: Some(detail),
             value: 100.0 - worst_ratio, // value = miss percentage (higher = worse)
+            merge_key: None,
         }]
     }
 }

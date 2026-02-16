@@ -48,6 +48,7 @@ impl AnalysisRule for MemoryLowRule {
                 mem.total / 1024,
             )),
             value: avail_pct,
+            merge_key: None,
         }]
     }
 }
@@ -100,6 +101,7 @@ impl AnalysisRule for SwapUsageRule {
                 mem.swap_total / 1024,
             )),
             value: swap_used_pct,
+            merge_key: None,
         }]
     }
 }

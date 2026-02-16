@@ -58,6 +58,7 @@ impl AnalysisRule for ThrottledRule {
             title: format!("Container CPU throttled {throttle_pct:.1}% of time"),
             detail: None,
             value: throttle_pct,
+            merge_key: None,
         }]
     }
 }
@@ -101,6 +102,7 @@ impl AnalysisRule for OomKillRule {
             title: format!("Container OOM kill detected ({count} events)"),
             detail: None,
             value: count as f64,
+            merge_key: None,
         }]
     }
 }

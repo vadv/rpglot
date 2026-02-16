@@ -54,6 +54,7 @@ impl AnalysisRule for IdleInTransactionRule {
             title: format!("{count} idle-in-transaction session(s), longest {max_duration}s"),
             detail: None,
             value: count as f64,
+            merge_key: None,
         }]
     }
 }
@@ -129,6 +130,7 @@ impl AnalysisRule for LongQueryRule {
             title: format!("{count} long query(s), longest {max_duration}s"),
             detail,
             value: max_duration as f64,
+            merge_key: None,
         }]
     }
 }
@@ -178,6 +180,7 @@ impl AnalysisRule for WaitSyncReplicaRule {
             title: format!("{count} session(s) waiting on synchronous replication"),
             detail: None,
             value: count as f64,
+            merge_key: None,
         }]
     }
 }
@@ -228,6 +231,7 @@ impl AnalysisRule for WaitLockRule {
             title: format!("{count} sessions waiting on locks"),
             detail: None,
             value: count as f64,
+            merge_key: None,
         }]
     }
 }
@@ -273,6 +277,7 @@ impl AnalysisRule for HighActiveSessionsRule {
             title: format!("{count:.0} active sessions ({factor:.1}x above normal)",),
             detail: Some(format!("Baseline avg: {avg:.0} sessions")),
             value: count,
+            merge_key: None,
         }]
     }
 }
@@ -325,6 +330,7 @@ impl AnalysisRule for TpsSpikeRule {
             title: format!("TPS spike: {tps:.0} tx/s ({factor:.1}x above normal)"),
             detail: Some(format!("Baseline avg: {avg:.0} tx/s")),
             value: tps,
+            merge_key: None,
         }]
     }
 }

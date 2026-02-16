@@ -60,6 +60,7 @@ impl AnalysisRule for CheckpointSpikeRule {
             title: format!("{d_req} forced checkpoint(s), {d_timed} timed"),
             detail: Some(detail),
             value: d_req as f64,
+            merge_key: None,
         }]
     }
 }
@@ -115,6 +116,7 @@ impl AnalysisRule for BackendBuffersRule {
             title: format!("Backend wrote {d_backend} buffers > bgwriter {d_bg}"),
             detail: Some(detail),
             value: d_backend as f64,
+            merge_key: None,
         }]
     }
 }

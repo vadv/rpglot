@@ -46,6 +46,10 @@ pub struct Anomaly {
     pub title: String,
     pub detail: Option<String>,
     pub value: f64,
+    /// Optional sub-key for merge grouping (e.g. PID).
+    /// Anomalies with the same rule_id but different merge_key
+    /// will NOT be merged into one incident.
+    pub merge_key: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -55,6 +59,8 @@ pub struct Incident {
     pub severity: Severity,
     pub first_ts: i64,
     pub last_ts: i64,
+    #[serde(skip)]
+    pub merge_key: Option<String>,
     pub peak_ts: i64,
     pub peak_value: f64,
     pub title: String,
@@ -428,7 +434,12 @@ fn sum_cpu_ticks(cpu: &crate::storage::model::SystemCpuInfo) -> u64 {
 // ============================================================
 
 fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
-    anomalies.sort_by(|a, b| a.rule_id.cmp(b.rule_id).then(a.timestamp.cmp(&b.timestamp)));
+    anomalies.sort_by(|a, b| {
+        a.rule_id
+            .cmp(b.rule_id)
+            .then(a.merge_key.cmp(&b.merge_key))
+            .then(a.timestamp.cmp(&b.timestamp))
+    });
 
     const BASE_GAP: i64 = 60;
     const MAX_GAP: i64 = 300;
@@ -439,7 +450,9 @@ fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
         let should_merge = incidents.last().is_some_and(|last| {
             let duration = last.last_ts - last.first_ts;
             let adaptive_gap = (duration / 5).clamp(BASE_GAP, MAX_GAP);
-            last.rule_id == anomaly.rule_id && (anomaly.timestamp - last.last_ts) <= adaptive_gap
+            last.rule_id == anomaly.rule_id
+                && last.merge_key == anomaly.merge_key
+                && (anomaly.timestamp - last.last_ts) <= adaptive_gap
         });
 
         if should_merge {
@@ -462,6 +475,7 @@ fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
                 severity: anomaly.severity,
                 first_ts: anomaly.timestamp,
                 last_ts: anomaly.timestamp,
+                merge_key: anomaly.merge_key,
                 peak_ts: anomaly.timestamp,
                 peak_value: anomaly.value,
                 title: anomaly.title,
@@ -726,6 +740,7 @@ impl Analyzer {
                 severity: i.severity,
                 first_ts: i.first_ts,
                 last_ts: i.last_ts,
+                merge_key: None,
                 peak_ts: i.peak_ts,
                 peak_value: i.peak_value,
                 title: i.title.clone(),

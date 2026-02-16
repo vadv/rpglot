@@ -75,6 +75,7 @@ impl AnalysisRule for CpuHighRule {
             title: format!("CPU usage {cpu_pct:.1}%"),
             detail: None,
             value: cpu_pct,
+            merge_key: None,
         }]
     }
 }
@@ -111,6 +112,7 @@ impl AnalysisRule for IowaitHighRule {
             title: format!("IOWait {iow_pct:.1}%"),
             detail: None,
             value: iow_pct,
+            merge_key: None,
         }]
     }
 }
@@ -147,6 +149,7 @@ impl AnalysisRule for StealHighRule {
             title: format!("CPU steal {steal_pct:.1}%"),
             detail: None,
             value: steal_pct,
+            merge_key: None,
         }]
     }
 }

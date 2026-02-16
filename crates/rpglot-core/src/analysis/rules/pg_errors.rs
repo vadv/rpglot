@@ -59,6 +59,7 @@ impl AnalysisRule for ErrorsRule {
             title: format!("{total} PostgreSQL error(s)"),
             detail,
             value: total as f64,
+            merge_key: None,
         }]
     }
 }
@@ -98,6 +99,7 @@ impl AnalysisRule for FatalPanicRule {
                         title: format!("PostgreSQL FATAL/PANIC: {message}"),
                         detail: None,
                         value: e.count as f64,
+                        merge_key: None,
                     }];
                 }
                 PgLogSeverity::Error => {}

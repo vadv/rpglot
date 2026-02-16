@@ -41,6 +41,7 @@ impl AnalysisRule for BlockedSessionsRule {
             title: format!("{count} blocked session(s)"),
             detail: None,
             value: count as f64,
+            merge_key: None,
         }]
     }
 }

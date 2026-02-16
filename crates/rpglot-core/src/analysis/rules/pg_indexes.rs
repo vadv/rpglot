@@ -122,6 +122,7 @@ impl AnalysisRule for IndexReadSpikeRule {
             title: format!("Index {name}: {rate_human} disk reads"),
             detail: Some(detail),
             value: worst_rate,
+            merge_key: None,
         }]
     }
 }
@@ -222,6 +223,7 @@ impl AnalysisRule for IndexCacheHitDropRule {
             title: format!("Index {name}: cache hit ratio {worst_ratio:.0}% (interval)"),
             detail: Some(detail),
             value: 100.0 - worst_ratio,
+            merge_key: None,
         }]
     }
 }

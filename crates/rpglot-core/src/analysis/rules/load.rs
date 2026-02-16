@@ -54,6 +54,7 @@ impl AnalysisRule for LoadAverageHighRule {
                 load.lavg1, load.lavg5, load.lavg15,
             )),
             value: la1,
+            merge_key: None,
         }]
     }
 }
