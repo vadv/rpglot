@@ -303,8 +303,18 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     return { start: hourStart, end: hourEnd, hour: parts.hour };
   }, [snapshot?.timestamp, timezoneHook.timezone]);
 
-  // Load heatmap data for the current hour (and refresh periodically)
+  // Clear stale analysis report when the hour changes
   const heatmapKey = hourRange ? `${hourRange.start}-${hourRange.end}` : "";
+  const prevHeatmapKey = useRef(heatmapKey);
+  useEffect(() => {
+    if (prevHeatmapKey.current !== heatmapKey) {
+      prevHeatmapKey.current = heatmapKey;
+      setAnalysisReport(null);
+      setAnalysisModalOpen(false);
+    }
+  }, [heatmapKey]);
+
+  // Load heatmap data for the current hour (and refresh periodically)
   useEffect(() => {
     if (!hourRange) return;
     const { start, end } = hourRange;
