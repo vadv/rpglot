@@ -15,6 +15,7 @@ import type {
 } from "../api/types";
 import { formatValue } from "../utils/formatters";
 import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
+import { getThresholdClass } from "../utils/thresholds";
 import { Tooltip } from "./Tooltip";
 
 interface DetailPanelProps {
@@ -482,7 +483,14 @@ function DetailSection({
                   : String(val);
 
             return (
-              <KV key={key} fieldKey={key} label={label} value={formatted} />
+              <KV
+                key={key}
+                fieldKey={key}
+                label={label}
+                value={formatted}
+                rawValue={val}
+                row={row}
+              />
             );
           })}
         </div>
@@ -545,12 +553,17 @@ function KV({
   fieldKey,
   label,
   value,
+  rawValue,
+  row,
 }: {
   fieldKey: string;
   label: string;
   value: string;
+  rawValue: unknown;
+  row: Record<string, unknown>;
 }) {
   const desc = COLUMN_DESCRIPTIONS[fieldKey];
+  const colorClass = getThresholdClass(fieldKey, rawValue, row);
   return (
     <>
       <span className="text-[var(--text-tertiary)] whitespace-nowrap leading-[20px]">
@@ -564,7 +577,9 @@ function KV({
           label
         )}
       </span>
-      <span className="text-[var(--text-primary)] whitespace-nowrap text-right font-mono tabular-nums leading-[20px]">
+      <span
+        className={`${colorClass || "text-[var(--text-primary)]"} whitespace-nowrap text-right font-mono tabular-nums leading-[20px]`}
+      >
         {value}
       </span>
     </>
