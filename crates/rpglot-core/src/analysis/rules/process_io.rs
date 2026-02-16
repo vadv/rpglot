@@ -4,9 +4,8 @@ use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::model::DataBlock;
 
-/// Minimum total I/O across all processes to consider (5 MB/s).
-/// Below this the system is essentially idle and outlier detection is meaningless.
-const MIN_TOTAL_IO_BYTES_S: f64 = 5_000_000.0;
+/// The top process must do at least 10 MB/s to be considered a hog.
+const MIN_HOG_IO_BYTES_S: f64 = 10_000_000.0;
 
 /// Fraction of total I/O a single process must exceed to be flagged.
 const WARNING_FRACTION: f64 = 0.60;
@@ -91,10 +90,6 @@ impl AnalysisRule for ProcessIoHogRule {
             }
         }
 
-        if total_io < MIN_TOTAL_IO_BYTES_S {
-            return Vec::new();
-        }
-
         // Find top I/O consumer
         let Some(top) = rates.iter().max_by(|a, b| {
             a.total_bytes_s
@@ -103,6 +98,10 @@ impl AnalysisRule for ProcessIoHogRule {
         }) else {
             return Vec::new();
         };
+
+        if top.total_bytes_s < MIN_HOG_IO_BYTES_S {
+            return Vec::new();
+        }
 
         let fraction = top.total_bytes_s / total_io;
         if fraction < WARNING_FRACTION {
