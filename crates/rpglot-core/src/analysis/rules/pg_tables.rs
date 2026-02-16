@@ -3,6 +3,30 @@ use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::interner::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserTablesInfo};
 
+/// Format PG blocks (8 KiB each) as human-readable bytes.
+pub(crate) fn fmt_blks(blocks: i64) -> String {
+    let bytes = blocks as f64 * 8192.0;
+    if bytes >= 1_073_741_824.0 {
+        format!("{:.1} GiB", bytes / 1_073_741_824.0)
+    } else if bytes >= 1_048_576.0 {
+        format!("{:.1} MiB", bytes / 1_048_576.0)
+    } else {
+        format!("{:.0} KiB", bytes / 1024.0)
+    }
+}
+
+/// Format PG blocks/s rate as human-readable bytes/s.
+pub(crate) fn fmt_blks_per_s(rate: f64) -> String {
+    let bytes = rate * 8192.0;
+    if bytes >= 1_073_741_824.0 {
+        format!("{:.1} GiB/s", bytes / 1_073_741_824.0)
+    } else if bytes >= 1_048_576.0 {
+        format!("{:.1} MiB/s", bytes / 1_048_576.0)
+    } else {
+        format!("{:.0} KiB/s", bytes / 1024.0)
+    }
+}
+
 /// Format table name as "schema.table" (or just "table" if schema unresolved).
 fn qualified_name(interner: &StringInterner, schema_hash: u64, rel_hash: u64) -> String {
     let rel = interner.resolve(rel_hash).unwrap_or("unknown");
@@ -211,7 +235,8 @@ impl AnalysisRule for HeapReadSpikeRule {
         }
 
         let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
-        let mb_per_s = worst_rate * 8.0 / 1024.0; // blocks are 8 KiB
+        let rate_human = fmt_blks_per_s(worst_rate);
+        let delta_human = fmt_blks(worst_delta);
 
         let severity = if worst_rate >= 500.0 {
             Severity::Critical
@@ -219,16 +244,14 @@ impl AnalysisRule for HeapReadSpikeRule {
             Severity::Warning
         };
 
-        let detail = format!(
-            "Δblks: {worst_delta}, dt: {worst_dt:.0}s, rate: {worst_delta}/{worst_dt:.0} = {worst_rate:.1} blk/s"
-        );
+        let detail = format!("Δ{delta_human} in {worst_dt:.0}s → {rate_human}");
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "heap_read_spike",
             category: Category::PgTables,
             severity,
-            title: format!("Table {name}: {worst_rate:.0} blk/s disk reads ({mb_per_s:.1} MiB/s)"),
+            title: format!("Table {name}: {rate_human} disk reads"),
             detail: Some(detail),
             value: worst_rate,
         }]
@@ -412,8 +435,11 @@ impl AnalysisRule for CacheHitRatioDropRule {
             Severity::Warning
         };
 
-        let detail =
-            format!("Δhit: {worst_hit_d} blks, Δread: {worst_read_d} blks (delta, not cumulative)");
+        let detail = format!(
+            "Δhit: {}, Δread: {} (delta, not cumulative)",
+            fmt_blks(worst_hit_d),
+            fmt_blks(worst_read_d)
+        );
 
         vec![Anomaly {
             timestamp: ctx.timestamp,

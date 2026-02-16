@@ -1,4 +1,5 @@
 use crate::analysis::rules::AnalysisRule;
+use crate::analysis::rules::pg_tables::{fmt_blks, fmt_blks_per_s};
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::interner::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserIndexesInfo};
@@ -102,7 +103,8 @@ impl AnalysisRule for IndexReadSpikeRule {
             worst_index_hash,
             worst_table_hash,
         );
-        let mb_per_s = worst_rate * 8.0 / 1024.0;
+        let rate_human = fmt_blks_per_s(worst_rate);
+        let delta_human = fmt_blks(worst_delta);
 
         let severity = if worst_rate >= 500.0 {
             Severity::Critical
@@ -110,16 +112,14 @@ impl AnalysisRule for IndexReadSpikeRule {
             Severity::Warning
         };
 
-        let detail = format!(
-            "Δblks: {worst_delta}, dt: {worst_dt:.0}s, rate: {worst_delta}/{worst_dt:.0} = {worst_rate:.1} blk/s"
-        );
+        let detail = format!("Δ{delta_human} in {worst_dt:.0}s → {rate_human}");
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "index_read_spike",
             category: Category::PgTables,
             severity,
-            title: format!("Index {name}: {worst_rate:.0} blk/s disk reads ({mb_per_s:.1} MiB/s)"),
+            title: format!("Index {name}: {rate_human} disk reads"),
             detail: Some(detail),
             value: worst_rate,
         }]
@@ -208,8 +208,11 @@ impl AnalysisRule for IndexCacheHitDropRule {
             Severity::Warning
         };
 
-        let detail =
-            format!("Δhit: {worst_hit_d} blks, Δread: {worst_read_d} blks (delta, not cumulative)");
+        let detail = format!(
+            "Δhit: {}, Δread: {} (delta, not cumulative)",
+            fmt_blks(worst_hit_d),
+            fmt_blks(worst_read_d)
+        );
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
