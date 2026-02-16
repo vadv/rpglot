@@ -15,6 +15,17 @@ use crate::storage::model::{
 
 use super::snapshot::*;
 
+/// Sum Option<f64> values: returns Some(sum) if at least one is Some, None if all are None.
+fn add_opts(vals: &[Option<f64>]) -> Option<f64> {
+    let mut sum = 0.0_f64;
+    let mut any = false;
+    for x in vals.iter().flatten() {
+        sum += x;
+        any = true;
+    }
+    if any { Some(sum) } else { None }
+}
+
 /// Input context for snapshot conversion.
 pub struct ConvertContext<'a> {
     pub snapshot: &'a Snapshot,
@@ -1272,26 +1283,52 @@ fn extract_pgt(
                 _ => None,
             };
 
-            // Computed: io_hit_pct from cumulative values
-            let all_hits = t.heap_blks_hit + t.idx_blks_hit + t.toast_blks_hit + t.tidx_blks_hit;
-            let all_reads =
-                t.heap_blks_read + t.idx_blks_read + t.toast_blks_read + t.tidx_blks_read;
+            // Computed: io_hit_pct from rates (falls back to cumulative if no rates)
             let io_hit_pct = {
-                let total = all_hits + all_reads;
-                if total > 0 {
-                    Some(all_hits as f64 * 100.0 / total as f64)
-                } else {
-                    None
+                let rate_hits = add_opts(&[
+                    heap_blks_hit_s,
+                    idx_blks_hit_s,
+                    toast_blks_hit_s,
+                    tidx_blks_hit_s,
+                ]);
+                let rate_reads = add_opts(&[
+                    heap_blks_read_s,
+                    idx_blks_read_s,
+                    toast_blks_read_s,
+                    tidx_blks_read_s,
+                ]);
+                match (rate_hits, rate_reads) {
+                    (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                    _ => {
+                        // Fallback to cumulative when rates unavailable
+                        let all_hits =
+                            t.heap_blks_hit + t.idx_blks_hit + t.toast_blks_hit + t.tidx_blks_hit;
+                        let all_reads = t.heap_blks_read
+                            + t.idx_blks_read
+                            + t.toast_blks_read
+                            + t.tidx_blks_read;
+                        let total = all_hits + all_reads;
+                        if total > 0 {
+                            Some(all_hits as f64 * 100.0 / total as f64)
+                        } else {
+                            None
+                        }
+                    }
                 }
             };
 
-            // Computed: seq_pct from cumulative values
-            let seq_pct = {
-                let total_scans = t.seq_scan + t.idx_scan;
-                if total_scans > 0 {
-                    Some(t.seq_scan as f64 * 100.0 / total_scans as f64)
-                } else {
-                    None
+            // Computed: seq_pct from rates (falls back to cumulative if no rates)
+            let seq_scan_s = r.and_then(|r| r.seq_scan_s);
+            let idx_scan_s = r.and_then(|r| r.idx_scan_s);
+            let seq_pct = match (seq_scan_s, idx_scan_s) {
+                (Some(ss), Some(is)) if ss + is > 0.0 => Some(ss * 100.0 / (ss + is)),
+                _ => {
+                    let total_scans = t.seq_scan + t.idx_scan;
+                    if total_scans > 0 {
+                        Some(t.seq_scan as f64 * 100.0 / total_scans as f64)
+                    } else {
+                        None
+                    }
                 }
             };
 
@@ -1323,9 +1360,9 @@ fn extract_pgt(
                 size_bytes: t.size_bytes,
                 last_autovacuum: t.last_autovacuum,
                 last_autoanalyze: t.last_autoanalyze,
-                seq_scan_s: r.and_then(|r| r.seq_scan_s),
+                seq_scan_s,
                 seq_tup_read_s,
-                idx_scan_s: r.and_then(|r| r.idx_scan_s),
+                idx_scan_s,
                 idx_tup_fetch_s,
                 n_tup_ins_s: r.and_then(|r| r.n_tup_ins_s),
                 n_tup_upd_s: r.and_then(|r| r.n_tup_upd_s),
@@ -1392,13 +1429,16 @@ fn extract_pgi(
             let idx_blks_read_s = r.and_then(|r| r.idx_blks_read_s);
             let idx_blks_hit_s = r.and_then(|r| r.idx_blks_hit_s);
 
-            // Computed: io_hit_pct from cumulative values
-            let io_hit_pct = {
-                let total = i.idx_blks_hit + i.idx_blks_read;
-                if total > 0 {
-                    Some(i.idx_blks_hit as f64 * 100.0 / total as f64)
-                } else {
-                    None
+            // Computed: io_hit_pct from rates (falls back to cumulative if no rates)
+            let io_hit_pct = match (idx_blks_hit_s, idx_blks_read_s) {
+                (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                _ => {
+                    let total = i.idx_blks_hit + i.idx_blks_read;
+                    if total > 0 {
+                        Some(i.idx_blks_hit as f64 * 100.0 / total as f64)
+                    } else {
+                        None
+                    }
                 }
             };
 
