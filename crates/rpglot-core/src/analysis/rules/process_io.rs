@@ -120,16 +120,32 @@ impl AnalysisRule for ProcessIoHogRule {
         let write_mb_s = top.write_bytes_s / 1_048_576.0;
         let total_mb_s = total_io / 1_048_576.0;
 
-        let proc_name = ctx
-            .interner
-            .resolve(top.name_hash)
-            .unwrap_or("?")
-            .to_owned();
+        // Enrich with pg_stat_activity query if PID is a PG backend
+        let pg_session = find_block(ctx.snapshot, |b| match b {
+            DataBlock::PgStatActivity(v) => Some(v.as_slice()),
+            _ => None,
+        })
+        .and_then(|sessions| sessions.iter().find(|s| s.pid == top.pid as i32));
 
-        let title = format!(
-            "I/O hog: {proc_name} (PID {}) — {mb_s:.1} MB/s ({pct}% of total)",
-            top.pid,
-        );
+        let label = if let Some(session) = pg_session {
+            let query: String = ctx
+                .interner
+                .resolve(session.query_hash)
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect();
+            if query.is_empty() {
+                format!("PID {}", top.pid)
+            } else {
+                format!("[PG] {} (PID {})", query, top.pid)
+            }
+        } else {
+            let proc_name = ctx.interner.resolve(top.name_hash).unwrap_or("?");
+            format!("{proc_name} (PID {})", top.pid)
+        };
+
+        let title = format!("I/O hog: {label} — {mb_s:.1} MB/s ({pct}% of total)");
 
         let mut detail_str = format!(
             "Read: {read_mb_s:.1} MB/s, Write: {write_mb_s:.1} MB/s. Total system I/O: {total_mb_s:.1} MB/s",
