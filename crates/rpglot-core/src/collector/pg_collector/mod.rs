@@ -31,6 +31,7 @@ mod tables;
 
 use postgres::{Client, NoTls};
 use std::collections::HashSet;
+use std::env;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
@@ -111,15 +112,15 @@ impl PostgresCollector {
     ///
     /// Uses $USER as default if PGUSER is not set.
     pub fn from_env() -> Result<Self, PgCollectError> {
-        let user = std::env::var("PGUSER")
-            .or_else(|_| std::env::var("USER"))
+        let user = env::var("PGUSER")
+            .or_else(|_| env::var("USER"))
             .map_err(|_| PgCollectError::EnvNotSet("PGUSER or USER".to_string()))?;
 
-        let host = std::env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = std::env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
-        let password = std::env::var("PGPASSWORD").unwrap_or_default();
-        let explicit_database = std::env::var("PGDATABASE").is_ok();
-        let database = std::env::var("PGDATABASE").unwrap_or_else(|_| user.clone());
+        let host = env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
+        let password = env::var("PGPASSWORD").unwrap_or_default();
+        let explicit_database = env::var("PGDATABASE").is_ok();
+        let database = env::var("PGDATABASE").unwrap_or_else(|_| user.clone());
 
         let connection_string = if password.is_empty() {
             format!(

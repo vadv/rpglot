@@ -1,6 +1,8 @@
 //! PostgreSQL log error detail popup widget.
 //! Shows detailed information about a selected error pattern.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::Line;
@@ -92,8 +94,8 @@ pub fn render_pge_detail(
     push_help(&mut lines, show_help, HELP, "Count");
 
     let last_seen = {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
         let ago = now - acc.last_seen;

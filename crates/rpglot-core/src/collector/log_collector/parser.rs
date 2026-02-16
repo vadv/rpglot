@@ -4,6 +4,8 @@
 //! Parses ERROR/FATAL/PANIC severity lines and selected LOG-level
 //! operational events (checkpoints, autovacuum).
 
+use std::mem;
+
 use crate::storage::model::PgLogSeverity;
 
 /// Kind of parsed log event.
@@ -600,7 +602,7 @@ fn split_csv_line(line: &str) -> Vec<String> {
         } else if c == '"' {
             in_quotes = true;
         } else if c == ',' {
-            fields.push(std::mem::take(&mut current));
+            fields.push(mem::take(&mut current));
         } else {
             current.push(c);
         }

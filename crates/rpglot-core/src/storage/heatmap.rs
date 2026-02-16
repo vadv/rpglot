@@ -11,6 +11,7 @@
 //! 4-byte magic `b"HM01"` followed by 12-byte little-endian entries.
 
 use std::path::{Path, PathBuf};
+use std::{fs, io};
 
 use serde::Serialize;
 use xxhash_rust::xxh3::xxh3_64;
@@ -75,7 +76,7 @@ pub fn heatmap_path(chunk_path: &Path) -> PathBuf {
 
 /// Writes heatmap entries to a `.heatmap` sidecar file.
 /// Format: 4-byte magic `b"HM01"` + 12-byte little-endian entries.
-pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> std::io::Result<()> {
+pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
     let mut buf = Vec::with_capacity(4 + entries.len() * 12);
     buf.extend_from_slice(HEATMAP_MAGIC);
     for e in entries {
@@ -87,20 +88,20 @@ pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> std::io::Result<(
         buf.push(e.checkpoint_count);
         buf.push(e.autovacuum_count);
     }
-    std::fs::write(path, buf)
+    fs::write(path, buf)
 }
 
 /// Reads heatmap entries from a `.heatmap` sidecar file.
-pub fn read_heatmap(path: &Path) -> std::io::Result<Vec<HeatmapEntry>> {
-    let data = std::fs::read(path)?;
+pub fn read_heatmap(path: &Path) -> io::Result<Vec<HeatmapEntry>> {
+    let data = fs::read(path)?;
 
     if data.len() < 4 || data[0..4] != *HEATMAP_MAGIC {
-        return Err(std::io::Error::other("invalid heatmap file magic"));
+        return Err(io::Error::other("invalid heatmap file magic"));
     }
 
     let payload = &data[4..];
     if payload.len() % 12 != 0 {
-        return Err(std::io::Error::other("invalid heatmap file size"));
+        return Err(io::Error::other("invalid heatmap file size"));
     }
     let count = payload.len() / 12;
     let mut entries = Vec::with_capacity(count);

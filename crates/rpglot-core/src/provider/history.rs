@@ -7,6 +7,7 @@
 
 use std::any::Any;
 use std::collections::HashSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use tracing::warn;
@@ -235,7 +236,7 @@ impl HistoryProvider {
         let mut chunk_paths: Vec<PathBuf> = Vec::new();
 
         // Collect .zst file paths
-        let entries = std::fs::read_dir(storage_path)
+        let entries = fs::read_dir(storage_path)
             .map_err(|e| ProviderError::Io(format!("Failed to read directory: {}", e)))?;
 
         for entry in entries {
@@ -576,7 +577,7 @@ impl HistoryProvider {
 
         // Re-scan chunk files
         let mut chunk_paths: Vec<PathBuf> = Vec::new();
-        let entries = std::fs::read_dir(storage_path)
+        let entries = fs::read_dir(storage_path)
             .map_err(|e| ProviderError::Io(format!("Failed to read directory: {}", e)))?;
 
         for entry in entries.flatten() {

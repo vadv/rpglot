@@ -17,16 +17,19 @@ fn release_memory_to_os() {
         // Purge all arenas (not just arena 0) for more aggressive memory release
         tikv_jemalloc_sys::mallctl(
             c"arena.0.purge".as_ptr().cast(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
             0,
         );
     }
 }
 
+use std::env;
+use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 use std::time::Duration;
 
 use chrono::{Timelike, Utc};
@@ -245,8 +248,8 @@ fn main() {
 
     // Enable PostgreSQL collector if requested
     if args.postgres {
-        let pg_host = std::env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
-        let pg_port = std::env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
+        let pg_host = env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
+        let pg_port = env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
 
         match PostgresCollector::from_env() {
             Ok(mut pg_collector) => {
@@ -397,7 +400,7 @@ fn main() {
         let mut remaining = interval;
         while remaining > Duration::ZERO && running.load(Ordering::SeqCst) {
             let sleep_time = remaining.min(sleep_interval);
-            std::thread::sleep(sleep_time);
+            thread::sleep(sleep_time);
             remaining = remaining.saturating_sub(sleep_time);
         }
     }

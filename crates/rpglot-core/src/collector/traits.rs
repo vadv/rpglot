@@ -3,6 +3,7 @@
 //! The `FileSystem` trait allows the collector to work with both real `/proc`
 //! filesystem on Linux and mock implementations for testing on macOS or in CI.
 
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -54,7 +55,7 @@ impl RealFs {
 
 impl FileSystem for RealFs {
     fn read_to_string(&self, path: &Path) -> io::Result<String> {
-        std::fs::read_to_string(path)
+        fs::read_to_string(path)
     }
 
     fn exists(&self, path: &Path) -> bool {
@@ -62,7 +63,7 @@ impl FileSystem for RealFs {
     }
 
     fn read_dir(&self, path: &Path) -> io::Result<Vec<PathBuf>> {
-        let entries = std::fs::read_dir(path)?;
+        let entries = fs::read_dir(path)?;
         let mut paths = Vec::new();
         for entry in entries {
             paths.push(entry?.path());

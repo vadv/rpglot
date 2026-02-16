@@ -2,8 +2,8 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::{DataBlock, Snapshot};
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use std::collections::HashSet;
-use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
@@ -63,13 +63,13 @@ pub struct StorageManager {
 impl StorageManager {
     pub fn new(base_path: impl Into<PathBuf>) -> Self {
         let base_path = base_path.into();
-        std::fs::create_dir_all(&base_path).unwrap();
+        fs::create_dir_all(&base_path).unwrap();
 
         // Cleanup old .tmp files
-        if let Ok(entries) = std::fs::read_dir(&base_path) {
+        if let Ok(entries) = fs::read_dir(&base_path) {
             for entry in entries.flatten() {
                 if entry.path().extension().is_some_and(|ext| ext == "tmp") {
-                    let _ = std::fs::remove_file(entry.path());
+                    let _ = fs::remove_file(entry.path());
                 }
             }
         }
@@ -104,10 +104,10 @@ impl StorageManager {
         // Migration: remove old strings.bin if exists (no longer needed)
         let strings_path = self.base_path.join("strings.bin");
         if strings_path.exists() {
-            let _ = std::fs::remove_file(&strings_path);
+            let _ = fs::remove_file(&strings_path);
         }
 
-        let data = match std::fs::read(&wal_path) {
+        let data = match fs::read(&wal_path) {
             Ok(d) if !d.is_empty() => d,
             _ => return,
         };
@@ -392,7 +392,7 @@ impl StorageManager {
     }
 
     /// Flushes the current chunk using current time for filename.
-    pub fn flush_chunk(&mut self) -> std::io::Result<()> {
+    pub fn flush_chunk(&mut self) -> io::Result<()> {
         let now = Utc::now();
         let date = self.current_date.unwrap_or_else(|| now.date_naive());
         let hour = self.current_hour.unwrap_or_else(|| now.hour());
@@ -402,15 +402,15 @@ impl StorageManager {
     /// Flushes WAL to a compressed chunk file in the new per-snapshot zstd frame format.
     /// Each snapshot is stored as an independent zstd frame for O(1) random access.
     /// File naming format: rpglot_YYYY-MM-DD_HH.zst
-    fn flush_chunk_with_time(&mut self, date: NaiveDate, hour: u32) -> std::io::Result<()> {
+    fn flush_chunk_with_time(&mut self, date: NaiveDate, hour: u32) -> io::Result<()> {
         if self.wal_entries_count == 0 {
-            return Err(std::io::Error::other("Empty WAL"));
+            return Err(io::Error::other("Empty WAL"));
         }
 
         // Read all snapshots from WAL
         let (snapshots, interner) = self.load_wal_snapshots_with_interner()?;
         if snapshots.is_empty() {
-            return Err(std::io::Error::other("No snapshots in WAL"));
+            return Err(io::Error::other("No snapshots in WAL"));
         }
 
         // Build optimized interner with only hashes used across all snapshots
@@ -458,18 +458,18 @@ impl StorageManager {
     }
 
     /// Loads unflushed snapshots and their interners from WAL file.
-    pub fn load_wal_snapshots(&self) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
+    pub fn load_wal_snapshots(&self) -> io::Result<(Vec<Snapshot>, StringInterner)> {
         self.load_wal_snapshots_with_interner()
     }
 
     /// Loads unflushed snapshots and their interners from WAL file (internal).
     /// Reads CRC32-framed entries: [u32 length][u32 crc32][payload].
-    fn load_wal_snapshots_with_interner(&self) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
+    fn load_wal_snapshots_with_interner(&self) -> io::Result<(Vec<Snapshot>, StringInterner)> {
         let wal_path = self.base_path.join("wal.log");
         let mut snapshots = Vec::new();
         let mut merged_interner = StringInterner::new();
 
-        if let Ok(data) = std::fs::read(&wal_path)
+        if let Ok(data) = fs::read(&wal_path)
             && !data.is_empty()
         {
             let mut pos = 0usize;
@@ -515,10 +515,10 @@ impl StorageManager {
     /// for each entry. Frame length includes the 8-byte header.
     /// Snapshots are deserialized to extract timestamps but immediately
     /// dropped — peak RAM = one entry at a time.
-    pub fn scan_wal_metadata(wal_path: &Path) -> std::io::Result<Vec<(u64, u64, i64)>> {
-        let data = match std::fs::read(wal_path) {
+    pub fn scan_wal_metadata(wal_path: &Path) -> io::Result<Vec<(u64, u64, i64)>> {
+        let data = match fs::read(wal_path) {
             Ok(d) => d,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 return Ok(Vec::new());
             }
             Err(e) => return Err(e),
@@ -558,11 +558,7 @@ impl StorageManager {
 
     /// Loads a single snapshot from WAL at the given byte range (frame_offset, frame_length).
     /// frame_length includes the 8-byte frame header.
-    pub fn load_wal_snapshot_at(
-        wal_path: &Path,
-        offset: u64,
-        length: u64,
-    ) -> std::io::Result<Snapshot> {
+    pub fn load_wal_snapshot_at(wal_path: &Path, offset: u64, length: u64) -> io::Result<Snapshot> {
         let (snapshot, _interner) =
             Self::load_wal_snapshot_with_interner(wal_path, offset, length)?;
         Ok(snapshot)
@@ -575,16 +571,15 @@ impl StorageManager {
         wal_path: &Path,
         offset: u64,
         length: u64,
-    ) -> std::io::Result<(Snapshot, StringInterner)> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(wal_path)?;
+    ) -> io::Result<(Snapshot, StringInterner)> {
+        let mut file = File::open(wal_path)?;
         file.seek(SeekFrom::Start(offset))?;
         let mut buf = vec![0u8; length as usize];
         file.read_exact(&mut buf)?;
 
         Self::read_wal_frame(&buf, 0)
             .map(|(entry, _)| (entry.snapshot, entry.interner))
-            .ok_or_else(|| std::io::Error::other("WAL frame CRC check or deserialization failed"))
+            .ok_or_else(|| io::Error::other("WAL frame CRC check or deserialization failed"))
     }
 
     /// Loads all chunks from the storage directory and returns reconstructed snapshots
@@ -594,11 +589,9 @@ impl StorageManager {
     /// Snapshots are returned in chronological order (oldest first).
     ///
     /// Reads v2 format (per-snapshot zstd frames). Legacy format files are skipped.
-    pub fn load_all_snapshots_with_interner(
-        &self,
-    ) -> std::io::Result<(Vec<Snapshot>, StringInterner)> {
+    pub fn load_all_snapshots_with_interner(&self) -> io::Result<(Vec<Snapshot>, StringInterner)> {
         let mut chunk_paths: Vec<PathBuf> = Vec::new();
-        for entry in std::fs::read_dir(&self.base_path)? {
+        for entry in fs::read_dir(&self.base_path)? {
             let entry = entry?;
             let path = entry.path();
             if path.extension().is_some_and(|ext| ext == "zst") {
@@ -641,13 +634,13 @@ impl StorageManager {
     /// Removes files based on two criteria:
     /// 1. Files older than `max_retention_days`
     /// 2. Oldest files if total size exceeds `max_total_size`
-    pub fn rotate(&self, config: &RotationConfig) -> std::io::Result<RotationResult> {
+    pub fn rotate(&self, config: &RotationConfig) -> io::Result<RotationResult> {
         let mut result = RotationResult::default();
 
         // Collect all .zst files with their metadata
         let mut files: Vec<FileInfo> = Vec::new();
 
-        for entry in std::fs::read_dir(&self.base_path)? {
+        for entry in fs::read_dir(&self.base_path)? {
             let entry = entry?;
             let path = entry.path();
 
@@ -676,8 +669,8 @@ impl StorageManager {
             if let Some(file_date) = file.date
                 && file_date < retention_limit
             {
-                std::fs::remove_file(&file.path)?;
-                let _ = std::fs::remove_file(crate::storage::heatmap::heatmap_path(&file.path));
+                fs::remove_file(&file.path)?;
+                let _ = fs::remove_file(crate::storage::heatmap::heatmap_path(&file.path));
                 result.files_removed_by_age += 1;
                 result.bytes_freed += file.size;
                 continue;
@@ -691,8 +684,8 @@ impl StorageManager {
         // Remove oldest files if total size exceeds limit
         while total_size > config.max_total_size && !remaining_files.is_empty() {
             let file = remaining_files.remove(0);
-            std::fs::remove_file(&file.path)?;
-            let _ = std::fs::remove_file(crate::storage::heatmap::heatmap_path(&file.path));
+            fs::remove_file(&file.path)?;
+            let _ = fs::remove_file(crate::storage::heatmap::heatmap_path(&file.path));
             result.files_removed_by_size += 1;
             result.bytes_freed += file.size;
             total_size -= file.size;
@@ -784,7 +777,7 @@ mod tests {
         manager.add_snapshot(s2, &StringInterner::new());
 
         // At this point it should have flushed to a v2 chunk file
-        let entries: Vec<_> = std::fs::read_dir(dir.path())
+        let entries: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "zst"))
@@ -867,7 +860,7 @@ mod tests {
         manager.add_snapshot(s1, &StringInterner::new());
         manager.add_snapshot(s2, &StringInterner::new());
 
-        let entries: Vec<_> = std::fs::read_dir(dir.path())
+        let entries: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "zst"))
@@ -935,7 +928,7 @@ mod tests {
         manager.add_snapshot(s1, &StringInterner::new());
         manager.add_snapshot(s2, &StringInterner::new());
 
-        let entries: Vec<_> = std::fs::read_dir(dir.path())
+        let entries: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "zst"))
@@ -1046,7 +1039,7 @@ mod tests {
         manager.flush_chunk().unwrap();
 
         // Check that file was created with the new naming format
-        let entries: Vec<_> = std::fs::read_dir(dir.path())
+        let entries: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -1166,7 +1159,7 @@ mod tests {
         manager.add_snapshot(s3, &StringInterner::new());
 
         // Verify: should have 1 chunk file + WAL with 1 snapshot
-        let chunk_files: Vec<_> = std::fs::read_dir(dir.path())
+        let chunk_files: Vec<_> = fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "zst"))

@@ -1,5 +1,7 @@
 //! Formatting helpers for process table cells.
 
+use std::time::SystemTime;
+
 /// Format CPU ticks as human-readable time.
 pub(crate) fn format_ticks(ticks: u64) -> String {
     // Assuming 100 ticks per second (standard Linux)
@@ -94,7 +96,7 @@ pub(crate) fn format_start_time(btime: u32) -> String {
     }
 
     let start = UNIX_EPOCH + Duration::from_secs(btime as u64);
-    let now = std::time::SystemTime::now();
+    let now = SystemTime::now();
 
     if let Ok(duration) = now.duration_since(start) {
         let secs = duration.as_secs();

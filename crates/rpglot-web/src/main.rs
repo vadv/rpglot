@@ -12,9 +12,9 @@ fn release_memory_to_os() {
     unsafe {
         tikv_jemalloc_sys::mallctl(
             c"arena.0.purge".as_ptr().cast(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
+            ptr::null_mut(),
             0,
         );
     }
@@ -23,11 +23,19 @@ fn release_memory_to_os() {
 #[cfg(target_env = "msvc")]
 fn release_memory_to_os() {}
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::convert::Infallible;
+use std::fs;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::process;
+use std::ptr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::{Context, Poll};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use axum::extract::State;
@@ -38,6 +46,7 @@ use axum::routing::get;
 use clap::Parser;
 use serde::Deserialize;
 use std::sync::Mutex;
+
 use tokio::sync::broadcast;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
@@ -226,7 +235,7 @@ async fn async_main(args: Args) {
             Err(e) => {
                 error!(path = %history_path.display(), error = %e,
                     "failed to open history data (no snapshots yet? wrong format?)");
-                std::process::exit(1);
+                process::exit(1);
             }
         };
         release_memory_to_os(); // free chunk decompression buffers from build_index
@@ -313,7 +322,7 @@ async fn async_main(args: Args) {
             .sso_proxy_key_file
             .as_ref()
             .expect("--sso-proxy-key-file required when --sso-proxy-url is set");
-        let pem = std::fs::read(key_path).expect("failed to read SSO public key file");
+        let pem = fs::read(key_path).expect("failed to read SSO public key file");
         let decoding_key =
             jsonwebtoken::DecodingKey::from_rsa_pem(&pem).expect("invalid PEM public key");
 
@@ -461,7 +470,7 @@ async fn tick_loop(
 
         // Run blocking provider.advance() off the async runtime
         let state_clone = state.clone();
-        let t0 = std::time::Instant::now();
+        let t0 = Instant::now();
         let snapshot = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
             advance_and_convert(&mut inner);
@@ -503,7 +512,7 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
 
         let state_clone = state.clone();
         let path_clone = path.clone();
-        let t0 = std::time::Instant::now();
+        let t0 = Instant::now();
         let result = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
             let hp = inner
@@ -521,8 +530,8 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
                 inner.history_start = Some(start);
                 inner.history_end = Some(end);
                 // Invalidate today's heatmap cache (new data may have been added)
-                let today_days = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
+                let today_days = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_secs() as i64
                     / 86400;
@@ -1294,8 +1303,6 @@ async fn handle_analysis(
 
 /// Build a per-date index from HistoryProvider timestamps (no snapshot loading).
 fn compute_dates_index(hp: &HistoryProvider) -> Vec<DateInfo> {
-    use std::collections::BTreeMap;
-
     struct DateAcc {
         count: usize,
         first_timestamp: i64,
@@ -1392,8 +1399,8 @@ async fn handle_heatmap(
             return Err(StatusCode::NOT_FOUND);
         }
         // Use cached data for past dates (they are immutable)
-        let today_days = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
+        let today_days = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64
             / 86400;
@@ -1432,23 +1439,20 @@ async fn handle_heatmap(
     Ok(Json(buckets))
 }
 
-static SSE_CONNECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 struct SseGuard;
 
 impl Drop for SseGuard {
     fn drop(&mut self) {
-        let active = SSE_CONNECTIONS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
+        let active = SSE_CONNECTIONS.fetch_sub(1, Ordering::Relaxed) - 1;
         info!(active_connections = active, "SSE client disconnected");
     }
 }
 
 async fn handle_stream(
     State(state_tuple): AppState,
-) -> Result<
-    Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>>,
-    StatusCode,
-> {
+) -> Result<Sse<impl futures_core::Stream<Item = Result<Event, Infallible>>>, StatusCode> {
     let (state, tx) = state_tuple;
     {
         let inner = state.lock().unwrap();
@@ -1457,7 +1461,7 @@ async fn handle_stream(
         }
     }
 
-    let active = SSE_CONNECTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let active = SSE_CONNECTIONS.fetch_add(1, Ordering::Relaxed) + 1;
     info!(active_connections = active, "SSE client connected");
 
     let mut rx = tx.subscribe();
@@ -1624,14 +1628,9 @@ where
 {
     type Response = axum::response::Response;
     type Error = S::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
@@ -1723,14 +1722,9 @@ where
 {
     type Response = axum::response::Response;
     type Error = S::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>,
-    >;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
     }
 
@@ -1747,7 +1741,7 @@ where
             .get::<AuthUser>()
             .map(|u| u.0.clone())
             .unwrap_or_else(|| "-".to_owned());
-        let t0 = std::time::Instant::now();
+        let t0 = Instant::now();
 
         let mut inner = self.inner.clone();
         Box::pin(async move {

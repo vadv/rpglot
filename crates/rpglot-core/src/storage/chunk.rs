@@ -40,6 +40,7 @@
 
 use crate::storage::interner::StringInterner;
 use crate::storage::model::Snapshot;
+use std::fs;
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::warn;
@@ -66,7 +67,7 @@ pub struct ChunkReader {
 impl ChunkReader {
     /// Opens a chunk file: reads header + index + dictionary (no snapshot decompression).
     pub fn open(path: &Path) -> io::Result<Self> {
-        let data = std::fs::read(path)?;
+        let data = fs::read(path)?;
 
         if data.len() < HEADER_SIZE {
             return Err(io::Error::other("file too small for header"));
@@ -221,7 +222,7 @@ pub fn write_chunk(
     }
 
     let tmp_path = path.with_extension("tmp");
-    let mut file = std::fs::File::create(&tmp_path)?;
+    let mut file = fs::File::create(&tmp_path)?;
 
     let snapshot_count = snapshots.len() as u16;
 
@@ -298,7 +299,7 @@ pub fn write_chunk(
     drop(file);
 
     // Atomic rename
-    std::fs::rename(tmp_path, path)?;
+    fs::rename(tmp_path, path)?;
 
     Ok(())
 }

@@ -5,6 +5,7 @@
 
 use crate::collector::traits::FileSystem;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -105,7 +106,7 @@ fn load_directory_recursive(
 ) -> io::Result<()> {
     fs.add_dir(virtual_path);
 
-    for entry in std::fs::read_dir(real_path)? {
+    for entry in fs::read_dir(real_path)? {
         let entry = entry?;
         let file_type = entry.file_type()?;
         let name = entry.file_name();
@@ -116,7 +117,7 @@ fn load_directory_recursive(
             load_directory_recursive(fs, &real_child, &virtual_child)?;
         } else if file_type.is_file() {
             // Try to read as string, skip binary files
-            if let Ok(content) = std::fs::read_to_string(&real_child) {
+            if let Ok(content) = fs::read_to_string(&real_child) {
                 fs.add_file(&virtual_child, content);
             }
         }

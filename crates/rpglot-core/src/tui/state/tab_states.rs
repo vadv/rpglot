@@ -7,6 +7,7 @@ use crate::storage::model::{
 };
 use ratatui::widgets::TableState as RatatuiTableState;
 use std::collections::HashMap;
+use std::mem;
 
 use super::{
     PgActivityViewMode, PgIndexesRates, PgIndexesViewMode, PgStatementsRates, PgStatementsViewMode,
@@ -475,14 +476,14 @@ impl PgStatementsTabState {
         {
             self.rates.clear();
             self.prev_sample_ts = Some(now_ts);
-            self.delta_base = std::mem::take(&mut self.prev_sample);
+            self.delta_base = mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
             return;
         }
 
         let Some(prev_ts) = self.prev_sample_ts else {
             self.prev_sample_ts = Some(now_ts);
-            self.delta_base = std::mem::take(&mut self.prev_sample);
+            self.delta_base = mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
             self.rates.clear();
             return;
@@ -554,7 +555,7 @@ impl PgStatementsTabState {
 
         self.rates = rates;
         self.prev_sample_ts = Some(now_ts);
-        self.delta_base = std::mem::take(&mut self.prev_sample);
+        self.delta_base = mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
         self.dt_secs = Some(dt);
     }
@@ -840,7 +841,7 @@ impl PgTablesTabState {
                 // Time went backwards — reset baseline
                 self.rates.clear();
                 self.prev_sample_ts = Some(now_ts);
-                self.delta_base = std::mem::take(&mut self.prev_sample);
+                self.delta_base = mem::take(&mut self.prev_sample);
                 self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
                 return;
             }
@@ -852,7 +853,7 @@ impl PgTablesTabState {
         let Some(prev_ts) = self.prev_sample_ts else {
             // First sample — just store baseline
             self.prev_sample_ts = Some(now_ts);
-            self.delta_base = std::mem::take(&mut self.prev_sample);
+            self.delta_base = mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
             self.rates.clear();
             return;
@@ -897,7 +898,7 @@ impl PgTablesTabState {
 
         self.rates = rates;
         self.prev_sample_ts = Some(now_ts);
-        self.delta_base = std::mem::take(&mut self.prev_sample);
+        self.delta_base = mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|t| (t.relid, t.clone())).collect();
         self.dt_secs = Some(dt);
     }
@@ -1057,7 +1058,7 @@ impl PgIndexesTabState {
             if now_ts < prev_ts {
                 self.rates.clear();
                 self.prev_sample_ts = Some(now_ts);
-                self.delta_base = std::mem::take(&mut self.prev_sample);
+                self.delta_base = mem::take(&mut self.prev_sample);
                 self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
                 return;
             }
@@ -1068,7 +1069,7 @@ impl PgIndexesTabState {
 
         let Some(prev_ts) = self.prev_sample_ts else {
             self.prev_sample_ts = Some(now_ts);
-            self.delta_base = std::mem::take(&mut self.prev_sample);
+            self.delta_base = mem::take(&mut self.prev_sample);
             self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
             self.rates.clear();
             return;
@@ -1104,7 +1105,7 @@ impl PgIndexesTabState {
 
         self.rates = rates;
         self.prev_sample_ts = Some(now_ts);
-        self.delta_base = std::mem::take(&mut self.prev_sample);
+        self.delta_base = mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|i| (i.indexrelid, i.clone())).collect();
         self.dt_secs = Some(dt);
     }

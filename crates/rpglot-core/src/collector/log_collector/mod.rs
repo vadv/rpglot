@@ -9,6 +9,7 @@ pub mod parser;
 pub mod tailer;
 
 use std::collections::HashMap;
+use std::mem;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -250,7 +251,7 @@ impl LogCollector {
         let errors = self.drain_pending(interner);
         let checkpoint_count = self.pending_checkpoints;
         let autovacuum_count = self.pending_autovacuums;
-        let events = std::mem::take(&mut self.pending_events);
+        let events = mem::take(&mut self.pending_events);
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
         self.last_event_idx = None;

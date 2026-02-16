@@ -6,6 +6,7 @@ use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, Snapshot};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
+use std::mem;
 
 // ============================================================
 // Core types
@@ -599,7 +600,7 @@ fn correlate_incidents(incidents: Vec<Incident>, start_ts: i64, end_ts: i64) -> 
 }
 
 fn flush_group(incidents: &mut Vec<Incident>, id: u32, persistent: bool) -> IncidentGroup {
-    let mut taken = std::mem::take(incidents);
+    let mut taken = mem::take(incidents);
     // Sort within group: severity desc, peak_value desc
     taken.sort_by(|a, b| {
         b.severity.cmp(&a.severity).then(

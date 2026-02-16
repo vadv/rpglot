@@ -19,6 +19,7 @@ use tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
+use std::process;
 use std::thread;
 use std::time::Duration;
 
@@ -84,12 +85,12 @@ fn main() {
         eprintln!("Usage: rpglot -r           # view historical data (default: /var/log/rpglot)");
         eprintln!("       rpglot -r ./data    # view historical data from custom path");
         eprintln!("       rpglot [INTERVAL]   # live monitoring (default: 1s)");
-        std::process::exit(1);
+        process::exit(1);
     }
 
     if args.begin.is_some() && args.history.is_none() {
         eprintln!("Error: --begin/-b can only be used with history mode (-r)");
-        std::process::exit(1);
+        process::exit(1);
     }
 
     // Parse begin time if provided
@@ -98,7 +99,7 @@ fn main() {
             Ok(ts) => Some(ts),
             Err(e) => {
                 eprintln!("Error: {}", e);
-                std::process::exit(1);
+                process::exit(1);
             }
         }
     } else {
@@ -124,7 +125,7 @@ fn main() {
             Ok(p) => Box::new(p),
             Err(e) => {
                 eprintln!("Error loading history from '{}': {}", path, e);
-                std::process::exit(1);
+                process::exit(1);
             }
         }
     } else {
@@ -177,7 +178,7 @@ fn main() {
 
     if let Err(e) = app.run(tick_rate) {
         eprintln!("Error running TUI: {}", e);
-        std::process::exit(1);
+        process::exit(1);
     }
 }
 

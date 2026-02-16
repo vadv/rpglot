@@ -3,7 +3,7 @@
 //! Supports log rotation detection via inode tracking (Linux)
 //! and file size comparison.
 
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -27,7 +27,7 @@ impl FileTailer {
     ///
     /// Returns `Err` if the file does not exist or cannot be stat'd.
     pub fn new(path: PathBuf) -> io::Result<Self> {
-        let metadata = std::fs::metadata(&path)?;
+        let metadata = fs::metadata(&path)?;
         let inode = get_inode(&metadata);
         let offset = metadata.len();
 
@@ -45,7 +45,7 @@ impl FileTailer {
     ///
     /// Returns at most `MAX_LINES_PER_READ` lines per call.
     pub fn read_new_lines(&mut self) -> io::Result<Vec<String>> {
-        let metadata = match std::fs::metadata(&self.path) {
+        let metadata = match fs::metadata(&self.path) {
             Ok(m) => m,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 // File gone (rotation in progress) — return empty, try next time
@@ -96,7 +96,7 @@ impl FileTailer {
             return Ok(());
         }
 
-        let metadata = std::fs::metadata(&new_path)?;
+        let metadata = fs::metadata(&new_path)?;
         self.inode = get_inode(&metadata);
         self.offset = 0; // Read new file from the start
         self.path = new_path;
