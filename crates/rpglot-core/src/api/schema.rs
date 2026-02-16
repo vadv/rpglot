@@ -615,7 +615,7 @@ fn generate_summary_schema() -> SummarySchema {
                         "Ckpt Write",
                         DataType::Number,
                         Some(Unit::Ms),
-                        None,
+                        Some(Format::Duration),
                     ),
                     field(
                         "buffers_backend_s",
