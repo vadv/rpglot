@@ -1,6 +1,16 @@
 use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
+use crate::storage::interner::StringInterner;
 use crate::storage::model::{DataBlock, PgStatUserTablesInfo};
+
+/// Format table name as "schema.table" (or just "table" if schema unresolved).
+fn qualified_name(interner: &StringInterner, schema_hash: u64, rel_hash: u64) -> String {
+    let rel = interner.resolve(rel_hash).unwrap_or("unknown");
+    match interner.resolve(schema_hash) {
+        Some(s) if s != "public" => format!("{s}.{rel}"),
+        _ => rel.to_string(),
+    }
+}
 
 // ============================================================
 // DeadTuplesHighRule
@@ -22,6 +32,7 @@ impl AnalysisRule for DeadTuplesHighRule {
         };
 
         let mut worst_pct: f64 = 0.0;
+        let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
 
         for t in tables {
@@ -32,6 +43,7 @@ impl AnalysisRule for DeadTuplesHighRule {
             let dead_pct = t.n_dead_tup as f64 * 100.0 / total as f64;
             if dead_pct > worst_pct {
                 worst_pct = dead_pct;
+                worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
             }
         }
@@ -46,7 +58,7 @@ impl AnalysisRule for DeadTuplesHighRule {
             Severity::Warning
         };
 
-        let name = ctx.interner.resolve(worst_name_hash).unwrap_or("unknown");
+        let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
@@ -80,6 +92,7 @@ impl AnalysisRule for SeqScanDominantRule {
         };
 
         let mut worst_pct: f64 = 0.0;
+        let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
 
         for t in tables {
@@ -94,6 +107,7 @@ impl AnalysisRule for SeqScanDominantRule {
             let seq_pct = t.seq_scan as f64 * 100.0 / total as f64;
             if seq_pct > worst_pct {
                 worst_pct = seq_pct;
+                worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
             }
         }
@@ -102,7 +116,7 @@ impl AnalysisRule for SeqScanDominantRule {
             return Vec::new();
         }
 
-        let name = ctx.interner.resolve(worst_name_hash).unwrap_or("unknown");
+        let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
@@ -160,8 +174,8 @@ impl AnalysisRule for HeapReadSpikeRule {
 
         // Find table with highest heap_blks_read rate (blocks/s from disk).
         let mut worst_rate = 0.0_f64;
+        let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
-        let mut worst_blks: i64 = 0;
 
         for t in tables {
             let Some(prev) = find_prev_table(prev_tables, t.relid) else {
@@ -182,8 +196,8 @@ impl AnalysisRule for HeapReadSpikeRule {
             let rate = delta as f64 / dt;
             if rate > worst_rate {
                 worst_rate = rate;
+                worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
-                worst_blks = delta;
             }
         }
 
@@ -192,8 +206,8 @@ impl AnalysisRule for HeapReadSpikeRule {
             return Vec::new();
         }
 
-        let name = ctx.interner.resolve(worst_name_hash).unwrap_or("unknown");
-        let mb = worst_blks as f64 * 8.0 / 1024.0; // blocks are 8 KiB
+        let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
+        let mb_per_s = worst_rate * 8.0 / 1024.0; // blocks are 8 KiB
 
         let severity = if worst_rate >= 500.0 {
             Severity::Critical
@@ -206,7 +220,7 @@ impl AnalysisRule for HeapReadSpikeRule {
             rule_id: "heap_read_spike",
             category: Category::PgTables,
             severity,
-            title: format!("Table {name}: {worst_rate:.0} blk/s disk reads ({mb:.1} MiB)"),
+            title: format!("Table {name}: {worst_rate:.0} blk/s disk reads ({mb_per_s:.1} MiB/s)"),
             detail: None,
             value: worst_rate,
         }]
@@ -248,8 +262,8 @@ impl AnalysisRule for TableWriteSpikeRule {
         };
 
         let mut worst_rate = 0.0_f64;
+        let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
-        let mut worst_ops: i64 = 0;
 
         for t in tables {
             let Some(prev) = find_prev_table(prev_tables, t.relid) else {
@@ -272,8 +286,8 @@ impl AnalysisRule for TableWriteSpikeRule {
             let rate = total as f64 / dt;
             if rate > worst_rate {
                 worst_rate = rate;
+                worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
-                worst_ops = total;
             }
         }
 
@@ -282,7 +296,7 @@ impl AnalysisRule for TableWriteSpikeRule {
             return Vec::new();
         }
 
-        let name = ctx.interner.resolve(worst_name_hash).unwrap_or("unknown");
+        let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
 
         let severity = if worst_rate >= 5000.0 {
             Severity::Critical
@@ -295,7 +309,7 @@ impl AnalysisRule for TableWriteSpikeRule {
             rule_id: "table_write_spike",
             category: Category::PgTables,
             severity,
-            title: format!("Table {name}: {worst_rate:.0} writes/s ({worst_ops} ops)"),
+            title: format!("Table {name}: {worst_rate:.0} writes/s"),
             detail: None,
             value: worst_rate,
         }]
@@ -338,6 +352,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
 
         // Compute delta hit ratio per table, find worst offender.
         let mut worst_ratio = 100.0_f64;
+        let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
 
         for t in tables {
@@ -356,6 +371,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
             let hit_ratio = hit_d as f64 * 100.0 / total as f64;
             if hit_ratio < worst_ratio {
                 worst_ratio = hit_ratio;
+                worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
             }
         }
@@ -365,7 +381,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
             return Vec::new();
         }
 
-        let name = ctx.interner.resolve(worst_name_hash).unwrap_or("unknown");
+        let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
 
         let severity = if worst_ratio < 50.0 {
             Severity::Critical
