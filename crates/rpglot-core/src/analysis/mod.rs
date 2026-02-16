@@ -400,14 +400,19 @@ fn sum_cpu_ticks(cpu: &crate::storage::model::SystemCpuInfo) -> u64 {
 // Merge anomalies into incidents
 // ============================================================
 
-fn merge_anomalies(mut anomalies: Vec<Anomaly>, gap_threshold: i64) -> Vec<Incident> {
+fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
     anomalies.sort_by(|a, b| a.rule_id.cmp(b.rule_id).then(a.timestamp.cmp(&b.timestamp)));
+
+    const BASE_GAP: i64 = 60;
+    const MAX_GAP: i64 = 300;
 
     let mut incidents: Vec<Incident> = Vec::new();
 
     for anomaly in anomalies {
         let should_merge = incidents.last().is_some_and(|last| {
-            last.rule_id == anomaly.rule_id && (anomaly.timestamp - last.last_ts) <= gap_threshold
+            let duration = last.last_ts - last.first_ts;
+            let adaptive_gap = (duration / 5).clamp(BASE_GAP, MAX_GAP);
+            last.rule_id == anomaly.rule_id && (anomaly.timestamp - last.last_ts) <= adaptive_gap
         });
 
         if should_merge {
@@ -517,7 +522,7 @@ impl Analyzer {
         }
 
         // Layer 2: merge
-        let incidents = merge_anomalies(anomalies, 30);
+        let incidents = merge_anomalies(anomalies);
 
         // Layer 3: advisors
         let mut recommendations = Vec::new();
