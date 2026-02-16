@@ -11,6 +11,7 @@ import {
   ShieldX,
   HelpCircle,
   HeartPulse,
+  Zap,
 } from "lucide-react";
 import {
   fetchTimeline,
@@ -486,6 +487,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         snapshot={snapshot}
         currentHour={hourRange?.hour}
         version={schema.version}
+        analyzing={analyzing}
+        onAnalyze={handleAnalyze}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -529,8 +532,6 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
           onPlayToggle={handlePlayToggle}
           liveFollow={liveFollow}
           onLiveToggle={handleLiveToggle}
-          analyzing={analyzing}
-          onAnalyze={handleAnalyze}
         />
       )}
       {analysisReport && (
@@ -765,6 +766,8 @@ function Header({
   snapshot,
   currentHour,
   version,
+  analyzing,
+  onAnalyze,
 }: {
   mode: string;
   timestamp?: number;
@@ -779,6 +782,8 @@ function Header({
   snapshot?: ApiSnapshot | null;
   currentHour?: number;
   version?: string;
+  analyzing?: boolean;
+  onAnalyze?: () => void;
 }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
@@ -876,6 +881,21 @@ function Header({
           </button>
         )}
         {snapshot && <HealthBadge snapshot={snapshot} />}
+        {onAnalyze && (
+          <button
+            onClick={onAnalyze}
+            disabled={analyzing}
+            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium transition-colors ${
+              analyzing
+                ? "bg-[var(--accent)] text-white animate-pulse-btn"
+                : "bg-[var(--accent-bg)] text-[var(--accent-text)] hover:brightness-110"
+            }`}
+            title="Analyze current hour for anomalies and recommendations"
+          >
+            <Zap size={10} />
+            {analyzing ? "Analyzing\u2026" : "Analyze"}
+          </button>
+        )}
       </div>
       <div className="flex items-center gap-3">
         {loading && (

@@ -33,8 +33,6 @@ interface TimelineProps {
   onPlayToggle?: () => void;
   liveFollow?: boolean;
   onLiveToggle?: () => void;
-  analyzing?: boolean;
-  onAnalyze?: () => void;
 }
 
 export function Timeline({
@@ -51,8 +49,6 @@ export function Timeline({
   onPlayToggle,
   liveFollow,
   onLiveToggle,
-  analyzing,
-  onAnalyze,
 }: TimelineProps) {
   const total = timeline.total_snapshots;
   if (total === 0) return null;
@@ -222,22 +218,6 @@ export function Timeline({
           }
         >
           {liveFollow ? "\u25CF Live" : "\u25C9 Live"}
-        </button>
-      )}
-
-      {/* Analyze button */}
-      {onAnalyze && (
-        <button
-          onClick={onAnalyze}
-          disabled={analyzing}
-          className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
-            analyzing
-              ? "bg-[var(--accent)] text-white animate-pulse-btn"
-              : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
-          }`}
-          title="Analyze current hour for anomalies"
-        >
-          {analyzing ? "Analyzing\u2026" : "\u26A1 Analyze"}
         </button>
       )}
     </div>
