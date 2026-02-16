@@ -128,6 +128,10 @@ impl AnalysisRule for ProcessIoHogRule {
         .and_then(|sessions| sessions.iter().find(|s| s.pid == top.pid as i32));
 
         let label = if let Some(session) = pg_session {
+            let backend_type = ctx
+                .interner
+                .resolve(session.backend_type_hash)
+                .unwrap_or("");
             let query: String = ctx
                 .interner
                 .resolve(session.query_hash)
@@ -135,10 +139,12 @@ impl AnalysisRule for ProcessIoHogRule {
                 .chars()
                 .take(80)
                 .collect();
-            if query.is_empty() {
-                format!("PID {}", top.pid)
+            if !query.is_empty() {
+                format!("[PG {backend_type}] {query} (PID {})", top.pid)
+            } else if !backend_type.is_empty() {
+                format!("[PG {backend_type}] (PID {})", top.pid)
             } else {
-                format!("[PG] {} (PID {})", query, top.pid)
+                format!("[PG] (PID {})", top.pid)
             }
         } else {
             let proc_name = ctx.interner.resolve(top.name_hash).unwrap_or("?");
