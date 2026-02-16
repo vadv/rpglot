@@ -670,8 +670,9 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     docUrl: PG_STAT_USER_TABLES,
   },
   disk_blks_read_s: {
-    label: "DISK/s",
-    description: "Total physical disk blocks read per second (heap + index).",
+    label: "DISK blk/s",
+    description:
+      "Total physical disk blocks read per second (heap + index). Each block is 8 KiB.",
     thresholds: ">0 warning \u00b7 =0 inactive",
     tip: "Physical reads are slow. Improve HIT% or reduce table size",
   },

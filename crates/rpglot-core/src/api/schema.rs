@@ -1899,7 +1899,7 @@ fn generate_pgt_schema() -> TabSchema {
             ),
             col(
                 "disk_blks_read_s",
-                "DISK/s",
+                "DISK blk/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Rate),
@@ -2259,7 +2259,7 @@ fn generate_pgi_schema() -> TabSchema {
             ),
             col(
                 "disk_blks_read_s",
-                "DISK/s",
+                "DISK blk/s",
                 DataType::Number,
                 Some(Unit::BlksPerSec),
                 Some(Format::Rate),
