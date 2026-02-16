@@ -74,10 +74,11 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 
 const SWIM_LANES: { label: string; categories: string[] }[] = [
-  {
-    label: "System",
-    categories: ["cpu", "memory", "disk", "network", "psi", "cgroup"],
-  },
+  { label: "CPU", categories: ["cpu"] },
+  { label: "Memory", categories: ["memory"] },
+  { label: "Disk", categories: ["disk"] },
+  { label: "Network", categories: ["network"] },
+  { label: "PSI", categories: ["psi", "cgroup"] },
   { label: "PG Activity", categories: ["pg_activity"] },
   { label: "PG Queries", categories: ["pg_statements"] },
   { label: "PG Storage", categories: ["pg_tables", "pg_bgwriter"] },
