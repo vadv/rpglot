@@ -64,7 +64,7 @@ impl AnalysisRule for AutovacuumImpactRule {
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "autovacuum_impact",
-            category: Category::PgTables,
+            category: Category::PgEvents,
             severity,
             title: format!(
                 "Autovacuum on {worst_table}: {total_io:.1} MB/s I/O, {wal_mb:.0} MB WAL"

@@ -25,6 +25,7 @@ pub enum Category {
     PgTables,
     PgIndexes,
     PgBgwriter,
+    PgEvents,
     PgErrors,
     Cgroup,
 }

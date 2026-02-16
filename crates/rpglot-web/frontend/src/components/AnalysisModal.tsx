@@ -60,6 +60,7 @@ const CATEGORY_TAB: Record<string, TabKey> = {
   pg_tables: "pgt",
   pg_indexes: "pgi",
   pg_bgwriter: "pge",
+  pg_events: "pge",
   pg_errors: "pge",
 };
 
@@ -75,6 +76,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   pg_tables: "PG Tables",
   pg_indexes: "PG Indexes",
   pg_bgwriter: "PG BGWriter",
+  pg_events: "PG Events",
   pg_locks: "PG Locks",
   pg_errors: "PG Errors",
 };
