@@ -766,45 +766,128 @@ function PersistentSection({
   timezone: TimezoneMode;
   onJump: (incident: AnalysisIncident) => void;
 }) {
-  const totalIncidents = groups.reduce((n, g) => n + g.incidents.length, 0);
   return (
     <div>
       <div
         className="flex items-center gap-1 text-xs font-semibold"
         style={{ color: PERSISTENT_COLOR }}
       >
-        Persistent issues ({totalIncidents})
+        Persistent issues ({groups.length})
       </div>
       <div className="mt-1.5 ml-4 space-y-1">
-        {groups.flatMap((g) =>
-          g.incidents.map((inc) => {
-            const timeRange =
-              inc.first_ts === inc.last_ts
-                ? formatTime(inc.first_ts, timezone)
-                : `${formatTime(inc.first_ts, timezone)} \u2014 ${formatTime(inc.last_ts, timezone)}`;
-            return (
-              <div
-                key={`${g.id}-${inc.rule_id}`}
-                className="flex items-center gap-2 px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
-                style={{ borderLeft: `3px solid ${PERSISTENT_COLOR}` }}
-                onClick={() => onJump(inc)}
-                title={`Jump to peak at ${formatTime(inc.peak_ts, timezone)}`}
-              >
-                <span
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: PERSISTENT_COLOR }}
-                />
-                <span className="text-xs font-medium text-[var(--text-primary)] truncate flex-1">
-                  {inc.title}
-                </span>
-                <span className="text-[10px] text-[var(--text-tertiary)] font-mono shrink-0">
-                  {timeRange}
-                </span>
-              </div>
-            );
-          }),
+        {groups.map((g) =>
+          g.incidents.length === 1 ? (
+            <PersistentRow
+              key={g.id}
+              incident={g.incidents[0]}
+              timezone={timezone}
+              onJump={onJump}
+            />
+          ) : (
+            <PersistentGroupRow
+              key={g.id}
+              group={g}
+              timezone={timezone}
+              onJump={onJump}
+            />
+          ),
         )}
       </div>
+    </div>
+  );
+}
+
+function PersistentRow({
+  incident,
+  timezone,
+  onJump,
+}: {
+  incident: AnalysisIncident;
+  timezone: TimezoneMode;
+  onJump: (incident: AnalysisIncident) => void;
+}) {
+  const timeRange =
+    incident.first_ts === incident.last_ts
+      ? formatTime(incident.first_ts, timezone)
+      : `${formatTime(incident.first_ts, timezone)} \u2014 ${formatTime(incident.last_ts, timezone)}`;
+  return (
+    <div
+      className="flex items-center gap-2 px-2 py-1 rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
+      style={{ borderLeft: `3px solid ${PERSISTENT_COLOR}` }}
+      onClick={() => onJump(incident)}
+      title={`Jump to peak at ${formatTime(incident.peak_ts, timezone)}`}
+    >
+      <span
+        className="w-2 h-2 rounded-full shrink-0"
+        style={{ backgroundColor: PERSISTENT_COLOR }}
+      />
+      <span className="text-xs font-medium text-[var(--text-primary)] truncate flex-1">
+        {incident.title}
+      </span>
+      <span className="text-[10px] text-[var(--text-tertiary)] font-mono shrink-0">
+        {timeRange}
+      </span>
+    </div>
+  );
+}
+
+function PersistentGroupRow({
+  group,
+  timezone,
+  onJump,
+}: {
+  group: IncidentGroup;
+  timezone: TimezoneMode;
+  onJump: (incident: AnalysisIncident) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const ruleLabel =
+    RULE_LABEL[group.incidents[0]?.rule_id] ?? group.incidents[0]?.rule_id;
+  const timeRange = `${formatTime(group.first_ts, timezone)} \u2014 ${formatTime(group.last_ts, timezone)}`;
+
+  return (
+    <div
+      className="rounded border border-[var(--border-default)] bg-[var(--bg-elevated)] overflow-hidden"
+      style={{ borderLeft: `3px solid ${PERSISTENT_COLOR}` }}
+    >
+      <div
+        className="flex items-center gap-2 px-2 py-1 cursor-pointer hover:bg-[var(--bg-hover)] transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {expanded ? (
+          <ChevronDown
+            size={12}
+            className="text-[var(--text-tertiary)] shrink-0"
+          />
+        ) : (
+          <ChevronRight
+            size={12}
+            className="text-[var(--text-tertiary)] shrink-0"
+          />
+        )}
+        <span
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: PERSISTENT_COLOR }}
+        />
+        <span className="text-xs font-medium text-[var(--text-primary)] truncate flex-1">
+          {ruleLabel}: {group.incidents.length} affected
+        </span>
+        <span className="text-[10px] text-[var(--text-tertiary)] font-mono shrink-0">
+          {timeRange}
+        </span>
+      </div>
+      {expanded && (
+        <div className="px-2 pb-1.5 space-y-1">
+          {group.incidents.map((inc, i) => (
+            <PersistentRow
+              key={i}
+              incident={inc}
+              timezone={timezone}
+              onJump={onJump}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
