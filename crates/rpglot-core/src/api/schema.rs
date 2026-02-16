@@ -1076,6 +1076,8 @@ fn generate_prc_schema() -> TabSchema {
                     "name",
                     "cpu_pct",
                     "mem_pct",
+                    "read_bytes_s",
+                    "write_bytes_s",
                     "pg_backend_type",
                     "pg_query",
                 ]
@@ -1323,6 +1325,8 @@ fn generate_pga_schema() -> TabSchema {
                     "pid",
                     "cpu_pct",
                     "rss_kb",
+                    "read_bytes_s",
+                    "write_bytes_s",
                     "database",
                     "user",
                     "state",
