@@ -704,7 +704,13 @@ function useTabState(
 
   const triggerFlash = useCallback((id: string | number) => {
     setFlashRowId(id);
-    setTimeout(() => setFlashRowId(null), 1500);
+    // Scroll the target row into view (center of viewport)
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`row-${id}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    setTimeout(() => setFlashRowId(null), 3000);
   }, []);
 
   // Reset selection on tab change
