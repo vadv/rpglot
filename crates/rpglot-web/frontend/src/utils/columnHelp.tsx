@@ -97,6 +97,22 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   // Summary: Host CPU
   // =====================================================
+  "cpu.sys_pct": {
+    label: "System%",
+    description: "CPU time spent in kernel mode (system calls, drivers).",
+    tip: "High system% may indicate heavy I/O, lock contention, or context switches",
+  },
+  "cpu.usr_pct": {
+    label: "User%",
+    description:
+      "CPU time spent running user-space code (queries, application logic).",
+    tip: "High user% is normal under load. Check if correlates with TPS",
+  },
+  "cpu.irq_pct": {
+    label: "IRQ%",
+    description: "CPU time spent handling hardware and software interrupts.",
+    tip: "High IRQ% may indicate network-heavy workload or hardware issues",
+  },
   iow_pct: {
     label: "IO Wait%",
     description: "Percentage of CPU time waiting for I/O completion.",
@@ -117,8 +133,82 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   },
 
   // =====================================================
+  // Summary: Load
+  // =====================================================
+  "load.avg1": {
+    label: "1 min",
+    description:
+      "Average number of processes in runnable or uninterruptible state over the last 1 minute.",
+    tip: "Compare with CPU count. Load > CPU count = overloaded",
+  },
+  "load.avg5": {
+    label: "5 min",
+    description: "5-minute load average.",
+    tip: "More stable than 1-min average. Good for trend analysis",
+  },
+  "load.avg15": {
+    label: "15 min",
+    description: "15-minute load average.",
+    tip: "Baseline indicator. Rising trend = growing resource pressure",
+  },
+  "load.nr_threads": {
+    label: "Threads",
+    description: "Total number of threads currently running on the system.",
+  },
+  "load.nr_running": {
+    label: "Running",
+    description: "Number of processes currently running or ready to run.",
+    tip: "Consistently > CPU count = CPU contention",
+  },
+
+  // =====================================================
+  // Summary: Memory
+  // =====================================================
+  "memory.total_kb": {
+    label: "Total",
+    description: "Total physical memory installed in the system.",
+  },
+  "memory.available_kb": {
+    label: "Available",
+    description:
+      "Estimated memory available for starting new applications without swapping. Includes free + reclaimable cache/buffers.",
+    tip: "Low available memory = risk of OOM or swap. More reliable than 'free'",
+  },
+  "memory.cached_kb": {
+    label: "Cached",
+    description:
+      "Memory used by OS page cache (file-backed pages). Can be reclaimed under pressure.",
+    tip: "High cached is normal for databases \u2014 it's the OS page cache",
+  },
+  "memory.buffers_kb": {
+    label: "Buffers",
+    description: "Memory used by kernel buffers (filesystem metadata).",
+  },
+  "memory.slab_kb": {
+    label: "Slab",
+    description: "Kernel slab allocator memory (dentries, inodes, etc.).",
+    tip: "High slab may indicate many open files or directory entries",
+  },
+
+  // =====================================================
   // Summary: Host Swap
   // =====================================================
+  "swap.total_kb": {
+    label: "Total",
+    description: "Total swap space available.",
+  },
+  "swap.free_kb": {
+    label: "Free",
+    description: "Unused swap space.",
+  },
+  "swap.dirty_kb": {
+    label: "Dirty",
+    description: "Swap pages that have been modified but not yet written back.",
+  },
+  "swap.writeback_kb": {
+    label: "Writeback",
+    description: "Swap pages currently being written to disk.",
+  },
   "swap.used_kb": {
     label: "Used",
     description: "Amount of swap space currently in use.",
@@ -152,6 +242,27 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   // Summary: VMstat
   // =====================================================
+  "vmstat.pgin_s": {
+    label: "Page In/s",
+    description: "Pages paged in from disk per second (includes file reads).",
+    tip: "Normal for database workloads. High values with high iowait = disk bottleneck",
+  },
+  "vmstat.pgout_s": {
+    label: "Page Out/s",
+    description: "Pages paged out to disk per second (includes file writes).",
+    tip: "Includes regular file writes. Only concerning with high iowait",
+  },
+  "vmstat.pgfault_s": {
+    label: "Faults/s",
+    description:
+      "Page faults per second (minor + major). Minor faults are normal; major faults require disk I/O.",
+    tip: "Very high values may indicate memory mapping churn",
+  },
+  "vmstat.ctxsw_s": {
+    label: "Context Sw/s",
+    description: "Context switches per second (voluntary + involuntary).",
+    tip: "High context switches = many competing processes. Normal range depends on CPU count",
+  },
   swin_s: {
     label: "Swap In/s",
     description: "Pages swapped in from disk per second.",
@@ -168,6 +279,37 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   // Summary: PostgreSQL
   // =====================================================
+  "pg.tps": {
+    label: "TPS",
+    description:
+      "Transactions per second across all databases (commits + rollbacks).",
+    tip: "Baseline metric. Sudden drops or spikes indicate workload changes",
+  },
+  "pg.backend_io_hit_pct": {
+    label: "Backend IO Hit",
+    description:
+      "OS page cache hit ratio for PostgreSQL backends. Computed from /proc/<pid>/io: (rchar \u2212 read_bytes) / rchar. Shows what percentage of disk reads were served from OS page cache rather than physical disk.",
+    tip: "100% = all reads from RAM (page cache). Low values = real physical disk I/O",
+  },
+  "pg.tuples_s": {
+    label: "Tuples/s",
+    description:
+      "Total tuples fetched + returned + inserted + updated + deleted per second.",
+    tip: "Measure of overall database throughput at tuple level",
+  },
+  "pg.deadlocks": {
+    label: "Deadlocks",
+    description: "Number of deadlocks detected per sample interval.",
+    thresholds: ">0 critical",
+    tip: "Deadlocks indicate conflicting lock acquisition order. Review application logic",
+  },
+  "pg.errors": {
+    label: "Errors",
+    description:
+      "Number of PostgreSQL errors per sample interval (from pg_stat_database).",
+    thresholds: ">0 critical",
+    tip: "Check Events tab for error details",
+  },
   hit_ratio_pct: {
     label: "Hit Ratio",
     description: "Buffer cache hit ratio across all databases.",
@@ -184,6 +326,26 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   // Summary: BGWriter
   // =====================================================
+  "bgwriter.checkpoints_per_min": {
+    label: "Ckpt/min",
+    description: "Checkpoints per minute (timed + requested).",
+    tip: "Frequent checkpoints increase I/O. Tune checkpoint_timeout and max_wal_size",
+  },
+  "bgwriter.checkpoint_write_time_ms": {
+    label: "Ckpt Write",
+    description: "Time spent writing buffers to disk during checkpoints (ms).",
+    tip: "Long write times = large dirty buffer pool. Tune checkpoint_completion_target",
+  },
+  "bgwriter.buffers_clean_s": {
+    label: "Clean/s",
+    description: "Buffers written by the background writer per second.",
+    tip: "BGWriter proactively cleans dirty buffers to reduce backend writes",
+  },
+  "bgwriter.buffers_alloc_s": {
+    label: "Alloc/s",
+    description: "Buffers allocated in shared buffers per second.",
+    tip: "High allocation rate = many new pages being loaded into cache",
+  },
   buffers_backend_s: {
     label: "Backend Buf/s",
     description: "Buffers written directly by backends (not bgwriter).",
@@ -201,6 +363,26 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   // Summary: Disk
   // =====================================================
+  "disk.read_bytes_s": {
+    label: "Read",
+    description: "Disk read throughput in bytes per second.",
+    tip: "High sustained reads may indicate cold cache or sequential scans",
+  },
+  "disk.write_bytes_s": {
+    label: "Write",
+    description: "Disk write throughput in bytes per second.",
+    tip: "High writes may be caused by WAL, checkpoints, or bulk inserts",
+  },
+  "disk.read_iops": {
+    label: "R IOPS",
+    description: "Read I/O operations per second.",
+    tip: "High random IOPS with low throughput = small random reads (index lookups)",
+  },
+  "disk.write_iops": {
+    label: "W IOPS",
+    description: "Write I/O operations per second.",
+    tip: "High write IOPS may indicate frequent fsync or WAL writes",
+  },
   "disk.util_pct": {
     label: "Util%",
     description: "Disk utilization percentage (time spent doing I/O).",
@@ -223,8 +405,40 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   },
 
   // =====================================================
+  // Summary: Network
+  // =====================================================
+  "network.rx_bytes_s": {
+    label: "RX",
+    description: "Network receive throughput in bytes per second.",
+  },
+  "network.tx_bytes_s": {
+    label: "TX",
+    description: "Network transmit throughput in bytes per second.",
+  },
+  "network.rx_packets_s": {
+    label: "RX pkt/s",
+    description: "Network packets received per second.",
+  },
+  "network.tx_packets_s": {
+    label: "TX pkt/s",
+    description: "Network packets transmitted per second.",
+  },
+
+  // =====================================================
   // Summary: Cgroup CPU
   // =====================================================
+  "cgroup_cpu.usr_pct": {
+    label: "User%",
+    description:
+      "CPU time spent in user mode as percentage of container limit.",
+    tip: "High user% is normal under load. Check correlation with TPS",
+  },
+  "cgroup_cpu.sys_pct": {
+    label: "System%",
+    description:
+      "CPU time spent in kernel mode as percentage of container limit.",
+    tip: "High system% may indicate heavy I/O or lock contention",
+  },
   "cgroup_cpu.limit_cores": {
     label: "Limit",
     description: "CPU core limit assigned to this container (quota/period).",
@@ -277,6 +491,28 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     label: "Limit",
     description: "Memory limit assigned to this container.",
     tip: "Container will be OOM-killed if it exceeds this limit",
+  },
+  "cgroup_memory.used_bytes": {
+    label: "Used",
+    description:
+      "Total memory currently used by the container (includes file cache).",
+    tip: "High values are normal \u2014 includes evictable page cache. Check Anon% for real pressure",
+  },
+  "cgroup_memory.anon_bytes": {
+    label: "Anon",
+    description:
+      "Anonymous memory (heap, stack, mmap) \u2014 not file-backed, cannot be evicted.",
+    tip: "Main contributor to OOM risk. shared_buffers + backend work_mem live here",
+  },
+  "cgroup_memory.file_bytes": {
+    label: "File",
+    description:
+      "File-backed memory (OS page cache). Evictable under memory pressure.",
+    tip: "High file cache is normal for databases \u2014 serves as disk read cache",
+  },
+  "cgroup_memory.slab_bytes": {
+    label: "Slab",
+    description: "Kernel slab allocator memory within the container.",
   },
 
   // =====================================================
