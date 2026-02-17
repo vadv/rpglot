@@ -699,6 +699,11 @@ function IncidentTimeline({
             }}
           >
             <div className="font-medium">{hovered.incident.title}</div>
+            {hovered.incident.detail && (
+              <div className="text-[var(--text-secondary)] text-[10px] mt-0.5 truncate max-w-[300px]">
+                {hovered.incident.detail}
+              </div>
+            )}
             <div className="text-[var(--text-tertiary)] text-[10px] mt-0.5 font-mono">
               {formatTime(hovered.incident.first_ts, timezone)} &mdash;{" "}
               {formatTime(hovered.incident.last_ts, timezone)}
