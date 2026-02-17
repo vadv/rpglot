@@ -221,6 +221,7 @@ fn extract_system_summary(
 
 fn extract_cpu_summary(cpus: &[SystemCpuInfo]) -> Option<CpuSummary> {
     let agg = cpus.iter().find(|c| c.cpu_id == -1)?;
+    let cores = cpus.iter().filter(|c| c.cpu_id >= 0).count() as u16;
     let total = agg.user
         + agg.nice
         + agg.system
@@ -234,6 +235,7 @@ fn extract_cpu_summary(cpus: &[SystemCpuInfo]) -> Option<CpuSummary> {
     }
     let t = total as f64;
     Some(CpuSummary {
+        cores,
         sys_pct: agg.system as f64 / t * 100.0,
         usr_pct: (agg.user + agg.nice) as f64 / t * 100.0,
         irq_pct: (agg.irq + agg.softirq) as f64 / t * 100.0,

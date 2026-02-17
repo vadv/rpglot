@@ -97,6 +97,8 @@ pub struct SystemSummary {
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct CpuSummary {
+    /// Number of CPU cores.
+    pub cores: u16,
     /// System CPU %.
     pub sys_pct: f64,
     /// User CPU %.

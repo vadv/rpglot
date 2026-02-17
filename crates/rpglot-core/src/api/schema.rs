@@ -369,6 +369,7 @@ fn generate_summary_schema() -> SummarySchema {
                 key: "cpu".into(),
                 label: "CPU".into(),
                 fields: vec![
+                    field("cores", "Cores", DataType::Integer, None, None),
                     field(
                         "sys_pct",
                         "System",
