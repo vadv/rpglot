@@ -1,6 +1,7 @@
 pub mod advisor;
 pub mod rules;
 
+use crate::api::snapshot::HealthBreakdown;
 use crate::provider::HistoryProvider;
 use crate::storage::StringInterner;
 use crate::storage::model::{DataBlock, PgSettingEntry, ProcessInfo, Snapshot};
@@ -409,8 +410,12 @@ fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
 /// - CPU > 60%: -1 per percent above 60
 /// - Disk IOPS > 1000: -5 per 1000 total IOPS
 /// - Disk bandwidth > 50 MB/s: -5 per 50 MB/s
-pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: f64) -> u8 {
-    let mut score: i32 = 100;
+pub fn compute_health_score(
+    snapshot: &Snapshot,
+    prev: Option<&PrevSample>,
+    dt: f64,
+) -> (u8, HealthBreakdown) {
+    let mut bd = HealthBreakdown::default();
 
     // 1. Active PGA sessions (state = "active" only, not "idle in transaction" etc.)
     if let Some(sessions) = find_block(snapshot, |b| match b {
@@ -422,7 +427,7 @@ pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: 
             .iter()
             .filter(|s| s.state_hash == active_hash)
             .count() as i32;
-        score -= active / 2;
+        bd.sessions = (active / 2).clamp(0, 100) as u8;
     }
 
     if let Some(p) = prev
@@ -436,12 +441,12 @@ pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: 
                 let idle_d = cpu.idle.saturating_sub(p.cpu_idle) as f64;
                 let cpu_pct = (1.0 - idle_d / dt_ticks) * 100.0;
                 if cpu_pct > 60.0 {
-                    score -= (cpu_pct - 60.0).round() as i32;
+                    bd.cpu = (cpu_pct - 60.0).round().clamp(0.0, 100.0) as u8;
                 }
             }
         }
 
-        // 3. Disk IOPS
+        // 3. Disk IOPS + 4. Disk bandwidth
         if let Some(disks) = find_block(snapshot, |b| match b {
             DataBlock::SystemDisk(v) => Some(v.as_slice()),
             _ => None,
@@ -453,9 +458,8 @@ pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: 
             let d_iops = (total_rio.saturating_sub(p.disk_rio)
                 + total_wio.saturating_sub(p.disk_wio)) as f64
                 / dt;
-            score -= (d_iops / 1000.0) as i32 * 5;
+            bd.disk_iops = ((d_iops / 1000.0) as i32 * 5).clamp(0, 100) as u8;
 
-            // 4. Disk bandwidth
             let total_rsz: u64 = relevant.clone().map(|d| d.rsz).sum();
             let total_wsz: u64 = relevant.map(|d| d.wsz).sum();
             let bw_bytes = (total_rsz.saturating_sub(p.disk_rsz)
@@ -463,11 +467,14 @@ pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: 
                 * 512.0
                 / dt;
             let bw_mb = bw_bytes / (1024.0 * 1024.0);
-            score -= (bw_mb / 50.0) as i32 * 5;
+            bd.disk_bw = ((bw_mb / 50.0) as i32 * 5).clamp(0, 100) as u8;
         }
     }
 
-    score.clamp(0, 100) as u8
+    let total_penalty =
+        bd.sessions as i32 + bd.cpu as i32 + bd.disk_iops as i32 + bd.disk_bw as i32;
+    let score = (100 - total_penalty).clamp(0, 100) as u8;
+    (score, bd)
 }
 
 // ============================================================
@@ -888,7 +895,7 @@ impl Analyzer {
 
             health_scores.push(HealthPoint {
                 ts: snapshot.timestamp,
-                score: compute_health_score(&snapshot, prev_sample.as_ref(), dt),
+                score: compute_health_score(&snapshot, prev_sample.as_ref(), dt).0,
             });
 
             // Extract pg_settings from the first snapshot that has them

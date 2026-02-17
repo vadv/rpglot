@@ -37,8 +37,24 @@ pub struct ApiSnapshot {
     pub pgl: Vec<PgLocksRow>,
     /// Health score 0..100 (100 = fully healthy).
     pub health_score: u8,
+    /// Breakdown of health score penalties by category.
+    pub health_breakdown: HealthBreakdown,
     /// Session counts from pg_stat_activity.
     pub session_counts: SessionCounts,
+}
+
+/// Breakdown of health score penalties by category.
+/// Each field is the number of points deducted (0 = no penalty).
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
+pub struct HealthBreakdown {
+    /// Penalty from active sessions (active_count / 2).
+    pub sessions: u8,
+    /// Penalty from CPU usage over 60%.
+    pub cpu: u8,
+    /// Penalty from disk IOPS.
+    pub disk_iops: u8,
+    /// Penalty from disk bandwidth.
+    pub disk_bw: u8,
 }
 
 /// Aggregated session counts from pg_stat_activity.

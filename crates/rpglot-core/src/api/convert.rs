@@ -45,7 +45,8 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
     let delta_time = get_delta_time(snap, ctx.prev_snapshot);
 
     let prev_sample = ctx.prev_snapshot.map(PrevSample::extract);
-    let health_score = compute_health_score(snap, prev_sample.as_ref(), delta_time);
+    let (health_score, health_breakdown) =
+        compute_health_score(snap, prev_sample.as_ref(), delta_time);
 
     let pga = extract_pga(
         snap,
@@ -79,6 +80,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         pge: extract_pge(snap, ctx.interner),
         pgl: extract_pgl(snap, ctx.interner),
         health_score,
+        health_breakdown,
         session_counts,
     }
 }

@@ -15,6 +15,8 @@ import {
   FileText,
   Users,
   Server,
+  HardDrive,
+  Activity,
 } from "lucide-react";
 import {
   fetchTimeline,
@@ -1117,14 +1119,76 @@ function Header({
 
 function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
   const score = snapshot.health_score;
+  const bd = snapshot.health_breakdown;
   const color = healthColor(score);
   const bgColor = healthBgColor(score);
+
+  const penalties: { icon: typeof Users; label: string; value: number }[] = [
+    { icon: Users, label: "Sessions", value: bd.sessions },
+    { icon: Zap, label: "CPU", value: bd.cpu },
+    { icon: HardDrive, label: "Disk IOPS", value: bd.disk_iops },
+    { icon: Activity, label: "Disk BW", value: bd.disk_bw },
+  ];
+  const hasPenalty = penalties.some((p) => p.value > 0);
 
   return (
     <RichTooltip
       content={
-        <div className="font-semibold text-[var(--text-primary)]">
-          Health Score: {score}/100
+        <div className="w-48">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold text-[var(--text-primary)]">
+              Health
+            </span>
+            <span className="font-bold text-sm" style={{ color }}>
+              {score}
+              <span className="text-[var(--text-tertiary)] font-normal">
+                /100
+              </span>
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-[var(--bg-subtle)] overflow-hidden mb-3">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${score}%`, backgroundColor: color }}
+            />
+          </div>
+          {hasPenalty ? (
+            <div className="space-y-1.5">
+              {penalties
+                .filter((p) => p.value > 0)
+                .map((p) => (
+                  <div key={p.label} className="flex items-center gap-2">
+                    <p.icon
+                      size={10}
+                      className="shrink-0"
+                      style={{ color: "var(--status-warning)" }}
+                    />
+                    <span className="text-[var(--text-secondary)] flex-1">
+                      {p.label}
+                    </span>
+                    <span className="font-mono text-[var(--status-warning)]">
+                      -{p.value}
+                    </span>
+                    <div className="w-12 h-1.5 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${Math.min(p.value * 5, 100)}%`,
+                          backgroundColor:
+                            p.value >= 20
+                              ? "var(--status-critical)"
+                              : "var(--status-warning)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+            </div>
+          ) : (
+            <div className="text-[var(--text-tertiary)] text-center">
+              No penalties
+            </div>
+          )}
         </div>
       }
       side="bottom"

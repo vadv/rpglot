@@ -25,7 +25,15 @@ export interface ApiSnapshot {
   pge: PgEventsRow[];
   pgl: PgLocksRow[];
   health_score: number;
+  health_breakdown: HealthBreakdown;
   session_counts: SessionCounts;
+}
+
+export interface HealthBreakdown {
+  sessions: number;
+  cpu: number;
+  disk_iops: number;
+  disk_bw: number;
 }
 
 export interface SystemSummary {
