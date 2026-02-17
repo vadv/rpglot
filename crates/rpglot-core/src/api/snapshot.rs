@@ -655,6 +655,8 @@ pub struct PgEventsRow {
     pub statement: String,
     /// Error category: "lock", "constraint", "timeout", etc. Empty for non-error events.
     pub category: String,
+    /// Severity level derived from category: "critical", "warning", "info". Empty for non-error events.
+    pub level: String,
 }
 
 /// pg_locks blocking tree row (flat with depth).

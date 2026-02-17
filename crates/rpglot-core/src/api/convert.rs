@@ -1667,6 +1667,11 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 sample: resolve(interner, e.sample_hash),
                 statement: resolve(interner, e.statement_hash),
                 category: e.category.label().to_string(),
+                level: match severity_for_category(e.category) {
+                    SeverityGroup::Critical => "critical".to_string(),
+                    SeverityGroup::Warning => "warning".to_string(),
+                    SeverityGroup::Info => "info".to_string(),
+                },
             });
         }
     }
@@ -1713,6 +1718,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 sample: String::new(),
                 statement: String::new(),
                 category: String::new(),
+                level: String::new(),
             });
         }
     }

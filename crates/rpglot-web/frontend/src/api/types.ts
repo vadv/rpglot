@@ -347,6 +347,7 @@ export interface PgEventsRow {
   event_type: string;
   severity: string;
   category: string;
+  level: string;
   count: number;
   table_name: string;
   elapsed_s: number;

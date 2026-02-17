@@ -2451,6 +2451,7 @@ fn generate_pge_schema() -> TabSchema {
                 true,
                 true,
             ),
+            col("level", "Level", DataType::String, None, None, true, true),
             col("count", "Count", DataType::Integer, None, None, true, false),
             col(
                 "table_name",
@@ -2622,6 +2623,7 @@ fn generate_pge_schema() -> TabSchema {
                 columns: vec![
                     "severity",
                     "category",
+                    "level",
                     "count",
                     "message",
                     "sample",

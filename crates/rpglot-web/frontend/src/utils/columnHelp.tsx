@@ -1124,6 +1124,16 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
       "Log severity level: ERROR, FATAL, or PANIC for errors; LOG for events.",
     thresholds: "PANIC/FATAL = critical · ERROR = warning",
   },
+  level: {
+    label: "Level",
+    description:
+      "Severity level derived from error category:\n" +
+      "· critical — resource exhaustion, data corruption, system failures\n" +
+      "· warning — timeouts, connection issues, auth failures, syntax errors\n" +
+      "· info — lock contention, constraint violations, serialization failures",
+    thresholds: "critical = red · warning = yellow · info = grey",
+    tip: "Use this column to quickly filter out expected application errors (info level)",
+  },
   category: {
     label: "Category",
     description:

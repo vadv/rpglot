@@ -417,6 +417,10 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
               "Error classification: lock, constraint, timeout, resource, etc.",
           },
           {
+            label: "Level",
+            description: "Derived severity: critical, warning, or info",
+          },
+          {
             label: "Count",
             description: "Number of occurrences in current interval",
           },

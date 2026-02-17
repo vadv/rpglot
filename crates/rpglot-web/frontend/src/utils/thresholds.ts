@@ -349,6 +349,15 @@ const RULES: Record<string, Classifier> = {
     return undefined;
   },
 
+  // --- PGE: Error level (derived from category) ---
+  level: (v) => {
+    if (v == null || v === "") return undefined;
+    if (v === "critical") return "critical";
+    if (v === "warning") return "warning";
+    if (v === "info") return "inactive";
+    return undefined;
+  },
+
   // --- PGE: Error category ---
   category: (v) => {
     if (v == null || v === "") return undefined;
