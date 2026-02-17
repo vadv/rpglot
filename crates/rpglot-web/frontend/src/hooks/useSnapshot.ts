@@ -48,16 +48,28 @@ export function useLiveSnapshot() {
 export function useHistorySnapshot() {
   const [snapshot, setSnapshot] = useState<ApiSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const jumpToTimestamp = useCallback(
     (timestamp: number, direction?: "floor" | "ceil") => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       setLoading(true);
+      setError(null);
       debounceRef.current = setTimeout(async () => {
         try {
           const snap = await fetchSnapshot({ timestamp, direction });
           setSnapshot(snap);
+        } catch {
+          // Fallback: fetch current snapshot without params
+          try {
+            const snap = await fetchSnapshot();
+            setSnapshot(snap);
+          } catch (e) {
+            setError(
+              e instanceof Error ? e.message : "Failed to load snapshot",
+            );
+          }
         } finally {
           setLoading(false);
         }
@@ -68,9 +80,27 @@ export function useHistorySnapshot() {
 
   // Load first snapshot on mount
   useEffect(() => {
-    fetchSnapshot()
-      .then(setSnapshot)
-      .catch(() => {});
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const snap = await fetchSnapshot();
+        if (!cancelled) setSnapshot(snap);
+      } catch {
+        // Retry once after 2s
+        setTimeout(async () => {
+          try {
+            const snap = await fetchSnapshot();
+            if (!cancelled) setSnapshot(snap);
+          } catch {
+            if (!cancelled) setError("Failed to load initial snapshot");
+          }
+        }, 2000);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Cleanup debounce timer
@@ -80,5 +110,5 @@ export function useHistorySnapshot() {
     };
   }, []);
 
-  return { snapshot, loading, jumpToTimestamp };
+  return { snapshot, loading, error, jumpToTimestamp };
 }

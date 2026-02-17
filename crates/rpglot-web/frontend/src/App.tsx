@@ -292,7 +292,7 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
 }
 
 function HistoryApp({ schema }: { schema: ApiSchema }) {
-  const { snapshot, loading, jumpToTimestamp } = useHistorySnapshot();
+  const { snapshot, loading, error, jumpToTimestamp } = useHistorySnapshot();
   const urlSync = useUrlSync();
   const urlState = readUrlState();
   const tabState = useTabState(schema, snapshot);
@@ -590,6 +590,10 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       <div className="flex-1 min-h-0">
         {snapshot ? (
           <TabContent snapshot={snapshot} schema={schema} tabState={tabState} />
+        ) : error ? (
+          <div className="flex items-center justify-center h-full text-[var(--status-critical)]">
+            {error}
+          </div>
         ) : (
           <div className="flex items-center justify-center h-full text-[var(--text-tertiary)]">
             Loading...
