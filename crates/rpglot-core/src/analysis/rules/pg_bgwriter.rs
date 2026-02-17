@@ -101,19 +101,34 @@ impl AnalysisRule for BackendBuffersRule {
         let d_clean = (bgw.buffers_clean - prev_bgw.buffers_clean).max(0);
         let d_bg = d_checkpoint + d_clean;
 
-        if d_backend == 0 || d_backend <= d_bg {
+        let d_total = d_backend + d_bg;
+        if d_total == 0 || d_backend <= d_bg {
             return Vec::new();
         }
 
-        let detail =
-            format!("Δbackend: {d_backend}, Δcheckpoint: {d_checkpoint}, Δclean: {d_clean}");
+        let pct = d_backend as f64 / d_total as f64 * 100.0;
+        let backend_mb = d_backend as f64 * 8.0 / 1024.0;
+
+        let severity = if pct > 80.0 {
+            Severity::Critical
+        } else {
+            Severity::Warning
+        };
+
+        let detail = format!(
+            "Backends flushed {backend_mb:.1} MiB dirty buffers to disk themselves instead of bgwriter/checkpointer. \
+             This adds latency to queries. Tuning bgwriter_delay, bgwriter_lru_maxpages, \
+             or shared_buffers may help."
+        );
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "backend_buffers_high",
             category: Category::PgBgwriter,
-            severity: Severity::Warning,
-            title: format!("Backend wrote {d_backend} buffers > bgwriter {d_bg}"),
+            severity,
+            title: format!(
+                "Backends flush {pct:.0}% dirty buffers ({backend_mb:.1} MiB) — bgwriter too slow"
+            ),
             detail: Some(detail),
             value: d_backend as f64,
             merge_key: None,
