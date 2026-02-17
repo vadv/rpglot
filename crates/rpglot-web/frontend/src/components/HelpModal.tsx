@@ -11,6 +11,7 @@ import {
   ListTree,
   AlertTriangle,
   Lock,
+  Trash2,
 } from "lucide-react";
 import type { TabKey } from "../api/types";
 import { TAB_HELP } from "../utils/helpContent";
@@ -23,6 +24,7 @@ const TAB_ICONS: Record<TabKey, typeof Monitor> = {
   pgi: ListTree,
   pge: AlertTriangle,
   pgl: Lock,
+  pgv: Trash2,
 };
 
 interface HelpModalProps {

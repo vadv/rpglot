@@ -23,7 +23,7 @@ pub use cgroup::{CgroupCpuInfo, CgroupInfo, CgroupIoInfo, CgroupMemoryInfo, Cgro
 pub use postgres::{
     ErrorCategory, PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventType, PgLogEventsInfo,
     PgLogSeverity, PgSettingEntry, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
-    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    PgStatProgressVacuumInfo, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 #[allow(unused_imports)]
 pub use process::{ProcessCpuInfo, ProcessDskInfo, ProcessInfo, ProcessMemInfo};

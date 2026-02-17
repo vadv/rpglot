@@ -57,6 +57,8 @@ pub struct CollectorTiming {
     pub pg_locks: Duration,
     /// Time to collect PostgreSQL log errors.
     pub pg_log: Duration,
+    /// Time to collect pg_stat_progress_vacuum.
+    pub pg_progress_vacuum: Duration,
     /// Time to collect cgroup metrics.
     pub cgroup: Duration,
     /// PostgreSQL statements caching interval (Duration::ZERO = no caching).
@@ -339,6 +341,14 @@ impl<F: FileSystem + Clone> Collector<F> {
                 blocks.push(DataBlock::PgStatBgwriter(bgwriter));
             }
             timing.pg_bgwriter = start.elapsed();
+
+            let start = Instant::now();
+            let progress_vacuum =
+                pg_collector.collect_progress_vacuum(self.process_collector.interner_mut());
+            timing.pg_progress_vacuum = start.elapsed();
+            if !progress_vacuum.is_empty() {
+                blocks.push(DataBlock::PgStatProgressVacuum(progress_vacuum));
+            }
 
             // Ensure per-database connections are established for tables/indexes.
             pg_collector.ensure_db_clients();

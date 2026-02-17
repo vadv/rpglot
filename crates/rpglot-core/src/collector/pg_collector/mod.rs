@@ -25,6 +25,7 @@ mod bgwriter;
 mod database;
 mod indexes;
 mod locks;
+mod progress_vacuum;
 mod queries;
 mod settings;
 mod statements;

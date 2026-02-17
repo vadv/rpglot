@@ -489,6 +489,33 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       },
     },
   },
+  pgv: {
+    label: "Vacuum Progress",
+    source: "pg_stat_progress_vacuum (PG 9.6+)",
+    description:
+      "Currently running VACUUM operations. Shows phase, scan progress, dead tuple collection, and index vacuum cycles in real time. Empty when no vacuums are running.",
+    howToRead:
+      "Watch 'phase' for stuck vacuums. 'scanning heap' is the main phase \u2014 progress_pct shows completion. 'vacuuming indexes' can be slow with many indexes. 'truncating heap' briefly takes AccessExclusive lock. High index_vacuum_count (>2) means maintenance_work_mem is too small.",
+    views: {
+      default: {
+        description: "Live VACUUM progress \u2014 phase, scan %, dead tuples.",
+        metrics: [
+          {
+            label: "Phase",
+            description: "Current vacuum phase (7 possible phases)",
+          },
+          { label: "Progress", description: "Heap scan completion percentage" },
+          { label: "Heap Total", description: "Table size in 8KB blocks" },
+          {
+            label: "Idx Vac Cycles",
+            description: "Index vacuum passes completed",
+            thresholds: ">=3 warning",
+          },
+          { label: "Dead Tuples", description: "Dead tuples collected so far" },
+        ],
+      },
+    },
+  },
 };
 
 export const SUMMARY_SECTION_HELP: Record<string, string> = {

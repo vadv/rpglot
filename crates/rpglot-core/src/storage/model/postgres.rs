@@ -788,6 +788,38 @@ pub struct PgLogEventEntry {
     pub count: u16,
 }
 
+/// Real-time vacuum progress from pg_stat_progress_vacuum (PG 9.6+).
+///
+/// Each row represents one currently running VACUUM operation.
+/// Fields `dead_tuple_bytes`, `indexes_total`, `indexes_processed` are PG 17+ only (0 on older).
+/// On PG 17+, `max_dead_tuples` contains bytes (max_dead_tuple_bytes) and
+/// `num_dead_tuples` contains item IDs count (num_dead_item_ids).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PgStatProgressVacuumInfo {
+    pub pid: i32,
+    pub datname_hash: u64,
+    /// Table OID (relid::bigint).
+    pub relid: i64,
+    pub phase_hash: u64,
+    pub heap_blks_total: i64,
+    pub heap_blks_scanned: i64,
+    pub heap_blks_vacuumed: i64,
+    pub index_vacuum_count: i64,
+    /// PG < 17: max_dead_tuples (count). PG 17+: max_dead_tuple_bytes (bytes).
+    pub max_dead_tuples: i64,
+    /// PG < 17: num_dead_tuples (count). PG 17+: num_dead_item_ids (count).
+    pub num_dead_tuples: i64,
+    /// PG 17+ only: dead_tuple_bytes. 0 on older versions.
+    #[serde(default)]
+    pub dead_tuple_bytes: i64,
+    /// PG 17+ only: total indexes to vacuum. 0 on older versions.
+    #[serde(default)]
+    pub indexes_total: i64,
+    /// PG 17+ only: indexes already processed. 0 on older versions.
+    #[serde(default)]
+    pub indexes_processed: i64,
+}
+
 /// Single PostgreSQL setting from pg_settings view.
 ///
 /// Stored as raw (name, setting, unit) triple — no version-specific assumptions.

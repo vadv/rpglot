@@ -35,6 +35,8 @@ pub struct ApiSnapshot {
     pub pge: Vec<PgEventsRow>,
     /// pg_locks blocking tree (flat, with depth).
     pub pgl: Vec<PgLocksRow>,
+    /// pg_stat_progress_vacuum — currently running VACUUM operations.
+    pub pgv: Vec<PgProgressVacuumRow>,
     /// Health score 0..100 (100 = fully healthy).
     pub health_score: u8,
     /// Breakdown of health score penalties by category.
@@ -685,4 +687,36 @@ pub struct PgLocksRow {
     pub query_start: i64,
     /// State change epoch.
     pub state_change: i64,
+}
+
+/// pg_stat_progress_vacuum row (PG 9.6+).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PgProgressVacuumRow {
+    pub pid: i32,
+    pub database: String,
+    pub relid: i64,
+    /// Resolved table name (schema.table), empty if not found in PGT.
+    pub table_name: String,
+    /// Current vacuum phase.
+    pub phase: String,
+    /// Scan progress: heap_blks_scanned / heap_blks_total * 100.
+    pub progress_pct: Option<f64>,
+    /// Total heap blocks in the table.
+    pub heap_blks_total: i64,
+    /// Heap blocks scanned so far.
+    pub heap_blks_scanned: i64,
+    /// Heap blocks vacuumed so far.
+    pub heap_blks_vacuumed: i64,
+    /// Number of completed index vacuum cycles.
+    pub index_vacuum_count: i64,
+    /// PG < 17: max dead tuples (count). PG 17+: max_dead_tuple_bytes.
+    pub max_dead_tuples: i64,
+    /// PG < 17: dead tuples collected (count). PG 17+: num_dead_item_ids.
+    pub num_dead_tuples: i64,
+    /// PG 17+ only: dead tuple bytes. 0 on older versions.
+    pub dead_tuple_bytes: i64,
+    /// PG 17+ only: total indexes to vacuum. 0 on older versions.
+    pub indexes_total: i64,
+    /// PG 17+ only: indexes already processed. 0 on older versions.
+    pub indexes_processed: i64,
 }

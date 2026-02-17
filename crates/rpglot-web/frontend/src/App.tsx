@@ -72,7 +72,16 @@ import type {
   Format,
 } from "./api/types";
 
-const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pge", "pgl"];
+const TAB_ORDER: TabKey[] = [
+  "prc",
+  "pga",
+  "pgs",
+  "pgt",
+  "pgi",
+  "pge",
+  "pgl",
+  "pgv",
+];
 
 // Global auth username — set once during init, read by AppContent
 let _authUsername: string | null = null;
@@ -2505,5 +2514,7 @@ function getTabData(
       return snapshot.pge as unknown as Record<string, unknown>[];
     case "pgl":
       return snapshot.pgl as unknown as Record<string, unknown>[];
+    case "pgv":
+      return snapshot.pgv as unknown as Record<string, unknown>[];
   }
 }

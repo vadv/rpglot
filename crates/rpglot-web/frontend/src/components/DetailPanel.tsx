@@ -333,6 +333,32 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
     },
     { title: "Query", fields: ["query"], type: "query" },
   ],
+  pgv: [
+    {
+      title: "Vacuum",
+      fields: ["pid", "database", "table_name", "relid", "phase"],
+    },
+    {
+      title: "Progress",
+      fields: [
+        "progress_pct",
+        "heap_blks_total",
+        "heap_blks_scanned",
+        "heap_blks_vacuumed",
+      ],
+    },
+    {
+      title: "Dead Tuples",
+      fields: [
+        "index_vacuum_count",
+        "max_dead_tuples",
+        "num_dead_tuples",
+        "dead_tuple_bytes",
+        "indexes_total",
+        "indexes_processed",
+      ],
+    },
+  ],
 };
 
 const TAB_NAMES: Record<TabKey, string> = {
@@ -343,6 +369,7 @@ const TAB_NAMES: Record<TabKey, string> = {
   pgi: "Index",
   pge: "Event",
   pgl: "Lock",
+  pgv: "Vacuum",
 };
 
 export function DetailPanel({

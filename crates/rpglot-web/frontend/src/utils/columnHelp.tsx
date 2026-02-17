@@ -1226,6 +1226,67 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
       "Dual-use field:\n• Checkpoint: average file sync duration (seconds)\n• Autovacuum: average write rate (MB/s)",
     thresholds: "Autovacuum: >50 MB/s critical · 10-50 MB/s warning",
   },
+
+  // =====================================================
+  // PGV (pg_stat_progress_vacuum)
+  // =====================================================
+  phase: {
+    label: "Phase",
+    description:
+      "Current VACUUM phase: initializing, scanning heap, vacuuming indexes, vacuuming heap, cleaning up indexes, truncating heap, performing final cleanup.",
+    thresholds:
+      "truncating heap = warning (AccessExclusive lock) · vacuuming indexes = warning (can be slow)",
+    tip: "Long time in 'vacuuming indexes' suggests too many or large indexes on the table",
+  },
+  progress_pct: {
+    label: "Progress",
+    description:
+      "Heap scan progress: heap_blks_scanned / heap_blks_total * 100%. Only meaningful during 'scanning heap' phase.",
+  },
+  heap_blks_total: {
+    label: "Heap Total",
+    description: "Total number of heap blocks (8 KB each) in the table.",
+  },
+  heap_blks_scanned: {
+    label: "Heap Scanned",
+    description: "Heap blocks scanned so far during the scanning heap phase.",
+  },
+  heap_blks_vacuumed: {
+    label: "Heap Vacuumed",
+    description: "Heap blocks vacuumed so far during the vacuuming heap phase.",
+  },
+  index_vacuum_count: {
+    label: "Idx Vac Cycles",
+    description:
+      "Number of completed index vacuum cycles. Each cycle processes all indexes on the table.",
+    thresholds: ">=3 = warning (many cycles indicate high dead tuple rate)",
+    tip: "High count means maintenance_work_mem is too small to hold all dead tuple pointers in one pass",
+  },
+  max_dead_tuples: {
+    label: "Max Dead Tuples",
+    description:
+      "PG < 17: max dead tuple pointers that fit in maintenance_work_mem.\nPG 17+: max_dead_tuple_bytes (in bytes).",
+    tip: "Increase maintenance_work_mem to reduce index vacuum cycles",
+  },
+  num_dead_tuples: {
+    label: "Dead Tuples",
+    description:
+      "PG < 17: dead tuples collected so far.\nPG 17+: num_dead_item_ids (dead item IDs count).",
+  },
+  dead_tuple_bytes: {
+    label: "Dead Bytes",
+    description: "PG 17+ only: total bytes of dead tuples collected so far.",
+  },
+  indexes_total: {
+    label: "Indexes Total",
+    description:
+      "PG 17+ only: total number of indexes on the table being vacuumed.",
+  },
+  indexes_processed: {
+    label: "Indexes Done",
+    description:
+      "PG 17+ only: number of indexes already processed in the current cycle.",
+  },
 };
 
 export function buildColumnTooltip(key: string): ReactNode | null {
@@ -1312,5 +1373,9 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
   },
   pgl: {
     tree: "Lock blocking tree \u2014 who blocks whom",
+  },
+  pgv: {
+    default:
+      "Currently running VACUUM operations \u2014 phase, progress, dead tuples",
   },
 };

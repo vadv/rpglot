@@ -1,7 +1,16 @@
 import { useCallback } from "react";
 import type { TabKey } from "../api/types";
 
-const TAB_KEYS: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pge", "pgl"];
+const TAB_KEYS: TabKey[] = [
+  "prc",
+  "pga",
+  "pgs",
+  "pgt",
+  "pgi",
+  "pge",
+  "pgl",
+  "pgv",
+];
 
 export interface UrlState {
   tab: TabKey;

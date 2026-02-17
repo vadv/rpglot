@@ -97,6 +97,7 @@ pub struct TabsSchema {
     pub pgi: TabSchema,
     pub pge: TabSchema,
     pub pgl: TabSchema,
+    pub pgv: TabSchema,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -703,6 +704,7 @@ fn generate_tabs_schema() -> TabsSchema {
         pgi: generate_pgi_schema(),
         pge: generate_pge_schema(),
         pgl: generate_pgl_schema(),
+        pgv: generate_pgv_schema(),
     }
 }
 
@@ -2942,6 +2944,160 @@ fn generate_pgl_schema() -> TabSchema {
             target_field: None,
             description: "Navigate to session details for this PID".into(),
         }),
+    }
+}
+
+fn generate_pgv_schema() -> TabSchema {
+    TabSchema {
+        name: "pg_stat_progress_vacuum".into(),
+        description: "Currently running VACUUM operations (PG 9.6+)".into(),
+        entity_id: "pid".into(),
+        columns: vec![
+            col("pid", "PID", DataType::Integer, None, None, true, false),
+            col(
+                "database",
+                "Database",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
+            col(
+                "table_name",
+                "Table",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
+            col("phase", "Phase", DataType::String, None, None, true, true),
+            col(
+                "progress_pct",
+                "Progress",
+                DataType::Number,
+                None,
+                Some(Format::Percent),
+                true,
+                false,
+            ),
+            col(
+                "heap_blks_total",
+                "Heap Total",
+                DataType::Integer,
+                Some(Unit::Buffers),
+                Some(Format::Bytes),
+                true,
+                false,
+            ),
+            col(
+                "heap_blks_scanned",
+                "Heap Scanned",
+                DataType::Integer,
+                Some(Unit::Buffers),
+                Some(Format::Bytes),
+                true,
+                false,
+            ),
+            col(
+                "heap_blks_vacuumed",
+                "Heap Vacuumed",
+                DataType::Integer,
+                Some(Unit::Buffers),
+                Some(Format::Bytes),
+                true,
+                false,
+            ),
+            col(
+                "index_vacuum_count",
+                "Idx Vac Cycles",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "max_dead_tuples",
+                "Max Dead Tuples",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "num_dead_tuples",
+                "Dead Tuples",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "dead_tuple_bytes",
+                "Dead Bytes",
+                DataType::Integer,
+                Some(Unit::Bytes),
+                Some(Format::Bytes),
+                true,
+                false,
+            ),
+            col(
+                "indexes_total",
+                "Indexes Total",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "indexes_processed",
+                "Indexes Done",
+                DataType::Integer,
+                None,
+                None,
+                true,
+                false,
+            ),
+            col(
+                "relid",
+                "Relid",
+                DataType::Integer,
+                None,
+                None,
+                false,
+                false,
+            ),
+        ],
+        views: vec![ViewSchema {
+            key: "default".into(),
+            label: "Vacuum Progress".into(),
+            columns: vec![
+                "pid",
+                "database",
+                "table_name",
+                "phase",
+                "progress_pct",
+                "heap_blks_total",
+                "heap_blks_scanned",
+                "heap_blks_vacuumed",
+                "index_vacuum_count",
+                "num_dead_tuples",
+                "max_dead_tuples",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            default: true,
+            default_sort: Some("progress_pct".into()),
+            default_sort_desc: true,
+            column_overrides: vec![],
+        }],
+        drill_down: None,
     }
 }
 

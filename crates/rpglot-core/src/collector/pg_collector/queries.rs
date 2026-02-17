@@ -397,6 +397,55 @@ pub(super) fn build_statio_user_indexes_query() -> &'static str {
     "#
 }
 
+/// Builds version-aware query for pg_stat_progress_vacuum (PG 9.6+).
+///
+/// PG < 17: uses original column names (max_dead_tuples, num_dead_tuples).
+/// PG 17+:  renamed columns (max_dead_tuple_bytes, num_dead_item_ids) +
+///          new columns (dead_tuple_bytes, indexes_total, indexes_processed).
+pub(super) fn build_stat_progress_vacuum_query(server_version_num: Option<i32>) -> String {
+    let v = server_version_num.unwrap_or(0);
+
+    if v >= 170000 {
+        r#"
+            SELECT
+                pid,
+                COALESCE(datname, '') as datname,
+                relid::bigint,
+                COALESCE(phase, '') as phase,
+                heap_blks_total,
+                heap_blks_scanned,
+                heap_blks_vacuumed,
+                index_vacuum_count,
+                max_dead_tuple_bytes as max_dead_tuples,
+                num_dead_item_ids as num_dead_tuples,
+                dead_tuple_bytes,
+                indexes_total,
+                indexes_processed
+            FROM pg_stat_progress_vacuum
+        "#
+        .to_string()
+    } else {
+        r#"
+            SELECT
+                pid,
+                COALESCE(datname, '') as datname,
+                relid::bigint,
+                COALESCE(phase, '') as phase,
+                heap_blks_total,
+                heap_blks_scanned,
+                heap_blks_vacuumed,
+                index_vacuum_count,
+                max_dead_tuples,
+                num_dead_tuples,
+                0::bigint as dead_tuple_bytes,
+                0::bigint as indexes_total,
+                0::bigint as indexes_processed
+            FROM pg_stat_progress_vacuum
+        "#
+        .to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,5 +526,29 @@ mod tests {
         assert!(q.contains("idx_blks_hit"));
         assert!(q.contains("indexrelid"));
         assert!(q.contains("LIMIT 500"));
+    }
+
+    #[test]
+    fn progress_vacuum_query_pg16_uses_original_columns() {
+        let q = build_stat_progress_vacuum_query(Some(160000));
+        assert!(q.contains("pg_stat_progress_vacuum"));
+        assert!(q.contains("max_dead_tuples"));
+        assert!(q.contains("num_dead_tuples"));
+        assert!(q.contains("0::bigint as dead_tuple_bytes"));
+        assert!(q.contains("0::bigint as indexes_total"));
+        assert!(q.contains("0::bigint as indexes_processed"));
+        assert!(!q.contains("max_dead_tuple_bytes"));
+        assert!(!q.contains("num_dead_item_ids"));
+    }
+
+    #[test]
+    fn progress_vacuum_query_pg17_uses_renamed_columns() {
+        let q = build_stat_progress_vacuum_query(Some(170000));
+        assert!(q.contains("pg_stat_progress_vacuum"));
+        assert!(q.contains("max_dead_tuple_bytes as max_dead_tuples"));
+        assert!(q.contains("num_dead_item_ids as num_dead_tuples"));
+        assert!(q.contains("dead_tuple_bytes"));
+        assert!(q.contains("indexes_total"));
+        assert!(q.contains("indexes_processed"));
     }
 }

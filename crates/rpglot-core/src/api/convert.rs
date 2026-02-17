@@ -79,6 +79,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         pgi: extract_pgi(snap, ctx.interner, ctx.pgi_rates),
         pge: extract_pge(snap, ctx.interner),
         pgl: extract_pgl(snap, ctx.interner),
+        pgv: extract_pgv(snap, ctx.interner),
         health_score,
         health_breakdown,
         session_counts,
@@ -1762,6 +1763,74 @@ fn extract_pgl(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgLock
             xact_start: n.xact_start,
             query_start: n.query_start,
             state_change: n.state_change,
+        })
+        .collect()
+}
+
+fn extract_pgv(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgProgressVacuumRow> {
+    let Some(vacuums) = find_block(snap, |b| {
+        if let DataBlock::PgStatProgressVacuum(v) = b {
+            Some(v.as_slice())
+        } else {
+            None
+        }
+    }) else {
+        return Vec::new();
+    };
+
+    // Build relid → (schema, table) lookup from PGT data if available.
+    let tables: HashMap<u32, (&u64, &u64)> = find_block(snap, |b| {
+        if let DataBlock::PgStatUserTables(v) = b {
+            Some(v.as_slice())
+        } else {
+            None
+        }
+    })
+    .map(|tbl| {
+        tbl.iter()
+            .map(|t| (t.relid, (&t.schemaname_hash, &t.relname_hash)))
+            .collect()
+    })
+    .unwrap_or_default();
+
+    vacuums
+        .iter()
+        .map(|v| {
+            let table_name = if let Some((schema_hash, rel_hash)) = tables.get(&(v.relid as u32)) {
+                let schema = resolve(interner, **schema_hash);
+                let rel = resolve(interner, **rel_hash);
+                if schema.is_empty() {
+                    rel
+                } else {
+                    format!("{schema}.{rel}")
+                }
+            } else {
+                String::new()
+            };
+
+            let progress_pct = if v.heap_blks_total > 0 {
+                Some(v.heap_blks_scanned as f64 / v.heap_blks_total as f64 * 100.0)
+            } else {
+                None
+            };
+
+            PgProgressVacuumRow {
+                pid: v.pid,
+                database: resolve(interner, v.datname_hash),
+                relid: v.relid,
+                table_name,
+                phase: resolve(interner, v.phase_hash),
+                progress_pct,
+                heap_blks_total: v.heap_blks_total,
+                heap_blks_scanned: v.heap_blks_scanned,
+                heap_blks_vacuumed: v.heap_blks_vacuumed,
+                index_vacuum_count: v.index_vacuum_count,
+                max_dead_tuples: v.max_dead_tuples,
+                num_dead_tuples: v.num_dead_tuples,
+                dead_tuple_bytes: v.dead_tuple_bytes,
+                indexes_total: v.indexes_total,
+                indexes_processed: v.indexes_processed,
+            }
         })
         .collect()
 }

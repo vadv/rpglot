@@ -552,6 +552,22 @@ const RULES: Record<string, Classifier> = {
   local_blks_read_s: rateInactive,
   local_blks_written_s: rateInactive,
   stmt_calls_s: rateInactive,
+
+  // --- PGV (pg_stat_progress_vacuum) ---
+  phase: (v) => {
+    if (v == null || v === "") return "inactive";
+    const s = String(v);
+    if (s === "truncating heap") return "warning";
+    if (s === "vacuuming indexes") return "warning";
+    return undefined;
+  },
+  index_vacuum_count: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (n === 0) return "inactive";
+    if (n >= 3) return "warning";
+    return undefined;
+  },
 };
 
 /**

@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use super::cgroup::CgroupInfo;
 use super::postgres::{
     PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventsInfo, PgSettingEntry,
-    PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo, PgStatStatementsInfo,
-    PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo, PgStatProgressVacuumInfo,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 use super::process::ProcessInfo;
 use super::system::{
@@ -128,6 +128,10 @@ pub enum DataBlock {
     /// PostgreSQL runtime settings (collected once per hour).
     /// Source: `pg_settings` view
     PgSettings(Vec<PgSettingEntry>),
+
+    /// Real-time VACUUM progress (instance-level, PG 9.6+).
+    /// Source: `pg_stat_progress_vacuum` view
+    PgStatProgressVacuum(Vec<PgStatProgressVacuumInfo>),
 }
 
 /// A point-in-time capture of all collected metrics.

@@ -24,6 +24,7 @@ export interface ApiSnapshot {
   pgi: PgIndexesRow[];
   pge: PgEventsRow[];
   pgl: PgLocksRow[];
+  pgv: PgProgressVacuumRow[];
   health_score: number;
   health_breakdown: HealthBreakdown;
   session_counts: SessionCounts;
@@ -390,6 +391,24 @@ export interface PgLocksRow {
   state_change: number;
 }
 
+export interface PgProgressVacuumRow {
+  pid: number;
+  database: string;
+  relid: number;
+  table_name: string;
+  phase: string;
+  progress_pct: number | null;
+  heap_blks_total: number;
+  heap_blks_scanned: number;
+  heap_blks_vacuumed: number;
+  index_vacuum_count: number;
+  max_dead_tuples: number;
+  num_dead_tuples: number;
+  dead_tuple_bytes: number;
+  indexes_total: number;
+  indexes_processed: number;
+}
+
 // ============================================================
 // Schema
 // ============================================================
@@ -449,6 +468,7 @@ export interface TabsSchema {
   pgi: TabSchema;
   pge: TabSchema;
   pgl: TabSchema;
+  pgv: TabSchema;
 }
 
 export interface TabSchema {
@@ -528,7 +548,15 @@ export interface HeatmapBucket {
 }
 
 // Tab key type
-export type TabKey = "prc" | "pga" | "pgs" | "pgt" | "pgi" | "pge" | "pgl";
+export type TabKey =
+  | "prc"
+  | "pga"
+  | "pgs"
+  | "pgt"
+  | "pgi"
+  | "pge"
+  | "pgl"
+  | "pgv";
 
 // ============================================================
 // Analysis Report

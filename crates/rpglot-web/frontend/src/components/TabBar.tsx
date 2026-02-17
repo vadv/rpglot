@@ -6,11 +6,21 @@ import {
   ListTree,
   AlertTriangle,
   Lock,
+  Trash2,
 } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import type { TabKey } from "../api/types";
 
-const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pge", "pgl"];
+const TAB_ORDER: TabKey[] = [
+  "prc",
+  "pga",
+  "pgs",
+  "pgt",
+  "pgi",
+  "pge",
+  "pgl",
+  "pgv",
+];
 
 const TAB_CONFIG: Record<
   TabKey,
@@ -57,6 +67,12 @@ const TAB_CONFIG: Record<
     icon: Lock,
     description:
       "Lock dependency tree (pg_locks).\nVisualize who blocks whom \u2014 find the root blocker and the full cascade of waiting sessions.\nCritical when transactions pile up and throughput drops to zero.",
+  },
+  pgv: {
+    label: "Vacuum",
+    icon: Trash2,
+    description:
+      "Live VACUUM progress (pg_stat_progress_vacuum).\nSee which tables are being vacuumed right now, current phase, scan progress, and dead tuple collection.\nEmpty when no vacuums are running.",
   },
 };
 
