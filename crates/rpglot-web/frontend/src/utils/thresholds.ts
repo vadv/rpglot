@@ -293,6 +293,24 @@ const RULES: Record<string, Classifier> = {
 
   // --- Summary: Disk ---
   "disk.util_pct": (v) => pctHigh(v, 60, 90),
+  "disk.r_await_ms": (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 5) return undefined;
+    if (n < 20) return "warning";
+    return "critical";
+  },
+  "disk.w_await_ms": (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 5) return undefined;
+    if (n < 20) return "warning";
+    return "critical";
+  },
 
   // --- Summary: Cgroup CPU (qualified keys) ---
   "cgroup_cpu.used_pct": (v) => pctHigh(v, 70, 90),

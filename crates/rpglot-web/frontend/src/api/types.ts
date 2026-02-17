@@ -73,6 +73,8 @@ export interface DiskSummary {
   read_iops: number;
   write_iops: number;
   util_pct: number;
+  r_await_ms: number;
+  w_await_ms: number;
 }
 
 export interface NetworkSummary {

@@ -225,6 +225,20 @@ function DiskCard({ disk }: { disk: ApiSnapshot["system"]["disks"][number] }) {
           value={formatValue(disk.util_pct, "percent", "percent")}
           rawValue={disk.util_pct}
         />
+        <KV
+          sectionKey="disk"
+          fieldKey="r_await_ms"
+          label="R Await"
+          value={formatValue(disk.r_await_ms, "ms")}
+          rawValue={disk.r_await_ms}
+        />
+        <KV
+          sectionKey="disk"
+          fieldKey="w_await_ms"
+          label="W Await"
+          value={formatValue(disk.w_await_ms, "ms")}
+          rawValue={disk.w_await_ms}
+        />
       </div>
     </div>
   );

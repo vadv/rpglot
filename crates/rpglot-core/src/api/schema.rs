@@ -1067,6 +1067,7 @@ fn generate_prc_schema() -> TabSchema {
                     "write_bytes_s",
                     "read_ops_s",
                     "write_ops_s",
+                    "blkdelay",
                     "cancelled_write_bytes",
                     "cmdline",
                 ]
@@ -1090,6 +1091,7 @@ fn generate_prc_schema() -> TabSchema {
                     "write_bytes_s",
                     "read_ops_s",
                     "write_ops_s",
+                    "blkdelay",
                     "pg_backend_type",
                     "pg_query",
                 ]

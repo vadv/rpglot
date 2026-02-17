@@ -79,6 +79,13 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
       "Virtual memory size \u2014 total address space (includes mapped but unused pages).",
     tip: "VSIZE is often misleading. Focus on RSS for actual memory usage",
   },
+  blkdelay: {
+    label: "I/O Delay",
+    description:
+      "Cumulative block I/O delay (clock ticks). Time the process spent waiting for disk I/O to complete. Source: /proc/[pid]/stat field 42 (delayacct_blkio_ticks).",
+    thresholds: ">1000 critical \u00b7 100-1000 warning",
+    tip: "High blkdelay = process blocked on disk. Cross-check with disk util% and await",
+  },
   vswap_kb: {
     label: "SWAP",
     description:
@@ -199,6 +206,20 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
     description: "Disk utilization percentage (time spent doing I/O).",
     thresholds: ">90% critical \u00b7 60-90% warning",
     tip: "100% utilization = disk saturated. Consider faster storage or I/O optimization",
+  },
+  "disk.r_await_ms": {
+    label: "R Await",
+    description:
+      "Average time (ms) for read requests to be served, including queue time and service time. Source: /proc/diskstats (read_time / reads).",
+    thresholds: ">20ms critical \u00b7 5-20ms warning",
+    tip: "High read await = slow disk or saturated I/O queue. Check util% and IOPS",
+  },
+  "disk.w_await_ms": {
+    label: "W Await",
+    description:
+      "Average time (ms) for write requests to be served, including queue time and service time. Source: /proc/diskstats (write_time / writes).",
+    thresholds: ">20ms critical \u00b7 5-20ms warning",
+    tip: "High write await = slow disk or heavy write load. Check WAL/checkpoint activity",
   },
 
   // =====================================================

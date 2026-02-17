@@ -279,14 +279,28 @@ fn extract_disk_summaries(
                 let read_sectors = disk.rsz.saturating_sub(p.rsz);
                 let write_sectors = disk.wsz.saturating_sub(p.wsz);
                 let io_ms = disk.io_ms.saturating_sub(p.io_ms);
+                let d_rio = disk.rio.saturating_sub(p.rio);
+                let d_wio = disk.wio.saturating_sub(p.wio);
+                let d_read_time = disk.read_time.saturating_sub(p.read_time);
+                let d_write_time = disk.write_time.saturating_sub(p.write_time);
 
                 DiskSummary {
                     name: disk.device_name.clone(),
                     read_bytes_s: (read_sectors as f64 * 512.0) / delta_time,
                     write_bytes_s: (write_sectors as f64 * 512.0) / delta_time,
-                    read_iops: disk.rio.saturating_sub(p.rio) as f64 / delta_time,
-                    write_iops: disk.wio.saturating_sub(p.wio) as f64 / delta_time,
+                    read_iops: d_rio as f64 / delta_time,
+                    write_iops: d_wio as f64 / delta_time,
                     util_pct: ((io_ms as f64 / (delta_time * 1000.0)) * 100.0).min(100.0),
+                    r_await_ms: if d_rio > 0 {
+                        d_read_time as f64 / d_rio as f64
+                    } else {
+                        0.0
+                    },
+                    w_await_ms: if d_wio > 0 {
+                        d_write_time as f64 / d_wio as f64
+                    } else {
+                        0.0
+                    },
                 }
             } else {
                 DiskSummary {
@@ -296,6 +310,8 @@ fn extract_disk_summaries(
                     read_iops: 0.0,
                     write_iops: 0.0,
                     util_pct: 0.0,
+                    r_await_ms: 0.0,
+                    w_await_ms: 0.0,
                 }
             }
         })

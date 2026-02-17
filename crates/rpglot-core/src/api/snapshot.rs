@@ -130,6 +130,10 @@ pub struct DiskSummary {
     pub write_iops: f64,
     /// Utilization percentage.
     pub util_pct: f64,
+    /// Average read await (ms per read I/O).
+    pub r_await_ms: f64,
+    /// Average write await (ms per write I/O).
+    pub w_await_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
