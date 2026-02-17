@@ -19,6 +19,8 @@ import { formatTime, formatTimestamp } from "../utils/formatters";
 export interface AnalysisJump {
   timestamp: number;
   tab?: TabKey;
+  view?: string;
+  entityId?: number;
 }
 
 // ============================================================
@@ -63,6 +65,52 @@ const CATEGORY_TAB: Record<string, TabKey> = {
   pg_bgwriter: "pge",
   pg_events: "pge",
   pg_errors: "pge",
+};
+
+/** Per-rule target: which tab + view to open on jump. */
+const RULE_TARGET: Record<string, { tab: TabKey; view?: string }> = {
+  // PGS
+  stmt_mean_time_spike: { tab: "pgs" },
+  stmt_call_spike: { tab: "pgs" },
+  // PGT
+  dead_tuples_high: { tab: "pgt" },
+  seq_scan_dominant: { tab: "pgt", view: "scans" },
+  heap_read_spike: { tab: "pgt", view: "io" },
+  table_write_spike: { tab: "pgt", view: "writes" },
+  cache_hit_ratio_drop: { tab: "pgt", view: "io" },
+  // PGI
+  index_read_spike: { tab: "pgi" },
+  index_cache_miss: { tab: "pgi" },
+  // PGA
+  idle_in_transaction: { tab: "pga" },
+  long_query: { tab: "pga" },
+  wait_sync_replica: { tab: "pga" },
+  wait_lock: { tab: "pga" },
+  high_active_sessions: { tab: "pga" },
+  tps_spike: { tab: "pga" },
+  // PGL
+  blocked_sessions: { tab: "pgl" },
+  // PGE
+  autovacuum_impact: { tab: "pge", view: "autovacuum" },
+  pg_errors: { tab: "pge", view: "errors" },
+  pg_fatal_panic: { tab: "pge", view: "errors" },
+  checkpoint_spike: { tab: "pge", view: "checkpoints" },
+  backend_buffers_high: { tab: "pge", view: "checkpoints" },
+  // PRC — disk view for IO rules
+  process_io_hog: { tab: "prc", view: "disk" },
+  high_blk_delay: { tab: "prc", view: "disk" },
+  // PRC — default CPU view for system rules
+  cpu_high: { tab: "prc" },
+  iowait_high: { tab: "prc" },
+  steal_high: { tab: "prc" },
+  memory_low: { tab: "prc" },
+  swap_usage: { tab: "prc" },
+  load_average_high: { tab: "prc" },
+  disk_util_high: { tab: "prc" },
+  disk_io_spike: { tab: "prc" },
+  network_spike: { tab: "prc" },
+  cgroup_throttled: { tab: "prc" },
+  cgroup_oom_kill: { tab: "prc" },
 };
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -192,9 +240,12 @@ export function AnalysisModal({
 
   const handleJump = useCallback(
     (incident: AnalysisIncident) => {
+      const target = RULE_TARGET[incident.rule_id];
       onJump({
         timestamp: incident.peak_ts,
-        tab: CATEGORY_TAB[incident.category],
+        tab: target?.tab ?? CATEGORY_TAB[incident.category],
+        view: target?.view,
+        entityId: incident.entity_id ?? undefined,
       });
       onClose();
     },

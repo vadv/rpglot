@@ -59,6 +59,7 @@ impl AnalysisRule for ThrottledRule {
             detail: None,
             value: throttle_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -103,6 +104,7 @@ impl AnalysisRule for OomKillRule {
             detail: None,
             value: count as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

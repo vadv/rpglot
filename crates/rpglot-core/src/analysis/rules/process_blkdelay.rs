@@ -128,6 +128,7 @@ impl AnalysisRule for HighBlkDelayRule {
             ),
             value: top_delta_sec,
             merge_key: Some(top_pid.to_string()),
+            entity_id: Some(top_pid as i64),
         }]
     }
 }

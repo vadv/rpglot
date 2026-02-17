@@ -446,7 +446,13 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       if (jump.tab) {
         tabState.handleTabChange(jump.tab);
       }
+      if (jump.view) {
+        tabState.handleViewChange(jump.view);
+      }
       handleManualJump(jump.timestamp);
+      if (jump.entityId != null) {
+        tabState.handleSelectRow(jump.entityId);
+      }
     },
     [handleManualJump, tabState],
   );

@@ -49,6 +49,7 @@ impl AnalysisRule for BlockedSessionsRule {
             detail: None,
             value: count as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

@@ -562,6 +562,7 @@ export interface AnalysisIncident {
   title: string;
   detail: string | null;
   snapshot_count: number;
+  entity_id: number | null;
 }
 
 export interface AnalysisRecommendation {

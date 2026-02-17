@@ -72,6 +72,7 @@ impl AnalysisRule for AutovacuumImpactRule {
             detail: Some(detail),
             value: total_io,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

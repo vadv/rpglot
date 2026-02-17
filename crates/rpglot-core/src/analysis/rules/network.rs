@@ -56,6 +56,7 @@ impl AnalysisRule for NetworkSpikeRule {
             )),
             value: bytes_s,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

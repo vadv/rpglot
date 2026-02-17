@@ -192,6 +192,7 @@ impl AnalysisRule for ProcessIoHogRule {
             detail: Some(detail_str),
             value: top.total_bytes_s,
             merge_key: Some(top.pid.to_string()),
+            entity_id: Some(top.pid as i64),
         }]
     }
 }

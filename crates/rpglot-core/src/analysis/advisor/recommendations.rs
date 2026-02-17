@@ -1170,6 +1170,7 @@ mod tests {
             title: format!("Test {rule_id}"),
             detail: None,
             snapshot_count: 10,
+            entity_id: None,
         }
     }
 

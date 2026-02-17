@@ -76,6 +76,7 @@ impl AnalysisRule for CpuHighRule {
             detail: None,
             value: cpu_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -113,6 +114,7 @@ impl AnalysisRule for IowaitHighRule {
             detail: None,
             value: iow_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -150,6 +152,7 @@ impl AnalysisRule for StealHighRule {
             detail: None,
             value: steal_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

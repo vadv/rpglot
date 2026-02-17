@@ -61,6 +61,7 @@ impl AnalysisRule for CheckpointSpikeRule {
             detail: Some(detail),
             value: d_req as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -132,6 +133,7 @@ impl AnalysisRule for BackendBuffersRule {
             detail: Some(detail),
             value: d_backend as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

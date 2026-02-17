@@ -420,7 +420,7 @@ export function DataTable({
                   onClick={() => handleRowClick(row.original)}
                   className={`cursor-pointer transition-colors duration-100 ${
                     isSelected
-                      ? "bg-[var(--selection-bg)] border-l-2 border-l-[var(--selection-border)]"
+                      ? "bg-[var(--selection-bg)] border-l-[3px] border-l-[var(--selection-border)] shadow-[inset_0_0_0_1px_var(--selection-border)]"
                       : `${idx % 2 === 0 ? "bg-[var(--bg-base)]" : "bg-[var(--bg-overlay)]"} hover:bg-[var(--bg-hover)] border-l-2 border-l-transparent`
                   }`}
                 >

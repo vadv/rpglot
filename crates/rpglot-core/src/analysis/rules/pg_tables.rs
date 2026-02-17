@@ -58,6 +58,7 @@ impl AnalysisRule for DeadTuplesHighRule {
         let mut worst_pct: f64 = 0.0;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_relid: u32 = 0;
 
         for t in tables {
             let total = t.n_live_tup + t.n_dead_tup;
@@ -69,6 +70,7 @@ impl AnalysisRule for DeadTuplesHighRule {
                 worst_pct = dead_pct;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_relid = t.relid;
             }
         }
 
@@ -93,6 +95,7 @@ impl AnalysisRule for DeadTuplesHighRule {
             detail: None,
             value: worst_pct,
             merge_key: None,
+            entity_id: Some(worst_relid as i64),
         }]
     }
 }
@@ -131,6 +134,7 @@ impl AnalysisRule for SeqScanDominantRule {
         let mut worst_pct: f64 = 0.0;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_relid: u32 = 0;
         let mut worst_d_seq: i64 = 0;
         let mut worst_d_idx: i64 = 0;
 
@@ -156,6 +160,7 @@ impl AnalysisRule for SeqScanDominantRule {
                 worst_pct = seq_pct;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_relid = t.relid;
                 worst_d_seq = d_seq;
                 worst_d_idx = d_idx;
             }
@@ -177,6 +182,7 @@ impl AnalysisRule for SeqScanDominantRule {
             detail: Some(detail),
             value: worst_pct,
             merge_key: None,
+            entity_id: Some(worst_relid as i64),
         }]
     }
 }
@@ -233,6 +239,7 @@ impl AnalysisRule for HeapReadSpikeRule {
         let mut worst_rate = 0.0_f64;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_relid: u32 = 0;
         let mut worst_delta: i64 = 0;
         let mut worst_dt: f64 = 0.0;
 
@@ -257,6 +264,7 @@ impl AnalysisRule for HeapReadSpikeRule {
                 worst_rate = rate;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_relid = t.relid;
                 worst_delta = delta;
                 worst_dt = dt;
             }
@@ -288,6 +296,7 @@ impl AnalysisRule for HeapReadSpikeRule {
             detail: Some(detail),
             value: worst_rate,
             merge_key: None,
+            entity_id: Some(worst_relid as i64),
         }]
     }
 }
@@ -329,6 +338,7 @@ impl AnalysisRule for TableWriteSpikeRule {
         let mut worst_rate = 0.0_f64;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_relid: u32 = 0;
         let mut worst_ins: i64 = 0;
         let mut worst_upd: i64 = 0;
         let mut worst_del: i64 = 0;
@@ -357,6 +367,7 @@ impl AnalysisRule for TableWriteSpikeRule {
                 worst_rate = rate;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_relid = t.relid;
                 worst_ins = ins;
                 worst_upd = upd;
                 worst_del = del;
@@ -389,6 +400,7 @@ impl AnalysisRule for TableWriteSpikeRule {
             detail: Some(detail),
             value: worst_rate,
             merge_key: None,
+            entity_id: Some(worst_relid as i64),
         }]
     }
 }
@@ -437,6 +449,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
         let mut worst_ratio = 100.0_f64;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_relid: u32 = 0;
         let mut worst_read_d: i64 = 0;
         let mut worst_hit_d: i64 = 0;
 
@@ -458,6 +471,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
                 worst_ratio = hit_ratio;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_relid = t.relid;
                 worst_read_d = read_d;
                 worst_hit_d = hit_d;
             }
@@ -491,6 +505,7 @@ impl AnalysisRule for CacheHitRatioDropRule {
             detail: Some(detail),
             value: 100.0 - worst_ratio, // value = miss percentage (higher = worse)
             merge_key: None,
+            entity_id: Some(worst_relid as i64),
         }]
     }
 }

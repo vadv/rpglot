@@ -55,6 +55,7 @@ impl AnalysisRule for LoadAverageHighRule {
             )),
             value: la1,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

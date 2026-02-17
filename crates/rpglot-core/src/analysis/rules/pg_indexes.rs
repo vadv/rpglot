@@ -69,6 +69,7 @@ impl AnalysisRule for IndexReadSpikeRule {
         let mut worst_schema_hash: u64 = 0;
         let mut worst_index_hash: u64 = 0;
         let mut worst_table_hash: u64 = 0;
+        let mut worst_indexrelid: u32 = 0;
         let mut worst_delta: i64 = 0;
         let mut worst_dt: f64 = 0.0;
 
@@ -93,6 +94,7 @@ impl AnalysisRule for IndexReadSpikeRule {
                 worst_schema_hash = idx.schemaname_hash;
                 worst_index_hash = idx.indexrelname_hash;
                 worst_table_hash = idx.relname_hash;
+                worst_indexrelid = idx.indexrelid;
                 worst_delta = delta;
                 worst_dt = dt;
             }
@@ -128,6 +130,7 @@ impl AnalysisRule for IndexReadSpikeRule {
             detail: Some(detail),
             value: worst_rate,
             merge_key: None,
+            entity_id: Some(worst_indexrelid as i64),
         }]
     }
 }
@@ -176,6 +179,7 @@ impl AnalysisRule for IndexCacheHitDropRule {
         let mut worst_schema_hash: u64 = 0;
         let mut worst_index_hash: u64 = 0;
         let mut worst_table_hash: u64 = 0;
+        let mut worst_indexrelid: u32 = 0;
         let mut worst_read_d: i64 = 0;
         let mut worst_hit_d: i64 = 0;
 
@@ -198,6 +202,7 @@ impl AnalysisRule for IndexCacheHitDropRule {
                 worst_schema_hash = idx.schemaname_hash;
                 worst_index_hash = idx.indexrelname_hash;
                 worst_table_hash = idx.relname_hash;
+                worst_indexrelid = idx.indexrelid;
                 worst_read_d = read_d;
                 worst_hit_d = hit_d;
             }
@@ -235,6 +240,7 @@ impl AnalysisRule for IndexCacheHitDropRule {
             detail: Some(detail),
             value: 100.0 - worst_ratio,
             merge_key: None,
+            entity_id: Some(worst_indexrelid as i64),
         }]
     }
 }

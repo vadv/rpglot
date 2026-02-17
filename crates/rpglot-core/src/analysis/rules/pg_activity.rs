@@ -74,6 +74,7 @@ impl AnalysisRule for IdleInTransactionRule {
             detail: None,
             value: count as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -105,6 +106,7 @@ impl AnalysisRule for LongQueryRule {
         let mut count = 0u64;
         let mut max_duration: i64 = 0;
         let mut longest_query_hash: u64 = 0;
+        let mut worst_pid: i32 = 0;
 
         for s in sessions {
             // Skip replication and autovacuum — long-running queries by design
@@ -121,6 +123,7 @@ impl AnalysisRule for LongQueryRule {
                     if duration > max_duration {
                         max_duration = duration;
                         longest_query_hash = s.query_hash;
+                        worst_pid = s.pid;
                     }
                 }
             }
@@ -154,6 +157,7 @@ impl AnalysisRule for LongQueryRule {
             detail,
             value: max_duration as f64,
             merge_key: None,
+            entity_id: Some(worst_pid as i64),
         }]
     }
 }
@@ -212,6 +216,7 @@ impl AnalysisRule for WaitSyncReplicaRule {
             detail: None,
             value: count as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -267,6 +272,7 @@ impl AnalysisRule for WaitLockRule {
             detail: None,
             value: count as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -313,6 +319,7 @@ impl AnalysisRule for HighActiveSessionsRule {
             detail: Some(format!("Baseline avg: {avg:.0} sessions")),
             value: count,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -366,6 +373,7 @@ impl AnalysisRule for TpsSpikeRule {
             detail: Some(format!("Baseline avg: {avg:.0} tx/s")),
             value: tps,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

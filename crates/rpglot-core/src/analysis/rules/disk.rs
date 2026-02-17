@@ -67,6 +67,7 @@ impl AnalysisRule for DiskUtilHighRule {
             detail: None,
             value: util_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -126,6 +127,7 @@ impl AnalysisRule for DiskIoSpikeRule {
             )),
             value: bytes_s,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

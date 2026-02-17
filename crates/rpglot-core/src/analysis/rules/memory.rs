@@ -49,6 +49,7 @@ impl AnalysisRule for MemoryLowRule {
             )),
             value: avail_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -102,6 +103,7 @@ impl AnalysisRule for SwapUsageRule {
             )),
             value: swap_used_pct,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }

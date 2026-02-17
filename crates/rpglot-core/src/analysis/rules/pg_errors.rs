@@ -60,6 +60,7 @@ impl AnalysisRule for ErrorsRule {
             detail,
             value: total as f64,
             merge_key: None,
+            entity_id: None,
         }]
     }
 }
@@ -100,6 +101,7 @@ impl AnalysisRule for FatalPanicRule {
                         detail: None,
                         value: e.count as f64,
                         merge_key: None,
+                        entity_id: None,
                     }];
                 }
                 PgLogSeverity::Error => {}

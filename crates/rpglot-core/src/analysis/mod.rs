@@ -52,6 +52,8 @@ pub struct Anomaly {
     /// Anomalies with the same rule_id but different merge_key
     /// will NOT be merged into one incident.
     pub merge_key: Option<String>,
+    /// Entity identifier for navigation (PID, queryid, relid, indexrelid).
+    pub entity_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -68,6 +70,8 @@ pub struct Incident {
     pub title: String,
     pub detail: Option<String>,
     pub snapshot_count: usize,
+    /// Entity identifier for navigation (PID, queryid, relid, indexrelid).
+    pub entity_id: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -665,6 +669,7 @@ fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
                 incident.peak_ts = anomaly.timestamp;
                 incident.title = anomaly.title;
                 incident.detail = anomaly.detail;
+                incident.entity_id = anomaly.entity_id;
             }
         } else {
             incidents.push(Incident {
@@ -679,6 +684,7 @@ fn merge_anomalies(mut anomalies: Vec<Anomaly>) -> Vec<Incident> {
                 title: anomaly.title,
                 detail: anomaly.detail,
                 snapshot_count: 1,
+                entity_id: anomaly.entity_id,
             });
         }
     }
@@ -968,6 +974,7 @@ impl Analyzer {
                 title: i.title.clone(),
                 detail: i.detail.clone(),
                 snapshot_count: i.snapshot_count,
+                entity_id: i.entity_id,
             })
             .collect();
 

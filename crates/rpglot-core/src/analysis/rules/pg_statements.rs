@@ -84,6 +84,7 @@ impl AnalysisRule for MeanTimeSpikeRule {
             detail,
             value: mean,
             merge_key: None,
+            entity_id: Some(worst.queryid),
         }]
     }
 }
@@ -131,6 +132,7 @@ impl AnalysisRule for QueryCallSpikeRule {
 
         let mut worst_rate = 0.0_f64;
         let mut worst_query_hash: u64 = 0;
+        let mut worst_queryid: i64 = 0;
         let mut worst_calls: i64 = 0;
         let mut total_rate = 0.0_f64;
 
@@ -151,6 +153,7 @@ impl AnalysisRule for QueryCallSpikeRule {
             if delta >= 100 && rate > worst_rate {
                 worst_rate = rate;
                 worst_query_hash = s.query_hash;
+                worst_queryid = s.queryid;
                 worst_calls = delta;
             }
         }
@@ -189,6 +192,7 @@ impl AnalysisRule for QueryCallSpikeRule {
             detail,
             value: worst_rate,
             merge_key: None,
+            entity_id: Some(worst_queryid),
         }]
     }
 }
