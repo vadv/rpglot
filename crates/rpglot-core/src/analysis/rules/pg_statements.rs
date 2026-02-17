@@ -1,6 +1,12 @@
+use std::cmp::Ordering;
+
 use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::model::{DataBlock, PgStatStatementsInfo};
+
+fn find_prev_stmt(prev: &[PgStatStatementsInfo], queryid: i64) -> Option<&PgStatStatementsInfo> {
+    prev.iter().find(|s| s.queryid == queryid)
+}
 
 // ============================================================
 // MeanTimeSpikeRule
@@ -14,6 +20,12 @@ impl AnalysisRule for MeanTimeSpikeRule {
     }
 
     fn evaluate(&self, ctx: &AnalysisContext) -> Vec<Anomaly> {
+        // Need prev_snapshot to determine which statements are actively running
+        let prev_snapshot = match ctx.prev_snapshot {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
         let Some(stmts) = find_block(ctx.snapshot, |b| match b {
             DataBlock::PgStatStatements(v) => Some(v.as_slice()),
             _ => None,
@@ -21,11 +33,24 @@ impl AnalysisRule for MeanTimeSpikeRule {
             return Vec::new();
         };
 
-        let worst = stmts.iter().max_by(|a, b| {
-            a.mean_exec_time
-                .partial_cmp(&b.mean_exec_time)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let Some(prev_stmts) = find_block(prev_snapshot, |b| match b {
+            DataBlock::PgStatStatements(v) => Some(v.as_slice()),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+
+        // Only consider statements whose calls increased (actively executing)
+        let worst = stmts
+            .iter()
+            .filter(|s| {
+                find_prev_stmt(prev_stmts, s.queryid).is_none_or(|prev| s.calls > prev.calls)
+            })
+            .max_by(|a, b| {
+                a.mean_exec_time
+                    .partial_cmp(&b.mean_exec_time)
+                    .unwrap_or(Ordering::Equal)
+            });
 
         let Some(worst) = worst else {
             return Vec::new();
@@ -66,10 +91,6 @@ impl AnalysisRule for MeanTimeSpikeRule {
 // ============================================================
 // QueryCallSpikeRule — spike in calls/s for a single statement
 // ============================================================
-
-fn find_prev_stmt(prev: &[PgStatStatementsInfo], queryid: i64) -> Option<&PgStatStatementsInfo> {
-    prev.iter().find(|s| s.queryid == queryid)
-}
 
 pub struct QueryCallSpikeRule;
 
