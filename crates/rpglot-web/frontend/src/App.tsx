@@ -1012,22 +1012,26 @@ function Header({
             {paused ? "resume" : "pause"}
           </button>
         )}
-        {snapshot && <HealthBadge snapshot={snapshot} />}
         {snapshot && <SessionBadge snapshot={snapshot} />}
-        {onAnalyze && (
-          <button
-            onClick={onAnalyze}
-            disabled={analyzing}
-            className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium transition-colors ${
-              analyzing
-                ? "bg-[var(--accent)] text-white animate-pulse-btn"
-                : "bg-[var(--accent-bg)] text-[var(--accent-text)] hover:brightness-110"
-            }`}
-            title="Analyze current hour for anomalies and recommendations"
-          >
-            <Zap size={10} />
-            {analyzing ? `Analyzing ${analyzeElapsed}s\u2026` : "Analyze"}
-          </button>
+        {snapshot && (
+          <div className="flex items-center gap-1">
+            <HealthBadge snapshot={snapshot} />
+            {onAnalyze && (
+              <button
+                onClick={onAnalyze}
+                disabled={analyzing}
+                className={`flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full font-semibold transition-all ${
+                  analyzing
+                    ? "bg-[var(--accent)] text-white animate-pulse-btn"
+                    : "bg-[var(--accent)] text-white hover:brightness-110 shadow-sm"
+                }`}
+                title="Analyze current hour for anomalies and recommendations"
+              >
+                <Zap size={11} />
+                {analyzing ? `${analyzeElapsed}s\u2026` : "Analyze"}
+              </button>
+            )}
+          </div>
         )}
         {hasReport && !analyzing && onShowReport && (
           <button
