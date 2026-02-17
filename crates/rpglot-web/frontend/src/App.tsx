@@ -2035,6 +2035,9 @@ function TabContent({
   // PRC: only PostgreSQL processes (default ON)
   const [pgOnly, setPgOnly] = useState(true);
 
+  // PGS: hide statements with no calls delta (default ON)
+  const [hideInactive, setHideInactive] = useState(true);
+
   // PGT/PGI: only problematic rows (default OFF — show all)
   const [problemsOnly, setProblemsOnly] = useState(false);
 
@@ -2088,6 +2091,13 @@ function TabContent({
       }
     }
 
+    if (activeTab === "pgs" && hideInactive) {
+      filtered = filtered.filter((row) => {
+        const c = row.calls_s as number | null;
+        return c != null && c > 0;
+      });
+    }
+
     if (activeTab === "pgt" && problemsOnly) {
       filtered = filtered.filter((row) => isPgtProblematic(row, activeView));
     }
@@ -2104,6 +2114,7 @@ function TabContent({
     hideIdle,
     hideSystem,
     pgOnly,
+    hideInactive,
     problemsOnly,
   ]);
 
@@ -2125,6 +2136,12 @@ function TabContent({
     if (activeTab === "prc" && pgOnly) {
       counts.nonpg = rawData.filter((r) => !isPgProcess(r)).length;
     }
+    if (activeTab === "pgs" && hideInactive) {
+      counts.inactive = rawData.filter((r) => {
+        const c = r.calls_s as number | null;
+        return c == null || c === 0;
+      }).length;
+    }
     if ((activeTab === "pgt" || activeTab === "pgi") && problemsOnly) {
       const fn =
         activeTab === "pgt"
@@ -2140,6 +2157,7 @@ function TabContent({
     hideIdle,
     hideSystem,
     pgOnly,
+    hideInactive,
     problemsOnly,
   ]);
 
@@ -2172,6 +2190,16 @@ function TabContent({
         />
       );
     }
+    if (activeTab === "pgs") {
+      return (
+        <ToggleButton
+          active={hideInactive}
+          onClick={() => setHideInactive((p) => !p)}
+          label="inactive"
+          count={hiddenCounts.inactive}
+        />
+      );
+    }
     if ((activeTab === "pgt" || activeTab === "pgi") && !isAggregatedView) {
       return (
         <ToggleButton
@@ -2189,6 +2217,7 @@ function TabContent({
     hideIdle,
     hideSystem,
     pgOnly,
+    hideInactive,
     problemsOnly,
     hiddenCounts,
     isAggregatedView,
