@@ -795,7 +795,8 @@ impl HistoryProvider {
                             && let Some(snap) = wal.load_snapshot(wal_idx)
                         {
                             let active = heatmap::count_active_sessions(&snap);
-                            let errors = heatmap::count_error_entries(&snap);
+                            let (errors_critical, errors_warning, errors_info) =
+                                heatmap::count_error_entries_by_severity(&snap);
                             let checkpoints = heatmap::count_checkpoint_events(&snap);
                             let autovacuums = heatmap::count_autovacuum_events(&snap);
                             let slow_queries = heatmap::count_slow_query_events(&snap);
@@ -808,7 +809,9 @@ impl HistoryProvider {
                                     cpu_pct_x10: 0,
                                     cgroup_cpu_pct_x10: 0,
                                     cgroup_mem_pct_x10: 0,
-                                    error_count: errors,
+                                    errors_critical,
+                                    errors_warning,
+                                    errors_info,
                                     checkpoint_count: checkpoints,
                                     autovacuum_count: autovacuums,
                                     slow_query_count: slow_queries,
@@ -821,7 +824,8 @@ impl HistoryProvider {
                     for snap in snapshots {
                         if snap.timestamp >= start_ts && snap.timestamp <= end_ts {
                             let active = heatmap::count_active_sessions(snap);
-                            let errors = heatmap::count_error_entries(snap);
+                            let (errors_critical, errors_warning, errors_info) =
+                                heatmap::count_error_entries_by_severity(snap);
                             let checkpoints = heatmap::count_checkpoint_events(snap);
                             let autovacuums = heatmap::count_autovacuum_events(snap);
                             let slow_queries = heatmap::count_slow_query_events(snap);
@@ -832,7 +836,9 @@ impl HistoryProvider {
                                     cpu_pct_x10: 0,
                                     cgroup_cpu_pct_x10: 0,
                                     cgroup_mem_pct_x10: 0,
-                                    error_count: errors,
+                                    errors_critical,
+                                    errors_warning,
+                                    errors_info,
                                     checkpoint_count: checkpoints,
                                     autovacuum_count: autovacuums,
                                     slow_query_count: slow_queries,

@@ -170,6 +170,7 @@ function SummaryCard({
             label={f.label}
             value={formatValue(data[f.key], f.unit as never, f.format as never)}
             rawValue={data[f.key]}
+            row={data}
           />
         ))}
       </div>
@@ -330,18 +331,21 @@ function KV({
   label,
   value,
   rawValue,
+  row,
 }: {
   sectionKey?: string;
   fieldKey?: string;
   label: string;
   value: string;
   rawValue?: unknown;
+  row?: Record<string, unknown>;
 }) {
   // Threshold coloring: try qualified key first, then bare key
   const qKey = sectionKey && fieldKey ? `${sectionKey}.${fieldKey}` : "";
+  const r = row ?? {};
   const colorClass =
-    (qKey && getThresholdClass(qKey, rawValue, {})) ||
-    (fieldKey && getThresholdClass(fieldKey, rawValue, {})) ||
+    (qKey && getThresholdClass(qKey, rawValue, r)) ||
+    (fieldKey && getThresholdClass(fieldKey, rawValue, r)) ||
     "";
 
   // Rich tooltip on label

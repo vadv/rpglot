@@ -407,9 +407,15 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       "Errors view: sort by Count to find most frequent errors. Checkpoints view: monitor checkpoint frequency and duration. Autovacuum view: track vacuum activity per table.",
     views: {
       errors: {
-        description: "Error patterns from PostgreSQL logs (ERROR/FATAL/PANIC).",
+        description:
+          "Error patterns from PostgreSQL logs (ERROR/FATAL/PANIC), classified by category. Critical categories (resource, data_corruption, system) need immediate attention. Info categories (lock, constraint, serialization) are usually normal application behavior.",
         metrics: [
           { label: "Severity", description: "ERROR, FATAL, or PANIC" },
+          {
+            label: "Category",
+            description:
+              "Error classification: lock, constraint, timeout, resource, etc.",
+          },
           {
             label: "Count",
             description: "Number of occurrences in current interval",

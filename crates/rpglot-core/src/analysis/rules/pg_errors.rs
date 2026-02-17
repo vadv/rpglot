@@ -1,6 +1,22 @@
+use std::collections::HashMap;
+
 use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
-use crate::storage::model::{DataBlock, PgLogSeverity};
+use crate::storage::model::{DataBlock, ErrorCategory, PgLogSeverity};
+
+/// Local severity mapping for error categories.
+/// The backend stores only the category; severity interpretation lives in consumers.
+fn category_severity(cat: ErrorCategory) -> Severity {
+    match cat {
+        ErrorCategory::Lock | ErrorCategory::Constraint | ErrorCategory::Serialization => {
+            Severity::Info
+        }
+        ErrorCategory::Resource | ErrorCategory::DataCorruption | ErrorCategory::System => {
+            Severity::Critical
+        }
+        _ => Severity::Warning,
+    }
+}
 
 // ============================================================
 // ErrorsRule
@@ -21,47 +37,41 @@ impl AnalysisRule for ErrorsRule {
             return Vec::new();
         };
 
-        let mut total: u64 = 0;
-        let mut first_pattern_hash: u64 = 0;
-
+        // Group error counts by category.
+        let mut by_category: HashMap<ErrorCategory, u64> = HashMap::new();
         for e in entries {
             if e.severity == PgLogSeverity::Error {
-                total += e.count as u64;
-                if first_pattern_hash == 0 {
-                    first_pattern_hash = e.pattern_hash;
-                }
+                *by_category.entry(e.category).or_default() += e.count as u64;
             }
         }
 
-        if total == 0 {
-            return Vec::new();
+        let mut anomalies = Vec::new();
+        for (cat, count) in &by_category {
+            let sev = category_severity(*cat);
+            // Info-level categories (lock, constraint, serialization): only report if >= 100.
+            // Warning/Critical: always report.
+            let threshold = match sev {
+                Severity::Info => 100,
+                _ => 1,
+            };
+            if *count < threshold {
+                continue;
+            }
+            let label = cat.label();
+            anomalies.push(Anomaly {
+                timestamp: ctx.timestamp,
+                rule_id: "pg_errors",
+                category: Category::PgErrors,
+                severity: sev,
+                title: format!("{count} PostgreSQL error(s) [{label}]"),
+                detail: None,
+                value: *count as f64,
+                merge_key: Some(label.to_string()),
+                entity_id: None,
+            });
         }
 
-        let severity = if total >= 10 {
-            Severity::Critical
-        } else {
-            Severity::Warning
-        };
-
-        let detail = if first_pattern_hash != 0 {
-            ctx.interner
-                .resolve(first_pattern_hash)
-                .map(|s| s.to_string())
-        } else {
-            None
-        };
-
-        vec![Anomaly {
-            timestamp: ctx.timestamp,
-            rule_id: "pg_errors",
-            category: Category::PgErrors,
-            severity,
-            title: format!("{total} PostgreSQL error(s)"),
-            detail,
-            value: total as f64,
-            merge_key: None,
-            entity_id: None,
-        }]
+        anomalies
     }
 }
 
@@ -84,6 +94,7 @@ impl AnalysisRule for FatalPanicRule {
             return Vec::new();
         };
 
+        let mut anomalies = Vec::new();
         for e in entries {
             match e.severity {
                 PgLogSeverity::Fatal | PgLogSeverity::Panic => {
@@ -91,23 +102,29 @@ impl AnalysisRule for FatalPanicRule {
                         .interner
                         .resolve(e.pattern_hash)
                         .unwrap_or("unknown error");
+                    let sev_str = match e.severity {
+                        PgLogSeverity::Fatal => "FATAL",
+                        PgLogSeverity::Panic => "PANIC",
+                        _ => "ERROR",
+                    };
+                    let cat_label = e.category.label();
 
-                    return vec![Anomaly {
+                    anomalies.push(Anomaly {
                         timestamp: ctx.timestamp,
                         rule_id: "pg_fatal_panic",
                         category: Category::PgErrors,
                         severity: Severity::Critical,
-                        title: format!("PostgreSQL FATAL/PANIC: {message}"),
+                        title: format!("PostgreSQL {sev_str}: {message} ({cat_label})"),
                         detail: None,
                         value: e.count as f64,
-                        merge_key: None,
+                        merge_key: Some(format!("{sev_str}_{cat_label}")),
                         entity_id: None,
-                    }];
+                    });
                 }
                 PgLogSeverity::Error => {}
             }
         }
 
-        Vec::new()
+        anomalies
     }
 }

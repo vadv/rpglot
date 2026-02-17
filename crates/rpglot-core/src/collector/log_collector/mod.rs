@@ -545,6 +545,7 @@ impl LogCollector {
                     count: pending.count,
                     sample_hash: interner.intern(&pending.sample),
                     statement_hash,
+                    category: normalize::classify_error(&pattern_str, severity),
                 }
             })
             .collect()

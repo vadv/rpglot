@@ -260,11 +260,17 @@ const RULES: Record<string, Classifier> = {
     if (n > 0) return "critical";
     return undefined;
   },
-  errors: (v) => {
+  errors: (v, row) => {
     if (v == null) return undefined;
     const n = Number(v);
     if (isNaN(n)) return undefined;
-    if (n > 0) return "critical";
+    if (n === 0) return undefined;
+    // Use per-severity breakdown when available (PgSummary context)
+    const critical = Number(row?.errors_critical);
+    if (!isNaN(critical) && critical > 0) return "critical";
+    const warning = Number(row?.errors_warning);
+    if (!isNaN(warning) && warning > 0) return "warning";
+    // Only info-level errors — no highlight
     return undefined;
   },
   temp_bytes_s: (v) => {
@@ -341,6 +347,16 @@ const RULES: Record<string, Classifier> = {
     if (isNaN(n)) return undefined;
     if (n > 0) return "critical";
     return undefined;
+  },
+
+  // --- PGE: Error category ---
+  category: (v) => {
+    if (v == null || v === "") return undefined;
+    if (v === "data_corruption" || v === "resource" || v === "system")
+      return "critical";
+    if (v === "lock" || v === "constraint" || v === "serialization")
+      return "inactive";
+    return undefined; // warning-level categories use default styling
   },
 
   // --- PGE: Error severity ---

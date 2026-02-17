@@ -58,16 +58,34 @@ export function ActivityHeatmap({
           />
         );
       })}
-      {/* Error indicators — red dots at top of bars with errors */}
+      {/* Error indicators — tri-color dots by severity (highest wins) */}
       {buckets.map((b, i) =>
-        b.errors > 0 ? (
+        b.errors_critical > 0 ? (
           <circle
             key={`err-${i}`}
             cx={i + 0.5}
             cy={2}
-            r={0.8}
+            r={0.9}
             fill="var(--status-critical)"
-            opacity={0.9}
+            opacity={0.95}
+          />
+        ) : b.errors_warning > 0 ? (
+          <circle
+            key={`err-${i}`}
+            cx={i + 0.5}
+            cy={2}
+            r={0.6}
+            fill="var(--status-warning)"
+            opacity={0.8}
+          />
+        ) : b.errors_info > 0 ? (
+          <circle
+            key={`err-${i}`}
+            cx={i + 0.5}
+            cy={2}
+            r={0.4}
+            fill="var(--status-inactive)"
+            opacity={0.5}
           />
         ) : null,
       )}

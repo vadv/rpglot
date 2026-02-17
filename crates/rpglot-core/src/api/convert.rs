@@ -12,7 +12,7 @@ use crate::analysis::{
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
-    CgroupCpuInfo, DataBlock, PgLogEventType, PgLogSeverity, PgStatBgwriterInfo,
+    CgroupCpuInfo, DataBlock, ErrorCategory, PgLogEventType, PgLogSeverity, PgStatBgwriterInfo,
     PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
 };
 
@@ -587,14 +587,29 @@ fn extract_pg_summary(snap: &Snapshot, prev: Option<&Snapshot>, delta_time: f64)
     let bgw = compute_bgw_rates(snap, prev, delta_time);
     let backend_io_hit = compute_backend_io_hit(snap, prev);
 
-    let errors: u32 = find_block(snap, |b| {
-        if let DataBlock::PgLogErrors(entries) = b {
-            Some(entries.iter().map(|e| e.count).sum())
-        } else {
-            None
+    let (errors, errors_critical, errors_warning, errors_info) = {
+        let mut total: u32 = 0;
+        let mut critical: u32 = 0;
+        let mut warning: u32 = 0;
+        let mut info: u32 = 0;
+        if let Some(entries) = find_block(snap, |b| {
+            if let DataBlock::PgLogErrors(v) = b {
+                Some(v.as_slice())
+            } else {
+                None
+            }
+        }) {
+            for e in entries {
+                total += e.count;
+                match severity_for_category(e.category) {
+                    SeverityGroup::Critical => critical += e.count,
+                    SeverityGroup::Warning => warning += e.count,
+                    SeverityGroup::Info => info += e.count,
+                }
+            }
         }
-    })
-    .unwrap_or(0);
+        (total, critical, warning, info)
+    };
 
     PgSummary {
         tps: db_rates.as_ref().map(|r| r.0),
@@ -605,6 +620,42 @@ fn extract_pg_summary(snap: &Snapshot, prev: Option<&Snapshot>, delta_time: f64)
         deadlocks: db_rates.as_ref().map(|r| r.4),
         bgwriter: bgw,
         errors: if errors > 0 { Some(errors) } else { None },
+        errors_critical: if errors_critical > 0 {
+            Some(errors_critical)
+        } else {
+            None
+        },
+        errors_warning: if errors_warning > 0 {
+            Some(errors_warning)
+        } else {
+            None
+        },
+        errors_info: if errors_info > 0 {
+            Some(errors_info)
+        } else {
+            None
+        },
+    }
+}
+
+/// Severity grouping for error categories (used by convert and heatmap).
+/// This mapping is intentionally local — the backend stores only the category,
+/// severity interpretation belongs to consumers.
+enum SeverityGroup {
+    Critical,
+    Warning,
+    Info,
+}
+
+fn severity_for_category(cat: ErrorCategory) -> SeverityGroup {
+    match cat {
+        ErrorCategory::Lock | ErrorCategory::Constraint | ErrorCategory::Serialization => {
+            SeverityGroup::Info
+        }
+        ErrorCategory::Resource | ErrorCategory::DataCorruption | ErrorCategory::System => {
+            SeverityGroup::Critical
+        }
+        _ => SeverityGroup::Warning,
     }
 }
 
@@ -1615,6 +1666,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 message: resolve(interner, e.pattern_hash),
                 sample: resolve(interner, e.sample_hash),
                 statement: resolve(interner, e.statement_hash),
+                category: e.category.label().to_string(),
             });
         }
     }
@@ -1660,6 +1712,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 message: ev.message.clone(),
                 sample: String::new(),
                 statement: String::new(),
+                category: String::new(),
             });
         }
     }

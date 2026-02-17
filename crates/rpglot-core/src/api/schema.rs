@@ -625,6 +625,21 @@ fn generate_summary_schema() -> SummarySchema {
                     ),
                     field("deadlocks", "Deadlocks", DataType::Number, None, None),
                     field("errors", "Errors", DataType::Integer, None, None),
+                    field(
+                        "errors_critical",
+                        "Err Critical",
+                        DataType::Integer,
+                        None,
+                        None,
+                    ),
+                    field(
+                        "errors_warning",
+                        "Err Warning",
+                        DataType::Integer,
+                        None,
+                        None,
+                    ),
+                    field("errors_info", "Err Info", DataType::Integer, None, None),
                 ],
             },
             SummarySection {
@@ -2427,6 +2442,15 @@ fn generate_pge_schema() -> TabSchema {
                 true,
                 true,
             ),
+            col(
+                "category",
+                "Category",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
             col("count", "Count", DataType::Integer, None, None, true, false),
             col(
                 "table_name",
@@ -2595,10 +2619,17 @@ fn generate_pge_schema() -> TabSchema {
             ViewSchema {
                 key: "errors".into(),
                 label: "Errors".into(),
-                columns: vec!["severity", "count", "message", "sample", "statement"]
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
+                columns: vec![
+                    "severity",
+                    "category",
+                    "count",
+                    "message",
+                    "sample",
+                    "statement",
+                ]
+                .into_iter()
+                .map(String::from)
+                .collect(),
                 default: true,
                 default_sort: Some("count".into()),
                 default_sort_desc: true,

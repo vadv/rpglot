@@ -151,6 +151,9 @@ export interface PgSummary {
   temp_bytes_s: number | null;
   deadlocks: number | null;
   errors: number | null;
+  errors_critical: number | null;
+  errors_warning: number | null;
+  errors_info: number | null;
   bgwriter: BgwriterSummary | null;
 }
 
@@ -343,6 +346,7 @@ export interface PgEventsRow {
   event_id: number;
   event_type: string;
   severity: string;
+  category: string;
   count: number;
   table_name: string;
   elapsed_s: number;
@@ -514,7 +518,9 @@ export interface HeatmapBucket {
   cpu: number;
   cgroup_cpu: number;
   cgroup_mem: number;
-  errors: number;
+  errors_critical: number;
+  errors_warning: number;
+  errors_info: number;
   checkpoints: number;
   autovacuums: number;
   slow_queries: number;

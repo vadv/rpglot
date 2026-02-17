@@ -257,6 +257,217 @@ fn replace_wal_address(s: &str) -> String {
     result
 }
 
+// ============================================================
+// Error classification
+// ============================================================
+
+use crate::storage::model::{ErrorCategory, PgLogSeverity};
+
+/// Classify a normalized error pattern into an [`ErrorCategory`].
+///
+/// Takes the **normalized** pattern (after `normalize_error()`) and the log severity.
+/// Order of checks matters — first match wins.
+pub fn classify_error(pattern: &str, severity: PgLogSeverity) -> ErrorCategory {
+    // PANIC is always data corruption / catastrophic
+    if severity == PgLogSeverity::Panic {
+        return ErrorCategory::DataCorruption;
+    }
+
+    // --- Lock ---
+    if pattern.starts_with("deadlock detected") {
+        return ErrorCategory::Lock;
+    }
+    if pattern.contains("could not obtain lock") {
+        return ErrorCategory::Lock;
+    }
+    if pattern.contains("lock timeout")
+        || pattern.starts_with("canceling statement due to lock timeout")
+    {
+        return ErrorCategory::Lock;
+    }
+    if pattern.contains("still waiting for") && pattern.contains("Lock") {
+        return ErrorCategory::Lock;
+    }
+
+    // --- Constraint ---
+    if pattern.contains("duplicate key") {
+        return ErrorCategory::Constraint;
+    }
+    if pattern.contains("violates foreign key") {
+        return ErrorCategory::Constraint;
+    }
+    if pattern.contains("violates not-null") {
+        return ErrorCategory::Constraint;
+    }
+    if pattern.contains("violates check constraint") {
+        return ErrorCategory::Constraint;
+    }
+    if pattern.contains("violates exclusion constraint") {
+        return ErrorCategory::Constraint;
+    }
+    if pattern.starts_with("null value in column") {
+        return ErrorCategory::Constraint;
+    }
+
+    // --- Serialization ---
+    if pattern.contains("could not serialize access") {
+        return ErrorCategory::Serialization;
+    }
+
+    // --- Timeout ---
+    if pattern.contains("statement timeout") {
+        return ErrorCategory::Timeout;
+    }
+    if pattern.contains("idle-in-transaction session timeout") {
+        return ErrorCategory::Timeout;
+    }
+    if pattern.contains("transaction timeout") {
+        return ErrorCategory::Timeout;
+    }
+    if pattern.starts_with("canceling statement due to user request") {
+        return ErrorCategory::Timeout;
+    }
+    if pattern.contains("idle session timeout") {
+        return ErrorCategory::Timeout;
+    }
+
+    // --- Resource ---
+    if pattern.contains("out of memory") || pattern.contains("out of shared memory") {
+        return ErrorCategory::Resource;
+    }
+    if pattern.contains("too many connections") {
+        return ErrorCategory::Resource;
+    }
+    if pattern.contains("disk full") {
+        return ErrorCategory::Resource;
+    }
+    if pattern.contains("could not extend") {
+        return ErrorCategory::Resource;
+    }
+    if pattern.contains("could not resize shared memory") {
+        return ErrorCategory::Resource;
+    }
+    if pattern.contains("remaining connection slots") {
+        return ErrorCategory::Resource;
+    }
+
+    // --- Data Corruption ---
+    if pattern.contains("invalid page") {
+        return ErrorCategory::DataCorruption;
+    }
+    if pattern.contains("could not read block") {
+        return ErrorCategory::DataCorruption;
+    }
+    if pattern.contains("data corrupted") || pattern.contains("index corrupted") {
+        return ErrorCategory::DataCorruption;
+    }
+    if pattern.contains("unexpected zero page") {
+        return ErrorCategory::DataCorruption;
+    }
+    if pattern.contains("could not access status of transaction") {
+        return ErrorCategory::DataCorruption;
+    }
+    if pattern.contains("invalid checkpoint record") {
+        return ErrorCategory::DataCorruption;
+    }
+    if pattern.contains("invalid memory alloc") {
+        return ErrorCategory::DataCorruption;
+    }
+
+    // --- System ---
+    if pattern.contains("could not open file") {
+        return ErrorCategory::System;
+    }
+    if pattern.contains("could not write") && pattern.contains("file") {
+        return ErrorCategory::System;
+    }
+    if pattern.contains("I/O error") {
+        return ErrorCategory::System;
+    }
+    if pattern.contains("crash shutdown") {
+        return ErrorCategory::System;
+    }
+    if pattern.contains("server process") && pattern.contains("terminated") {
+        return ErrorCategory::System;
+    }
+    if pattern.contains("shutting down") {
+        return ErrorCategory::System;
+    }
+    if pattern.contains("not accepting commands") {
+        return ErrorCategory::System;
+    }
+
+    // --- Connection ---
+    if pattern.contains("connection reset by peer") {
+        return ErrorCategory::Connection;
+    }
+    if pattern.contains("unexpected EOF") {
+        return ErrorCategory::Connection;
+    }
+    if pattern.contains("broken pipe") {
+        return ErrorCategory::Connection;
+    }
+    if pattern.contains("could not receive data from client") {
+        return ErrorCategory::Connection;
+    }
+    if pattern.contains("could not send data to client") {
+        return ErrorCategory::Connection;
+    }
+    if pattern.contains("terminating connection") {
+        return ErrorCategory::Connection;
+    }
+    if pattern.contains("connection lost") {
+        return ErrorCategory::Connection;
+    }
+
+    // --- Auth ---
+    if pattern.contains("password authentication failed") {
+        return ErrorCategory::Auth;
+    }
+    if pattern.contains("no pg_hba.conf entry") {
+        return ErrorCategory::Auth;
+    }
+    if pattern.starts_with("role") && pattern.contains("does not exist") {
+        return ErrorCategory::Auth;
+    }
+    if pattern.starts_with("permission denied") {
+        return ErrorCategory::Auth;
+    }
+    if pattern.contains("SSL connection is required") {
+        return ErrorCategory::Auth;
+    }
+
+    // --- Syntax (broad catch-all for SQL errors) ---
+    if pattern.starts_with("syntax error") {
+        return ErrorCategory::Syntax;
+    }
+    if pattern.contains("does not exist") {
+        return ErrorCategory::Syntax;
+    }
+    if pattern.contains("invalid input syntax") {
+        return ErrorCategory::Syntax;
+    }
+    if pattern.contains("division by zero") {
+        return ErrorCategory::Syntax;
+    }
+    if pattern.contains("value too long") {
+        return ErrorCategory::Syntax;
+    }
+    if pattern.contains("numeric value out of range") {
+        return ErrorCategory::Syntax;
+    }
+    if pattern.contains("cannot coerce") {
+        return ErrorCategory::Syntax;
+    }
+
+    // FATAL without specific classification → System
+    if severity == PgLogSeverity::Fatal {
+        return ErrorCategory::System;
+    }
+
+    ErrorCategory::Other
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,6 +566,273 @@ mod tests {
         assert_eq!(
             normalize_error("canceling statement due to statement timeout after 30000.123"),
             "canceling statement due to statement timeout after ..."
+        );
+    }
+
+    // ---- classify_error tests ----
+
+    use crate::storage::model::{ErrorCategory, PgLogSeverity};
+
+    #[test]
+    fn test_classify_lock() {
+        assert_eq!(
+            classify_error("deadlock detected", PgLogSeverity::Error),
+            ErrorCategory::Lock
+        );
+        assert_eq!(
+            classify_error(
+                "could not obtain lock on row in relation \"...\"",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Lock
+        );
+        assert_eq!(
+            classify_error(
+                "canceling statement due to lock timeout",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Lock
+        );
+    }
+
+    #[test]
+    fn test_classify_constraint() {
+        assert_eq!(
+            classify_error(
+                "duplicate key value violates unique constraint \"...\"",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Constraint
+        );
+        assert_eq!(
+            classify_error(
+                "insert or update on table \"...\" violates foreign key constraint \"...\"",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Constraint
+        );
+        assert_eq!(
+            classify_error(
+                "null value in column \"...\" violates not-null constraint",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Constraint
+        );
+        assert_eq!(
+            classify_error(
+                "new row for relation \"...\" violates check constraint \"...\"",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Constraint
+        );
+    }
+
+    #[test]
+    fn test_classify_serialization() {
+        assert_eq!(
+            classify_error(
+                "could not serialize access due to concurrent update",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Serialization
+        );
+        assert_eq!(
+            classify_error(
+                "could not serialize access due to read/write dependencies among transactions",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Serialization
+        );
+    }
+
+    #[test]
+    fn test_classify_timeout() {
+        assert_eq!(
+            classify_error(
+                "canceling statement due to statement timeout after ...",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Timeout
+        );
+        assert_eq!(
+            classify_error(
+                "canceling statement due to user request",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Timeout
+        );
+        assert_eq!(
+            classify_error(
+                "terminating connection due to idle-in-transaction session timeout",
+                PgLogSeverity::Fatal
+            ),
+            ErrorCategory::Timeout
+        );
+    }
+
+    #[test]
+    fn test_classify_connection() {
+        assert_eq!(
+            classify_error("connection reset by peer", PgLogSeverity::Fatal),
+            ErrorCategory::Connection
+        );
+        assert_eq!(
+            classify_error("unexpected EOF on client connection", PgLogSeverity::Fatal),
+            ErrorCategory::Connection
+        );
+        assert_eq!(
+            classify_error("broken pipe", PgLogSeverity::Error),
+            ErrorCategory::Connection
+        );
+    }
+
+    #[test]
+    fn test_classify_auth() {
+        assert_eq!(
+            classify_error(
+                "password authentication failed for user \"...\"",
+                PgLogSeverity::Fatal
+            ),
+            ErrorCategory::Auth
+        );
+        assert_eq!(
+            classify_error(
+                "no pg_hba.conf entry for host \"...\", user \"...\", database \"...\"",
+                PgLogSeverity::Fatal
+            ),
+            ErrorCategory::Auth
+        );
+        assert_eq!(
+            classify_error("permission denied for table ...", PgLogSeverity::Error),
+            ErrorCategory::Auth
+        );
+    }
+
+    #[test]
+    fn test_classify_syntax() {
+        assert_eq!(
+            classify_error("syntax error at or near \"...\"", PgLogSeverity::Error),
+            ErrorCategory::Syntax
+        );
+        assert_eq!(
+            classify_error(
+                "column \"...\" of relation \"...\" does not exist",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Syntax
+        );
+        assert_eq!(
+            classify_error(
+                "invalid input syntax for integer: ...",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Syntax
+        );
+        assert_eq!(
+            classify_error("division by zero", PgLogSeverity::Error),
+            ErrorCategory::Syntax
+        );
+    }
+
+    #[test]
+    fn test_classify_resource() {
+        assert_eq!(
+            classify_error("out of memory", PgLogSeverity::Error),
+            ErrorCategory::Resource
+        );
+        assert_eq!(
+            classify_error("out of shared memory", PgLogSeverity::Error),
+            ErrorCategory::Resource
+        );
+        assert_eq!(
+            classify_error(
+                "too many connections for role \"...\"",
+                PgLogSeverity::Fatal
+            ),
+            ErrorCategory::Resource
+        );
+        assert_eq!(
+            classify_error("disk full", PgLogSeverity::Error),
+            ErrorCategory::Resource
+        );
+        assert_eq!(
+            classify_error(
+                "could not extend file \"...\": No space left on device",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::Resource
+        );
+        assert_eq!(
+            classify_error(
+                "remaining connection slots are reserved for non-replication superuser connections",
+                PgLogSeverity::Fatal
+            ),
+            ErrorCategory::Resource
+        );
+    }
+
+    #[test]
+    fn test_classify_data_corruption() {
+        assert_eq!(
+            classify_error(
+                "invalid page in block ... of relation \"...\"",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::DataCorruption
+        );
+        assert_eq!(
+            classify_error(
+                "index \"...\" contains unexpected zero page at block ...",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::DataCorruption
+        );
+        assert_eq!(
+            classify_error("something went wrong", PgLogSeverity::Panic),
+            ErrorCategory::DataCorruption
+        );
+    }
+
+    #[test]
+    fn test_classify_system() {
+        assert_eq!(
+            classify_error(
+                "could not open file \"...\": No such file or directory",
+                PgLogSeverity::Error
+            ),
+            ErrorCategory::System
+        );
+        assert_eq!(
+            classify_error("I/O error on read", PgLogSeverity::Error),
+            ErrorCategory::System
+        );
+        assert_eq!(
+            classify_error("the database system is shutting down", PgLogSeverity::Fatal),
+            ErrorCategory::System
+        );
+    }
+
+    #[test]
+    fn test_classify_fatal_fallback_to_system() {
+        assert_eq!(
+            classify_error("some unknown fatal error", PgLogSeverity::Fatal),
+            ErrorCategory::System
+        );
+    }
+
+    #[test]
+    fn test_classify_other() {
+        assert_eq!(
+            classify_error("some completely unknown error", PgLogSeverity::Error),
+            ErrorCategory::Other
+        );
+    }
+
+    #[test]
+    fn test_classify_role_does_not_exist() {
+        assert_eq!(
+            classify_error("role \"...\" does not exist", PgLogSeverity::Fatal),
+            ErrorCategory::Auth
         );
     }
 }

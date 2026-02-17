@@ -285,6 +285,12 @@ pub struct PgSummary {
     pub bgwriter: Option<BgwriterSummary>,
     /// Total PostgreSQL log error count in this snapshot (ERROR+FATAL+PANIC).
     pub errors: Option<u32>,
+    /// Critical-severity errors (resource, data_corruption, system).
+    pub errors_critical: Option<u32>,
+    /// Warning-severity errors (timeout, connection, auth, syntax, other).
+    pub errors_warning: Option<u32>,
+    /// Info-severity errors (lock, constraint, serialization).
+    pub errors_info: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -647,6 +653,8 @@ pub struct PgEventsRow {
     pub sample: String,
     /// SQL statement that caused the error (from STATEMENT: line), empty if not available.
     pub statement: String,
+    /// Error category: "lock", "constraint", "timeout", etc. Empty for non-error events.
+    pub category: String,
 }
 
 /// pg_locks blocking tree row (flat with depth).

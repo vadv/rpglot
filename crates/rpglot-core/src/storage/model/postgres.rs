@@ -628,6 +628,58 @@ pub enum PgLogSeverity {
     Panic = 2,
 }
 
+/// Error category for PostgreSQL log errors.
+///
+/// Classification is determined by pattern matching on the normalized error message.
+/// The backend stores only the category (what happened); severity interpretation
+/// (how serious it is) is determined by consumers (advisor rules, frontend).
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum ErrorCategory {
+    /// Lock contention: deadlock, could not obtain lock, lock timeout.
+    Lock = 0,
+    /// Constraint violations: duplicate key, foreign key, not-null, check, exclusion.
+    Constraint = 1,
+    /// Serialization failures (SERIALIZABLE isolation level).
+    Serialization = 2,
+    /// Timeouts: statement timeout, idle-in-transaction timeout, query canceled.
+    Timeout = 3,
+    /// Connection issues: reset by peer, unexpected EOF, broken pipe.
+    Connection = 4,
+    /// Authentication/authorization: password failed, pg_hba.conf, permission denied.
+    Auth = 5,
+    /// SQL syntax/semantic: syntax error, column/relation/function does not exist.
+    Syntax = 6,
+    /// Resource exhaustion: out of memory, too many connections, disk full.
+    Resource = 7,
+    /// Data corruption: invalid page, corrupted data/index, PANIC.
+    DataCorruption = 8,
+    /// System errors: I/O error, could not open file, crash shutdown.
+    System = 9,
+    /// Uncategorized errors.
+    #[default]
+    Other = 10,
+}
+
+impl ErrorCategory {
+    /// Machine-readable label for API serialization.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Lock => "lock",
+            Self::Constraint => "constraint",
+            Self::Serialization => "serialization",
+            Self::Timeout => "timeout",
+            Self::Connection => "connection",
+            Self::Auth => "auth",
+            Self::Syntax => "syntax",
+            Self::Resource => "resource",
+            Self::DataCorruption => "data_corruption",
+            Self::System => "system",
+            Self::Other => "other",
+        }
+    }
+}
+
 /// A grouped PostgreSQL log error entry within a snapshot interval.
 ///
 /// Errors are normalized into patterns (concrete values replaced with `"..."`)
@@ -649,6 +701,9 @@ pub struct PgLogEntry {
     /// 0 if not available.
     #[serde(default)]
     pub statement_hash: u64,
+    /// Error category determined by pattern matching on the normalized message.
+    #[serde(default)]
+    pub category: ErrorCategory,
 }
 
 /// Operational event counts from PostgreSQL logs for a snapshot interval.

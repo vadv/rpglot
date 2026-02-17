@@ -1,14 +1,14 @@
 //! Lightweight per-snapshot heatmap data for timeline visualization.
 //!
-//! Each snapshot produces a 12-byte `HeatmapEntry` (active_sessions, host CPU%,
-//! cgroup CPU%, cgroup memory%, error_count, checkpoint_count, autovacuum_count).
+//! Each snapshot produces a 14-byte `HeatmapEntry` (active_sessions, host CPU%,
+//! cgroup CPU%, cgroup memory%, errors by severity, checkpoint/autovacuum/slow counts).
 //! These are stored in `.heatmap` sidecar files alongside `.zst` chunk files
 //! and read without decompressing snapshots — enabling O(1) access to activity
 //! data for arbitrary time ranges.
 //!
 //! ## File format
 //!
-//! 4-byte magic `b"HM01"` followed by 12-byte little-endian entries.
+//! 4-byte magic `b"HM03"` followed by 14-byte little-endian entries.
 
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -17,17 +17,38 @@ use serde::Serialize;
 use xxhash_rust::xxh3::xxh3_64;
 
 use super::model::{
-    CgroupCpuInfo, CgroupMemoryInfo, DataBlock, PgLogEventType, Snapshot, SystemCpuInfo,
+    CgroupCpuInfo, CgroupMemoryInfo, DataBlock, ErrorCategory, PgLogEventType, Snapshot,
+    SystemCpuInfo,
 };
 
-/// Magic bytes identifying heatmap sidecar files (v2: 13 bytes per entry).
-const HEATMAP_MAGIC: &[u8; 4] = b"HM02";
+/// Magic bytes identifying heatmap sidecar files (v3: 14 bytes per entry, per-severity errors).
+const HEATMAP_MAGIC: &[u8; 4] = b"HM03";
 
 /// Entry size in bytes.
-const ENTRY_SIZE: usize = 13;
+const ENTRY_SIZE: usize = 14;
+
+/// Local severity mapping for error categories in heatmap context.
+/// Same logic as in pg_errors.rs and convert.rs (intentionally duplicated — 5 lines).
+fn severity_for_category(cat: ErrorCategory) -> ErrorSeverityGroup {
+    match cat {
+        ErrorCategory::Lock | ErrorCategory::Constraint | ErrorCategory::Serialization => {
+            ErrorSeverityGroup::Info
+        }
+        ErrorCategory::Resource | ErrorCategory::DataCorruption | ErrorCategory::System => {
+            ErrorSeverityGroup::Critical
+        }
+        _ => ErrorSeverityGroup::Warning,
+    }
+}
+
+enum ErrorSeverityGroup {
+    Critical,
+    Warning,
+    Info,
+}
 
 /// Lightweight per-snapshot heatmap entry.
-/// 13 bytes per entry.
+/// 14 bytes per entry.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct HeatmapEntry {
@@ -39,8 +60,12 @@ pub struct HeatmapEntry {
     pub cgroup_cpu_pct_x10: u16,
     /// Cgroup memory utilization * 10 (0..1000 = 0.0%..100.0%).
     pub cgroup_mem_pct_x10: u16,
-    /// Total PostgreSQL log error count in this snapshot (ERROR+FATAL+PANIC).
-    pub error_count: u16,
+    /// Critical errors: resource + data_corruption + system.
+    pub errors_critical: u8,
+    /// Warning errors: timeout + connection + auth + syntax + other.
+    pub errors_warning: u8,
+    /// Info errors: lock + constraint + serialization.
+    pub errors_info: u8,
     /// Number of checkpoint events in this snapshot interval.
     pub checkpoint_count: u8,
     /// Number of autovacuum/autoanalyze events in this snapshot interval.
@@ -62,8 +87,12 @@ pub struct HeatmapBucket {
     pub cgroup_cpu: u16,
     /// Max cgroup memory% * 10 in this bucket (0..1000).
     pub cgroup_mem: u16,
-    /// Max PostgreSQL error count in this bucket.
-    pub errors: u16,
+    /// Max critical error count in this bucket.
+    pub errors_critical: u8,
+    /// Max warning error count in this bucket.
+    pub errors_warning: u8,
+    /// Max info error count in this bucket.
+    pub errors_info: u8,
     /// Total checkpoint events in this bucket.
     pub checkpoints: u8,
     /// Total autovacuum/autoanalyze events in this bucket.
@@ -82,7 +111,7 @@ pub fn heatmap_path(chunk_path: &Path) -> PathBuf {
 }
 
 /// Writes heatmap entries to a `.heatmap` sidecar file.
-/// Format: 4-byte magic `b"HM02"` + 13-byte little-endian entries.
+/// Format: 4-byte magic `b"HM03"` + 14-byte little-endian entries.
 pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
     let mut buf = Vec::with_capacity(4 + entries.len() * ENTRY_SIZE);
     buf.extend_from_slice(HEATMAP_MAGIC);
@@ -91,7 +120,9 @@ pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
         buf.extend_from_slice(&e.cpu_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.cgroup_cpu_pct_x10.to_le_bytes());
         buf.extend_from_slice(&e.cgroup_mem_pct_x10.to_le_bytes());
-        buf.extend_from_slice(&e.error_count.to_le_bytes());
+        buf.push(e.errors_critical);
+        buf.push(e.errors_warning);
+        buf.push(e.errors_info);
         buf.push(e.checkpoint_count);
         buf.push(e.autovacuum_count);
         buf.push(e.slow_query_count);
@@ -120,10 +151,12 @@ pub fn read_heatmap(path: &Path) -> io::Result<Vec<HeatmapEntry>> {
             cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
             cgroup_cpu_pct_x10: u16::from_le_bytes([payload[off + 4], payload[off + 5]]),
             cgroup_mem_pct_x10: u16::from_le_bytes([payload[off + 6], payload[off + 7]]),
-            error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
-            checkpoint_count: payload[off + 10],
-            autovacuum_count: payload[off + 11],
-            slow_query_count: payload[off + 12],
+            errors_critical: payload[off + 8],
+            errors_warning: payload[off + 9],
+            errors_info: payload[off + 10],
+            checkpoint_count: payload[off + 11],
+            autovacuum_count: payload[off + 12],
+            slow_query_count: payload[off + 13],
         });
     }
     Ok(entries)
@@ -230,20 +263,29 @@ pub fn count_slow_query_events(snapshot: &Snapshot) -> u8 {
         .unwrap_or(0)
 }
 
-/// Count total PostgreSQL log errors in a snapshot.
-pub fn count_error_entries(snapshot: &Snapshot) -> u16 {
-    let total: u64 = snapshot
-        .blocks
-        .iter()
-        .filter_map(|b| {
-            if let DataBlock::PgLogErrors(entries) = b {
-                Some(entries.iter().map(|e| e.count as u64).sum::<u64>())
-            } else {
-                None
+/// Count PostgreSQL log errors by severity group: (critical, warning, info).
+pub fn count_error_entries_by_severity(snapshot: &Snapshot) -> (u8, u8, u8) {
+    let mut critical: u64 = 0;
+    let mut warning: u64 = 0;
+    let mut info: u64 = 0;
+
+    for b in &snapshot.blocks {
+        if let DataBlock::PgLogErrors(entries) = b {
+            for e in entries {
+                match severity_for_category(e.category) {
+                    ErrorSeverityGroup::Critical => critical += e.count as u64,
+                    ErrorSeverityGroup::Warning => warning += e.count as u64,
+                    ErrorSeverityGroup::Info => info += e.count as u64,
+                }
             }
-        })
-        .sum();
-    total.min(u16::MAX as u64) as u16
+        }
+    }
+
+    (
+        critical.min(255) as u8,
+        warning.min(255) as u8,
+        info.min(255) as u8,
+    )
 }
 
 /// Count non-idle PGA sessions in a snapshot.
@@ -383,8 +425,8 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
             .map(compute_cgroup_mem_pct)
             .unwrap_or(0);
 
-        // PostgreSQL log error count
-        let errors = count_error_entries(snap);
+        // PostgreSQL log error counts by severity
+        let (errors_critical, errors_warning, errors_info) = count_error_entries_by_severity(snap);
 
         // Checkpoint / autovacuum / slow query events
         let checkpoints = count_checkpoint_events(snap);
@@ -396,7 +438,9 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
             cpu_pct_x10: cpu,
             cgroup_cpu_pct_x10: cgroup_cpu,
             cgroup_mem_pct_x10: cgroup_mem,
-            error_count: errors,
+            errors_critical,
+            errors_warning,
+            errors_info,
             checkpoint_count: checkpoints,
             autovacuum_count: autovacuums,
             slow_query_count: slow_queries,
@@ -435,7 +479,9 @@ pub fn bucket_heatmap(
                 cpu: 0,
                 cgroup_cpu: 0,
                 cgroup_mem: 0,
-                errors: 0,
+                errors_critical: 0,
+                errors_warning: 0,
+                errors_info: 0,
                 checkpoints: 0,
                 autovacuums: 0,
                 slow_queries: 0,
@@ -450,7 +496,9 @@ pub fn bucket_heatmap(
         buckets[idx].cpu = buckets[idx].cpu.max(entry.cpu_pct_x10);
         buckets[idx].cgroup_cpu = buckets[idx].cgroup_cpu.max(entry.cgroup_cpu_pct_x10);
         buckets[idx].cgroup_mem = buckets[idx].cgroup_mem.max(entry.cgroup_mem_pct_x10);
-        buckets[idx].errors = buckets[idx].errors.max(entry.error_count);
+        buckets[idx].errors_critical = buckets[idx].errors_critical.max(entry.errors_critical);
+        buckets[idx].errors_warning = buckets[idx].errors_warning.max(entry.errors_warning);
+        buckets[idx].errors_info = buckets[idx].errors_info.max(entry.errors_info);
         buckets[idx].checkpoints = buckets[idx]
             .checkpoints
             .saturating_add(entry.checkpoint_count);
@@ -477,7 +525,9 @@ mod tests {
                 cpu_pct_x10: 450,
                 cgroup_cpu_pct_x10: 300,
                 cgroup_mem_pct_x10: 750,
-                error_count: 3,
+                errors_critical: 2,
+                errors_warning: 5,
+                errors_info: 10,
                 checkpoint_count: 1,
                 autovacuum_count: 2,
                 slow_query_count: 4,
@@ -487,7 +537,9 @@ mod tests {
                 cpu_pct_x10: 0,
                 cgroup_cpu_pct_x10: 0,
                 cgroup_mem_pct_x10: 0,
-                error_count: 0,
+                errors_critical: 0,
+                errors_warning: 0,
+                errors_info: 0,
                 checkpoint_count: 0,
                 autovacuum_count: 0,
                 slow_query_count: 0,
@@ -497,7 +549,9 @@ mod tests {
                 cpu_pct_x10: 999,
                 cgroup_cpu_pct_x10: 500,
                 cgroup_mem_pct_x10: 950,
-                error_count: 42,
+                errors_critical: 1,
+                errors_warning: 20,
+                errors_info: 200,
                 checkpoint_count: 3,
                 autovacuum_count: 7,
                 slow_query_count: 16,
@@ -514,7 +568,9 @@ mod tests {
         assert_eq!(loaded[0].cpu_pct_x10, 450);
         assert_eq!(loaded[0].cgroup_cpu_pct_x10, 300);
         assert_eq!(loaded[0].cgroup_mem_pct_x10, 750);
-        assert_eq!(loaded[0].error_count, 3);
+        assert_eq!(loaded[0].errors_critical, 2);
+        assert_eq!(loaded[0].errors_warning, 5);
+        assert_eq!(loaded[0].errors_info, 10);
         assert_eq!(loaded[0].checkpoint_count, 1);
         assert_eq!(loaded[0].autovacuum_count, 2);
         assert_eq!(loaded[0].slow_query_count, 4);
@@ -522,7 +578,9 @@ mod tests {
         assert_eq!(loaded[2].cpu_pct_x10, 999);
         assert_eq!(loaded[2].cgroup_cpu_pct_x10, 500);
         assert_eq!(loaded[2].cgroup_mem_pct_x10, 950);
-        assert_eq!(loaded[2].error_count, 42);
+        assert_eq!(loaded[2].errors_critical, 1);
+        assert_eq!(loaded[2].errors_warning, 20);
+        assert_eq!(loaded[2].errors_info, 200);
         assert_eq!(loaded[2].checkpoint_count, 3);
         assert_eq!(loaded[2].autovacuum_count, 7);
         assert_eq!(loaded[2].slow_query_count, 16);
@@ -541,7 +599,9 @@ mod tests {
                     cpu_pct_x10: 200,
                     cgroup_cpu_pct_x10: 100,
                     cgroup_mem_pct_x10: 500,
-                    error_count: 0,
+                    errors_critical: 0,
+                    errors_warning: 0,
+                    errors_info: 0,
                     checkpoint_count: 1,
                     autovacuum_count: 0,
                     slow_query_count: 2,
@@ -554,7 +614,9 @@ mod tests {
                     cpu_pct_x10: 700,
                     cgroup_cpu_pct_x10: 400,
                     cgroup_mem_pct_x10: 600,
-                    error_count: 5,
+                    errors_critical: 1,
+                    errors_warning: 3,
+                    errors_info: 5,
                     checkpoint_count: 0,
                     autovacuum_count: 2,
                     slow_query_count: 1,
@@ -567,7 +629,9 @@ mod tests {
                     cpu_pct_x10: 100,
                     cgroup_cpu_pct_x10: 50,
                     cgroup_mem_pct_x10: 550,
-                    error_count: 2,
+                    errors_critical: 0,
+                    errors_warning: 2,
+                    errors_info: 8,
                     checkpoint_count: 1,
                     autovacuum_count: 3,
                     slow_query_count: 3,
@@ -581,16 +645,20 @@ mod tests {
         assert_eq!(buckets[0].cpu, 200);
         assert_eq!(buckets[0].cgroup_cpu, 100);
         assert_eq!(buckets[0].cgroup_mem, 500);
-        assert_eq!(buckets[0].errors, 0);
+        assert_eq!(buckets[0].errors_critical, 0);
+        assert_eq!(buckets[0].errors_warning, 0);
+        assert_eq!(buckets[0].errors_info, 0);
         assert_eq!(buckets[0].checkpoints, 1);
         assert_eq!(buckets[0].autovacuums, 0);
         assert_eq!(buckets[0].slow_queries, 2);
-        // Second bucket [150, 200]: entries at 150 and 200 — sum for events
+        // Second bucket [150, 200]: entries at 150 and 200 — max for errors
         assert_eq!(buckets[1].active, 10);
         assert_eq!(buckets[1].cpu, 700);
         assert_eq!(buckets[1].cgroup_cpu, 400);
         assert_eq!(buckets[1].cgroup_mem, 600);
-        assert_eq!(buckets[1].errors, 5);
+        assert_eq!(buckets[1].errors_critical, 1);
+        assert_eq!(buckets[1].errors_warning, 3);
+        assert_eq!(buckets[1].errors_info, 8);
         assert_eq!(buckets[1].checkpoints, 1); // 0 + 1
         assert_eq!(buckets[1].autovacuums, 5); // 2 + 3
         assert_eq!(buckets[1].slow_queries, 4); // 1 + 3
@@ -621,10 +689,7 @@ mod tests {
         assert_eq!(pct, 500); // 50.0% * 10
 
         // Unlimited quota → 0
-        let unlimited = CgroupCpuInfo {
-            quota: -1,
-            ..curr.clone()
-        };
+        let unlimited = CgroupCpuInfo { quota: -1, ..curr };
         assert_eq!(compute_cgroup_cpu_pct(&prev, &unlimited, 10.0), 0);
     }
 
