@@ -728,6 +728,9 @@ pub struct PgLogEventEntry {
     /// Extra numeric field 3: checkpoint estimate_kb.
     #[serde(default)]
     pub extra_num3: i64,
+    /// Occurrence count (slow queries grouped by normalized SQL).
+    #[serde(default)]
+    pub count: u16,
 }
 
 /// Single PostgreSQL setting from pg_settings view.

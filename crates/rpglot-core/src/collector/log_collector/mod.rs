@@ -67,6 +67,16 @@ struct PendingSlowQuery {
     truncated: bool,
 }
 
+/// Slow query grouped by normalized SQL pattern.
+struct GroupedSlowQuery {
+    /// SQL sample with maximum duration (for display).
+    sample_sql: String,
+    /// Maximum duration in seconds.
+    max_elapsed_s: f64,
+    /// Occurrence count.
+    count: u16,
+}
+
 /// Log format detected from `log_destination` setting.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LogFormat {
@@ -112,8 +122,8 @@ pub struct LogCollector {
     error_held_back: bool,
     /// Slow query being accumulated (multiline SQL continuation).
     pending_slow_query: Option<PendingSlowQuery>,
-    /// Top-N slow queries by duration (bounded to MAX_SLOW_QUERIES_PER_SNAPSHOT).
-    slow_queries: Vec<PgLogEventEntry>,
+    /// Top-N slow queries grouped by normalized SQL (bounded to MAX_SLOW_QUERIES_PER_SNAPSHOT).
+    slow_queries: HashMap<String, GroupedSlowQuery>,
     /// Total count of slow queries detected in this interval.
     slow_query_count: u16,
     /// Last initialization error (for diagnostics)
@@ -147,7 +157,7 @@ impl LogCollector {
             last_error_key: None,
             error_held_back: false,
             pending_slow_query: None,
-            slow_queries: Vec::new(),
+            slow_queries: HashMap::new(),
             slow_query_count: 0,
             last_error: None,
         }
@@ -295,7 +305,28 @@ impl LogCollector {
         let autovacuum_count = self.pending_autovacuums;
         let slow_query_count = self.slow_query_count;
         let mut events = mem::take(&mut self.pending_events);
-        events.append(&mut self.slow_queries);
+        for (_, group) in self.slow_queries.drain() {
+            events.push(PgLogEventEntry {
+                event_type: PgLogEventType::SlowQuery,
+                message: group.sample_sql,
+                table_name: String::new(),
+                elapsed_s: group.max_elapsed_s,
+                extra_num1: 0,
+                extra_num2: 0,
+                extra_num3: 0,
+                buffer_hits: 0,
+                buffer_misses: 0,
+                buffer_dirtied: 0,
+                avg_read_rate_mbs: 0.0,
+                avg_write_rate_mbs: 0.0,
+                cpu_user_s: 0.0,
+                cpu_system_s: 0.0,
+                wal_records: 0,
+                wal_fpi: 0,
+                wal_bytes: 0,
+                count: group.count,
+            });
+        }
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
         self.slow_query_count = 0;
@@ -394,7 +425,7 @@ impl LogCollector {
         }
     }
 
-    /// Flush the pending slow query into the top-N bounded collection.
+    /// Flush the pending slow query into the grouped collection (top-N by max duration).
     fn flush_pending_slow_query(&mut self) {
         let Some(pending) = self.pending_slow_query.take() else {
             return;
@@ -402,65 +433,54 @@ impl LogCollector {
         self.slow_query_count = self.slow_query_count.saturating_add(1);
 
         let duration_s = pending.duration_ms / 1000.0;
+        let normalized = normalize_error(&pending.sql);
 
-        // Early discard: if heap is full and current is slower than the fastest entry, skip
-        if self.slow_queries.len() >= MAX_SLOW_QUERIES_PER_SNAPSHOT {
-            let min_elapsed = self
-                .slow_queries
-                .iter()
-                .map(|e| e.elapsed_s)
-                .fold(f64::INFINITY, f64::min);
-            if duration_s <= min_elapsed {
-                return;
+        // If this pattern already exists — update count and max duration
+        if let Some(group) = self.slow_queries.get_mut(&normalized) {
+            group.count = group.count.saturating_add(1);
+            if duration_s > group.max_elapsed_s {
+                group.max_elapsed_s = duration_s;
+                group.sample_sql = pending.sql;
             }
-            // Replace the entry with minimum elapsed_s
-            if let Some(min_idx) = self
-                .slow_queries
-                .iter()
-                .enumerate()
-                .min_by(|(_, a), (_, b)| a.elapsed_s.partial_cmp(&b.elapsed_s).unwrap())
-                .map(|(i, _)| i)
-            {
-                self.slow_queries[min_idx] = PgLogEventEntry {
-                    event_type: PgLogEventType::SlowQuery,
-                    message: pending.sql,
-                    table_name: String::new(),
-                    elapsed_s: duration_s,
-                    extra_num1: 0,
-                    extra_num2: 0,
-                    extra_num3: 0,
-                    buffer_hits: 0,
-                    buffer_misses: 0,
-                    buffer_dirtied: 0,
-                    avg_read_rate_mbs: 0.0,
-                    avg_write_rate_mbs: 0.0,
-                    cpu_user_s: 0.0,
-                    cpu_system_s: 0.0,
-                    wal_records: 0,
-                    wal_fpi: 0,
-                    wal_bytes: 0,
-                };
-            }
-        } else {
-            self.slow_queries.push(PgLogEventEntry {
-                event_type: PgLogEventType::SlowQuery,
-                message: pending.sql,
-                table_name: String::new(),
-                elapsed_s: duration_s,
-                extra_num1: 0,
-                extra_num2: 0,
-                extra_num3: 0,
-                buffer_hits: 0,
-                buffer_misses: 0,
-                buffer_dirtied: 0,
-                avg_read_rate_mbs: 0.0,
-                avg_write_rate_mbs: 0.0,
-                cpu_user_s: 0.0,
-                cpu_system_s: 0.0,
-                wal_records: 0,
-                wal_fpi: 0,
-                wal_bytes: 0,
-            });
+            return;
+        }
+
+        // New pattern — insert if room available
+        if self.slow_queries.len() < MAX_SLOW_QUERIES_PER_SNAPSHOT {
+            self.slow_queries.insert(
+                normalized,
+                GroupedSlowQuery {
+                    sample_sql: pending.sql,
+                    max_elapsed_s: duration_s,
+                    count: 1,
+                },
+            );
+            return;
+        }
+
+        // No room — evict the group with the smallest max_elapsed_s if current is larger
+        let min_key = self
+            .slow_queries
+            .iter()
+            .min_by(|(_, a), (_, b)| {
+                a.max_elapsed_s
+                    .partial_cmp(&b.max_elapsed_s)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(k, _)| k.clone());
+
+        if let Some(key) = min_key
+            && duration_s > self.slow_queries[&key].max_elapsed_s
+        {
+            self.slow_queries.remove(&key);
+            self.slow_queries.insert(
+                normalized,
+                GroupedSlowQuery {
+                    sample_sql: pending.sql,
+                    max_elapsed_s: duration_s,
+                    count: 1,
+                },
+            );
         }
     }
 
@@ -680,6 +700,7 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             wal_records: 0,
             wal_fpi: 0,
             wal_bytes: 0,
+            count: 0,
         },
         EventData::CheckpointComplete {
             buffers_written,
@@ -713,6 +734,7 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             wal_records: wal_added,
             wal_fpi: wal_removed,
             wal_bytes: wal_recycled,
+            count: 0,
         },
         EventData::Autovacuum {
             table_name,
@@ -752,6 +774,7 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             wal_records,
             wal_fpi,
             wal_bytes,
+            count: 0,
         },
         EventData::SlowQuery { duration_ms, sql } => PgLogEventEntry {
             event_type: PgLogEventType::SlowQuery,
@@ -771,6 +794,7 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             wal_records: 0,
             wal_fpi: 0,
             wal_bytes: 0,
+            count: 0,
         },
     }
 }

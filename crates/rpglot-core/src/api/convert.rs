@@ -1608,7 +1608,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 event_id,
                 event_type: event_type_str.to_string(),
                 severity: "LOG".to_string(),
-                count: 1,
+                count: ev.count.max(1) as u32,
                 table_name: ev.table_name.clone(),
                 elapsed_s: ev.elapsed_s,
                 extra_num1: ev.extra_num1,
