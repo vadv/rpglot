@@ -1,6 +1,25 @@
 use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
-use crate::storage::model::DataBlock;
+use crate::storage::model::{DataBlock, Snapshot};
+
+/// Effective CPU count: cgroup quota/period if set, otherwise host CPU cores.
+fn effective_cpus(snapshot: &Snapshot) -> f64 {
+    if let Some(cg) = find_block(snapshot, |b| match b {
+        DataBlock::Cgroup(c) => Some(c),
+        _ => None,
+    }) && let Some(cpu) = &cg.cpu
+        && cpu.quota > 0
+        && cpu.period > 0
+    {
+        return cpu.quota as f64 / cpu.period as f64;
+    }
+    find_block(snapshot, |b| match b {
+        DataBlock::SystemCpu(v) => Some(v.iter().filter(|c| c.cpu_id >= 0).count()),
+        _ => None,
+    })
+    .unwrap_or(1)
+    .max(1) as f64
+}
 
 // ============================================================
 // IdleInTransactionRule
@@ -166,10 +185,16 @@ impl AnalysisRule for WaitSyncReplicaRule {
             return Vec::new();
         }
 
-        let severity = if count >= 3 {
+        // Normalize by CPU count: on a 20-core machine, 2 waiters = 10% — normal.
+        let cpus = effective_cpus(ctx.snapshot);
+        let pct = count as f64 / cpus * 100.0;
+
+        let severity = if pct >= 50.0 {
             Severity::Critical
-        } else {
+        } else if pct >= 20.0 {
             Severity::Warning
+        } else {
+            return Vec::new();
         };
 
         vec![Anomaly {
@@ -177,7 +202,9 @@ impl AnalysisRule for WaitSyncReplicaRule {
             rule_id: "wait_sync_replica",
             category: Category::PgActivity,
             severity,
-            title: format!("{count} session(s) waiting on synchronous replication"),
+            title: format!(
+                "{count} session(s) waiting on synchronous replication ({pct:.0}% of CPUs)"
+            ),
             detail: None,
             value: count as f64,
             merge_key: None,
@@ -215,9 +242,13 @@ impl AnalysisRule for WaitLockRule {
             return Vec::new();
         }
 
-        let severity = if count >= 5 {
+        // Normalize by CPU count: on a 20-core machine, 2 lock waiters = 10% — normal.
+        let cpus = effective_cpus(ctx.snapshot);
+        let pct = count as f64 / cpus * 100.0;
+
+        let severity = if pct >= 50.0 {
             Severity::Critical
-        } else if count >= 2 {
+        } else if pct >= 20.0 {
             Severity::Warning
         } else {
             return Vec::new();
@@ -228,7 +259,7 @@ impl AnalysisRule for WaitLockRule {
             rule_id: "wait_lock",
             category: Category::PgActivity,
             severity,
-            title: format!("{count} sessions waiting on locks"),
+            title: format!("{count} sessions waiting on locks ({pct:.0}% of CPUs)"),
             detail: None,
             value: count as f64,
             merge_key: None,
