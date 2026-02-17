@@ -35,6 +35,7 @@ pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
         // Disk
         Box::new(disk::DiskUtilHighRule),
         Box::new(disk::DiskIoSpikeRule),
+        Box::new(disk::DiskLatencyHighRule),
         // Network
         Box::new(network::NetworkSpikeRule),
         // PG Activity

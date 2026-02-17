@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::analysis::{
     AnalysisContext, Anomaly, Category, Severity, find_block, is_container_snapshot,
     is_relevant_disk,
@@ -130,4 +132,93 @@ impl AnalysisRule for DiskIoSpikeRule {
             entity_id: None,
         }]
     }
+}
+
+// ============================================================
+// DiskLatencyHighRule — r_await / w_await thresholds
+// ============================================================
+
+pub struct DiskLatencyHighRule;
+
+impl AnalysisRule for DiskLatencyHighRule {
+    fn id(&self) -> &'static str {
+        "disk_latency_high"
+    }
+
+    fn evaluate(&self, ctx: &AnalysisContext) -> Vec<Anomaly> {
+        let prev = match ctx.prev {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        if ctx.dt <= 0.0 {
+            return Vec::new();
+        }
+
+        let Some(disks) = find_block(ctx.snapshot, |b| match b {
+            DataBlock::SystemDisk(v) => Some(v.as_slice()),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+
+        let is_container = is_container_snapshot(ctx.snapshot);
+        let prev_per_dev = &prev.disk_read_time_per_dev;
+        let prev_wt_per_dev = &prev.disk_write_time_per_dev;
+        let prev_rio_per_dev = &prev.disk_rio_per_dev;
+        let prev_wio_per_dev = &prev.disk_wio_per_dev;
+
+        let mut max_r_await = 0.0_f64;
+        let mut max_w_await = 0.0_f64;
+
+        for d in disks.iter().filter(|d| is_relevant_disk(d, is_container)) {
+            let h = d.device_hash;
+            let d_rio = d.rio.saturating_sub(get_or(prev_rio_per_dev, h));
+            let d_wio = d.wio.saturating_sub(get_or(prev_wio_per_dev, h));
+            let d_rt = d.read_time.saturating_sub(get_or(prev_per_dev, h)) as f64;
+            let d_wt = d.write_time.saturating_sub(get_or(prev_wt_per_dev, h)) as f64;
+            if d_rio > 0 {
+                max_r_await = max_r_await.max(d_rt / d_rio as f64);
+            }
+            if d_wio > 0 {
+                max_w_await = max_w_await.max(d_wt / d_wio as f64);
+            }
+        }
+
+        let worst_await = max_r_await.max(max_w_await);
+
+        let severity = if worst_await >= 50.0 {
+            Severity::Critical
+        } else if worst_await >= 20.0 {
+            Severity::Warning
+        } else {
+            return Vec::new();
+        };
+
+        let mut parts = Vec::new();
+        if max_r_await >= 20.0 {
+            parts.push(format!("r_await {max_r_await:.1} ms"));
+        }
+        if max_w_await >= 20.0 {
+            parts.push(format!("w_await {max_w_await:.1} ms"));
+        }
+        let title = format!("High disk latency: {}", parts.join(", "));
+
+        vec![Anomaly {
+            timestamp: ctx.timestamp,
+            rule_id: "disk_latency_high",
+            category: Category::Disk,
+            severity,
+            title,
+            detail: Some(format!(
+                "r_await: {max_r_await:.1} ms, w_await: {max_w_await:.1} ms"
+            )),
+            value: worst_await,
+            merge_key: None,
+            entity_id: None,
+        }]
+    }
+}
+
+fn get_or(map: &HashMap<u64, u64>, key: u64) -> u64 {
+    map.get(&key).copied().unwrap_or(0)
 }

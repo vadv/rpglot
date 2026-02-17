@@ -344,23 +344,45 @@ impl Advisor for IoBottleneckAdvisor {
     }
 
     fn evaluate(&self, ctx: &AdvisorContext<'_>) -> Vec<Recommendation> {
-        let disk = match find_incident(ctx.incidents, "disk_util_high") {
-            Some(i) => i,
-            None => return Vec::new(),
-        };
+        // Trigger on disk_util_high OR disk_latency_high
+        let disk_util = find_incident(ctx.incidents, "disk_util_high");
+        let disk_latency = find_incident(ctx.incidents, "disk_latency_high");
+        if disk_util.is_none() && disk_latency.is_none() {
+            return Vec::new();
+        }
 
-        let mut related = vec![disk];
-        let mut desc = String::from(
-            "High disk utilization detected. Check the storage subsystem for performance \
-             bottlenecks. Consider upgrading to faster storage (NVMe), distributing I/O \
+        let mut related: Vec<&Incident> = Vec::new();
+        let mut desc = String::new();
+
+        if let Some(util) = disk_util {
+            related.push(util);
+            desc.push_str(
+                "High disk utilization detected. Check the storage subsystem for \
+                 performance bottlenecks.",
+            );
+        }
+
+        if let Some(latency) = disk_latency {
+            related.push(latency);
+            if !desc.is_empty() {
+                desc.push(' ');
+            }
+            desc.push_str(
+                "High disk latency (r_await/w_await) confirms the storage subsystem \
+                 is struggling to keep up with I/O demands.",
+            );
+        }
+
+        desc.push_str(
+            " Consider upgrading to faster storage (NVMe), distributing I/O \
              across multiple disks, or reducing write-heavy operations during peak hours.",
         );
 
         if let Some(iow) = find_incident(ctx.incidents, "iowait_high") {
             related.push(iow);
             desc.push_str(
-                " High I/O wait correlates with disk saturation, confirming the storage \
-                 subsystem is the bottleneck. Prioritize storage improvements.",
+                " High I/O wait correlates with disk saturation. Prioritize storage \
+                 improvements.",
             );
         }
 
@@ -675,7 +697,10 @@ impl Advisor for WriteAmplificationAdvisor {
             Some(i) => i,
             None => return Vec::new(),
         };
-        let disk = match find_any_incident(ctx.incidents, &["disk_util_high", "disk_io_spike"]) {
+        let disk = match find_any_incident(
+            ctx.incidents,
+            &["disk_util_high", "disk_io_spike", "disk_latency_high"],
+        ) {
             Some(i) => i,
             None => return Vec::new(),
         };
@@ -707,7 +732,10 @@ impl Advisor for WriteAmplificationAdvisor {
         }
 
         // Collect extra disk incidents.
-        for extra in find_all_incidents(ctx.incidents, &["disk_util_high", "disk_io_spike"]) {
+        for extra in find_all_incidents(
+            ctx.incidents,
+            &["disk_util_high", "disk_io_spike", "disk_latency_high"],
+        ) {
             if !related.iter().any(|r| r.rule_id == extra.rule_id) {
                 related.push(extra);
             }
@@ -742,7 +770,10 @@ impl Advisor for CacheMissAdvisor {
                 Some(i) => i,
                 None => return Vec::new(),
             };
-        let io = match find_any_incident(ctx.incidents, &["disk_util_high", "iowait_high"]) {
+        let io = match find_any_incident(
+            ctx.incidents,
+            &["disk_util_high", "iowait_high", "disk_latency_high"],
+        ) {
             Some(i) => i,
             None => return Vec::new(),
         };
@@ -775,6 +806,7 @@ impl Advisor for CacheMissAdvisor {
                 "cache_hit_ratio_drop",
                 "index_cache_miss",
                 "disk_util_high",
+                "disk_latency_high",
                 "iowait_high",
             ],
         ) {
@@ -1136,7 +1168,8 @@ impl Advisor for TempFileSpillAdvisor {
             Some(i) => i,
             None => return Vec::new(),
         };
-        let disk = match find_incident(ctx.incidents, "disk_io_spike") {
+        // Accept disk_io_spike OR disk_latency_high as disk evidence.
+        let disk = match find_any_incident(ctx.incidents, &["disk_io_spike", "disk_latency_high"]) {
             Some(i) => i,
             None => return Vec::new(),
         };

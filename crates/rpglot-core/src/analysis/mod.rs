@@ -140,10 +140,12 @@ pub struct EwmaState {
     pub iow_pct: f64,
     pub steal_pct: f64,
     pub mem_used_pct: f64,
-    // Disk (aggregate max util)
+    // Disk (aggregate max util / max await)
     pub disk_util_pct: f64,
     pub disk_read_bytes_s: f64,
     pub disk_write_bytes_s: f64,
+    pub disk_r_await_ms: f64,
+    pub disk_w_await_ms: f64,
     // Network (sum across interfaces)
     pub net_rx_bytes_s: f64,
     pub net_tx_bytes_s: f64,
@@ -167,6 +169,8 @@ impl EwmaState {
             disk_util_pct: 0.0,
             disk_read_bytes_s: 0.0,
             disk_write_bytes_s: 0.0,
+            disk_r_await_ms: 0.0,
+            disk_w_await_ms: 0.0,
             net_rx_bytes_s: 0.0,
             net_tx_bytes_s: 0.0,
             active_sessions: 0.0,
@@ -250,9 +254,38 @@ impl EwmaState {
                 max_util = max_util.max(util);
             }
             let util = max_util;
+            // Per-device await: max across relevant devices
+            let mut max_r_await = 0.0_f64;
+            let mut max_w_await = 0.0_f64;
+            for d in disks.iter().filter(|d| is_relevant_disk(d, is_ctr)) {
+                let prev_rt = p
+                    .disk_read_time_per_dev
+                    .get(&d.device_hash)
+                    .copied()
+                    .unwrap_or(0);
+                let prev_wt = p
+                    .disk_write_time_per_dev
+                    .get(&d.device_hash)
+                    .copied()
+                    .unwrap_or(0);
+                let prev_rio = p.disk_rio_per_dev.get(&d.device_hash).copied().unwrap_or(0);
+                let prev_wio = p.disk_wio_per_dev.get(&d.device_hash).copied().unwrap_or(0);
+                let d_rio = d.rio.saturating_sub(prev_rio);
+                let d_wio = d.wio.saturating_sub(prev_wio);
+                let d_rt = d.read_time.saturating_sub(prev_rt) as f64;
+                let d_wt = d.write_time.saturating_sub(prev_wt) as f64;
+                if d_rio > 0 {
+                    max_r_await = max_r_await.max(d_rt / d_rio as f64);
+                }
+                if d_wio > 0 {
+                    max_w_await = max_w_await.max(d_wt / d_wio as f64);
+                }
+            }
             Self::update_val(self.n, self.alpha, util, &mut self.disk_util_pct);
             Self::update_val(self.n, self.alpha, read_s, &mut self.disk_read_bytes_s);
             Self::update_val(self.n, self.alpha, write_s, &mut self.disk_write_bytes_s);
+            Self::update_val(self.n, self.alpha, max_r_await, &mut self.disk_r_await_ms);
+            Self::update_val(self.n, self.alpha, max_w_await, &mut self.disk_w_await_ms);
         }
 
         // Network
@@ -497,6 +530,14 @@ pub struct PrevSample {
     pub disk_wio: u64,
     /// Per-device io_ms (device_hash → cumulative io_ms).
     pub disk_io_ms_per_dev: HashMap<u64, u64>,
+    /// Per-device read_time (device_hash → cumulative read_time ms).
+    pub disk_read_time_per_dev: HashMap<u64, u64>,
+    /// Per-device write_time (device_hash → cumulative write_time ms).
+    pub disk_write_time_per_dev: HashMap<u64, u64>,
+    /// Per-device rio (device_hash → cumulative read I/Os).
+    pub disk_rio_per_dev: HashMap<u64, u64>,
+    /// Per-device wio (device_hash → cumulative write I/Os).
+    pub disk_wio_per_dev: HashMap<u64, u64>,
     pub net_rx_bytes: u64,
     pub net_tx_bytes: u64,
     pub pg_xact_commit: i64,
@@ -518,6 +559,10 @@ impl PrevSample {
             disk_rio: 0,
             disk_wio: 0,
             disk_io_ms_per_dev: HashMap::new(),
+            disk_read_time_per_dev: HashMap::new(),
+            disk_write_time_per_dev: HashMap::new(),
+            disk_rio_per_dev: HashMap::new(),
+            disk_wio_per_dev: HashMap::new(),
             net_rx_bytes: 0,
             net_tx_bytes: 0,
             pg_xact_commit: 0,
@@ -545,6 +590,11 @@ impl PrevSample {
             s.disk_wio = relevant.clone().map(|d| d.wio).sum();
             for d in relevant {
                 s.disk_io_ms_per_dev.insert(d.device_hash, d.io_ms);
+                s.disk_read_time_per_dev.insert(d.device_hash, d.read_time);
+                s.disk_write_time_per_dev
+                    .insert(d.device_hash, d.write_time);
+                s.disk_rio_per_dev.insert(d.device_hash, d.rio);
+                s.disk_wio_per_dev.insert(d.device_hash, d.wio);
             }
         }
 
