@@ -9,7 +9,8 @@ import {
   type ColumnDef,
   type ColumnFiltersState,
 } from "@tanstack/react-table";
-import { Search, Inbox, ChevronUp, ChevronDown } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Search, Inbox, ChevronUp, ChevronDown, Filter, X } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import { RichTooltip } from "./RichTooltip";
 import type {
@@ -87,9 +88,18 @@ export function DataTable({
 
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState(initialFilter ?? "");
+  const [filterPopover, setFilterPopover] = useState<{
+    columnId: string;
+    rect: DOMRect;
+  } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
+
+  const filterableSet = useMemo(
+    () => new Set(allColumns.filter((c) => c.filterable).map((c) => c.key)),
+    [allColumns],
+  );
 
   // Notify parent of initial view on mount
   useEffect(() => {
@@ -181,6 +191,13 @@ export function DataTable({
               );
             },
         enableSorting: isLockTree ? false : schema.sortable,
+        enableColumnFilter: schema.filterable ?? false,
+        filterFn: schema.filterable
+          ? (row, columnId, filterValue: string[]) => {
+              const val = String(row.getValue(columnId) ?? "");
+              return filterValue.includes(val);
+            }
+          : undefined,
         sortingFn: schema.type === "string" ? "alphanumeric" : "auto",
         sortUndefined: "last" as const,
       });
@@ -363,6 +380,16 @@ export function DataTable({
               className="pl-7 pr-2 py-1 text-xs bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] w-48 transition-colors"
             />
           </div>
+          {columnFilters.length > 0 && (
+            <button
+              onClick={() => setColumnFilters([])}
+              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-[var(--accent-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent)] hover:text-white cursor-pointer transition-colors"
+            >
+              <Filter size={10} />
+              {columnFilters.length}
+              <X size={10} />
+            </button>
+          )}
           <span className="text-xs text-[var(--text-tertiary)] tabular-nums font-mono">
             {table.getFilteredRowModel().rows.length} rows
           </span>
@@ -377,6 +404,10 @@ export function DataTable({
               <tr key={hg.id}>
                 {hg.headers.map((header) => {
                   const isSorted = header.column.getIsSorted();
+                  const isFilterable = filterableSet.has(header.id);
+                  const hasActiveFilter = columnFilters.some(
+                    (f) => f.id === header.id,
+                  );
                   const richContent = buildColumnTooltip(header.id);
                   const simpleDesc = COLUMN_DESCRIPTIONS[header.id];
                   const headerContent = (
@@ -397,6 +428,11 @@ export function DataTable({
                           className="text-[var(--accent-text)]"
                         />
                       )}
+                      {sorting.length > 1 && isSorted && (
+                        <span className="text-[9px] text-[var(--accent-text)] font-bold">
+                          {header.column.getSortIndex() + 1}
+                        </span>
+                      )}
                     </span>
                   );
                   return (
@@ -413,17 +449,43 @@ export function DataTable({
                           : ""
                       } ${isSorted ? "text-[var(--accent-text)]" : "text-[var(--text-secondary)]"}`}
                     >
-                      {richContent ? (
-                        <RichTooltip content={richContent} side="bottom">
-                          {headerContent}
-                        </RichTooltip>
-                      ) : simpleDesc ? (
-                        <Tooltip content={simpleDesc} side="bottom">
-                          {headerContent}
-                        </Tooltip>
-                      ) : (
-                        headerContent
-                      )}
+                      <span className="inline-flex items-center gap-0.5">
+                        {richContent ? (
+                          <RichTooltip content={richContent} side="bottom">
+                            {headerContent}
+                          </RichTooltip>
+                        ) : simpleDesc ? (
+                          <Tooltip content={simpleDesc} side="bottom">
+                            {headerContent}
+                          </Tooltip>
+                        ) : (
+                          headerContent
+                        )}
+                        {isFilterable && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const rect =
+                                e.currentTarget.getBoundingClientRect();
+                              setFilterPopover((prev) =>
+                                prev?.columnId === header.id
+                                  ? null
+                                  : { columnId: header.id, rect },
+                              );
+                            }}
+                            className="p-0.5 rounded hover:bg-[var(--bg-hover)] cursor-pointer"
+                          >
+                            <Filter
+                              size={10}
+                              className={
+                                hasActiveFilter
+                                  ? "text-[var(--accent-text)]"
+                                  : "text-[var(--text-tertiary)] opacity-50 hover:opacity-100"
+                              }
+                            />
+                          </button>
+                        )}
+                      </span>
                     </th>
                   );
                 })}
@@ -485,6 +547,207 @@ export function DataTable({
           </div>
         )}
       </div>
+
+      {/* Column filter popover */}
+      {filterPopover && (
+        <ColumnFilterPopover
+          columnId={filterPopover.columnId}
+          data={data}
+          columnFilters={columnFilters}
+          rect={filterPopover.rect}
+          onApply={(columnId, values) => {
+            setColumnFilters((prev) => {
+              const without = prev.filter((f) => f.id !== columnId);
+              if (values === null) return without;
+              return [...without, { id: columnId, value: values }];
+            });
+          }}
+          onClose={() => setFilterPopover(null)}
+        />
+      )}
     </div>
+  );
+}
+
+// ============================================================
+// ColumnFilterPopover
+// ============================================================
+
+function ColumnFilterPopover({
+  columnId,
+  data,
+  columnFilters,
+  rect,
+  onApply,
+  onClose,
+}: {
+  columnId: string;
+  data: Record<string, unknown>[];
+  columnFilters: ColumnFiltersState;
+  rect: DOMRect;
+  onApply: (columnId: string, values: string[] | null) => void;
+  onClose: () => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [search, setSearch] = useState("");
+
+  const uniqueValues = useMemo(() => {
+    const vals = new Set<string>();
+    for (const row of data) {
+      const v = row[columnId];
+      if (v != null) vals.add(String(v));
+    }
+    return [...vals].sort();
+  }, [data, columnId]);
+
+  const currentFilter = columnFilters.find((f) => f.id === columnId);
+  const selectedSet = useMemo(
+    () => new Set<string>((currentFilter?.value as string[]) ?? uniqueValues),
+    [currentFilter, uniqueValues],
+  );
+
+  const filtered = useMemo(() => {
+    if (!search) return uniqueValues;
+    const q = search.toLowerCase();
+    return uniqueValues.filter((v) => v.toLowerCase().includes(q));
+  }, [uniqueValues, search]);
+
+  const allSelected = filtered.every((v) => selectedSet.has(v));
+
+  const toggle = useCallback(
+    (val: string) => {
+      const next = new Set(selectedSet);
+      if (next.has(val)) {
+        next.delete(val);
+      } else {
+        next.add(val);
+      }
+      if (next.size === 0 || next.size === uniqueValues.length) {
+        onApply(columnId, null); // clear filter = show all
+      } else {
+        onApply(columnId, [...next]);
+      }
+    },
+    [selectedSet, uniqueValues, columnId, onApply],
+  );
+
+  const toggleAll = useCallback(() => {
+    if (allSelected) {
+      // Deselect all visible
+      const next = new Set(selectedSet);
+      for (const v of filtered) next.delete(v);
+      if (next.size === 0) {
+        onApply(columnId, null);
+      } else {
+        onApply(columnId, [...next]);
+      }
+    } else {
+      // Select all visible
+      const next = new Set(selectedSet);
+      for (const v of filtered) next.add(v);
+      if (next.size >= uniqueValues.length) {
+        onApply(columnId, null);
+      } else {
+        onApply(columnId, [...next]);
+      }
+    }
+  }, [allSelected, selectedSet, filtered, uniqueValues, columnId, onApply]);
+
+  // Close on click outside or Escape
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (
+        popoverRef.current &&
+        !popoverRef.current.contains(e.target as Node)
+      ) {
+        onClose();
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [onClose]);
+
+  // Position: below the filter icon, clamped to viewport
+  const style = useMemo(() => {
+    const top = rect.bottom + 4;
+    const left = Math.min(rect.left, window.innerWidth - 220);
+    return { top, left };
+  }, [rect]);
+
+  return createPortal(
+    <div
+      ref={popoverRef}
+      className="fixed z-50 w-52 max-h-72 flex flex-col bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded-lg shadow-lg overflow-hidden"
+      style={style}
+    >
+      {/* Search */}
+      {uniqueValues.length > 8 && (
+        <div className="p-1.5 border-b border-[var(--border-default)]">
+          <input
+            autoFocus
+            type="text"
+            placeholder="Search..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full px-2 py-1 text-xs bg-[var(--bg-base)] border border-[var(--border-default)] rounded text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)]"
+          />
+        </div>
+      )}
+      {/* Select all */}
+      <label className="flex items-center gap-2 px-2.5 py-1.5 text-xs font-medium text-[var(--text-secondary)] border-b border-[var(--border-default)] cursor-pointer hover:bg-[var(--bg-hover)]">
+        <input
+          type="checkbox"
+          checked={allSelected}
+          onChange={toggleAll}
+          className="accent-[var(--accent)]"
+        />
+        {allSelected ? "Deselect all" : "Select all"}
+        <span className="ml-auto text-[var(--text-tertiary)] text-[10px] tabular-nums">
+          {filtered.length}
+        </span>
+      </label>
+      {/* Values */}
+      <div className="flex-1 overflow-y-auto">
+        {filtered.map((val) => (
+          <label
+            key={val}
+            className="flex items-center gap-2 px-2.5 py-1 text-xs text-[var(--text-primary)] cursor-pointer hover:bg-[var(--bg-hover)]"
+          >
+            <input
+              type="checkbox"
+              checked={selectedSet.has(val)}
+              onChange={() => toggle(val)}
+              className="accent-[var(--accent)]"
+            />
+            <span className="truncate">{val || "(empty)"}</span>
+          </label>
+        ))}
+        {filtered.length === 0 && (
+          <div className="px-2.5 py-3 text-xs text-[var(--text-tertiary)] text-center">
+            No matches
+          </div>
+        )}
+      </div>
+      {/* Clear filter */}
+      {currentFilter && (
+        <button
+          onClick={() => {
+            onApply(columnId, null);
+            onClose();
+          }}
+          className="px-2.5 py-1.5 text-xs text-[var(--accent-text)] font-medium border-t border-[var(--border-default)] hover:bg-[var(--bg-hover)] cursor-pointer text-center"
+        >
+          Clear filter
+        </button>
+      )}
+    </div>,
+    document.body,
   );
 }
