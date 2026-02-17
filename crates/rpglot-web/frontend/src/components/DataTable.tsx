@@ -622,10 +622,10 @@ function ColumnFilterPopover({
       } else {
         next.add(val);
       }
-      if (next.size === 0 || next.size === uniqueValues.length) {
-        onApply(columnId, null); // clear filter = show all
+      if (next.size >= uniqueValues.length) {
+        onApply(columnId, null); // all selected = clear filter
       } else {
-        onApply(columnId, [...next]);
+        onApply(columnId, next.size > 0 ? [...next] : []);
       }
     },
     [selectedSet, uniqueValues, columnId, onApply],
@@ -633,20 +633,16 @@ function ColumnFilterPopover({
 
   const toggleAll = useCallback(() => {
     if (allSelected) {
-      // Deselect all visible
+      // Deselect all visible — apply empty filter (hides everything in this column)
       const next = new Set(selectedSet);
       for (const v of filtered) next.delete(v);
-      if (next.size === 0) {
-        onApply(columnId, null);
-      } else {
-        onApply(columnId, [...next]);
-      }
+      onApply(columnId, next.size > 0 ? [...next] : []);
     } else {
       // Select all visible
       const next = new Set(selectedSet);
       for (const v of filtered) next.add(v);
       if (next.size >= uniqueValues.length) {
-        onApply(columnId, null);
+        onApply(columnId, null); // all selected = clear filter
       } else {
         onApply(columnId, [...next]);
       }
