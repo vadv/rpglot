@@ -3,7 +3,7 @@ pub mod rules;
 
 use crate::provider::HistoryProvider;
 use crate::storage::StringInterner;
-use crate::storage::model::{DataBlock, ProcessInfo, Snapshot};
+use crate::storage::model::{DataBlock, PgSettingEntry, ProcessInfo, Snapshot};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -855,6 +855,7 @@ impl Analyzer {
         let mut anomalies: Vec<Anomaly> = Vec::new();
         let mut health_scores: Vec<HealthPoint> = Vec::new();
         let mut snapshots_analyzed: usize = 0;
+        let mut pg_settings_data: Option<Vec<PgSettingEntry>> = None;
 
         for pos in start_pos..end_pos {
             let Some((snapshot, interner)) = provider.snapshot_with_interner_at(pos) else {
@@ -890,6 +891,16 @@ impl Analyzer {
                 score: compute_health_score(&snapshot, prev_sample.as_ref(), dt),
             });
 
+            // Extract pg_settings from the first snapshot that has them
+            if pg_settings_data.is_none()
+                && let Some(settings) = find_block(&snapshot, |b| match b {
+                    DataBlock::PgSettings(v) => Some(v.clone()),
+                    _ => None,
+                })
+            {
+                pg_settings_data = Some(settings);
+            }
+
             prev_sample = Some(PrevSample::extract(&snapshot));
             prev_snap = Some(snapshot);
             snapshots_analyzed += 1;
@@ -899,9 +910,13 @@ impl Analyzer {
         let incidents = merge_anomalies(anomalies);
 
         // Layer 3: advisors (run before correlate consumes incidents)
+        let advisor_ctx = advisor::AdvisorContext {
+            incidents: &incidents,
+            settings: pg_settings_data.as_deref().map(advisor::PgSettings::new),
+        };
         let mut recommendations = Vec::new();
         for adv in &self.advisors {
-            recommendations.extend(adv.evaluate(&incidents));
+            recommendations.extend(adv.evaluate(&advisor_ctx));
         }
         recommendations.sort_by(|a, b| b.severity.cmp(&a.severity));
 

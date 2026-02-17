@@ -725,3 +725,18 @@ pub struct PgLogEventEntry {
     #[serde(default)]
     pub extra_num3: i64,
 }
+
+/// Single PostgreSQL setting from pg_settings view.
+///
+/// Stored as raw (name, setting, unit) triple — no version-specific assumptions.
+/// The `setting` column in pg_settings already contains values in GUC base units
+/// (e.g. 8kB blocks for shared_buffers, seconds for checkpoint_timeout).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PgSettingEntry {
+    /// Setting name (e.g. "shared_buffers", "work_mem").
+    pub name: String,
+    /// Value in base units as reported by pg_settings.setting.
+    pub setting: String,
+    /// Unit reported by pg_settings.unit (e.g. "8kB", "ms", "s", "kB", or empty).
+    pub unit: String,
+}

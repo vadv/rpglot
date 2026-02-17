@@ -26,6 +26,7 @@ mod database;
 mod indexes;
 mod locks;
 mod queries;
+mod settings;
 mod statements;
 mod tables;
 
@@ -36,6 +37,7 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use super::log_collector::LogCollector;
+use crate::storage::model::PgSettingEntry;
 use indexes::PgStatUserIndexesCacheEntry;
 use statements::{PgStatStatementsCacheEntry, STATEMENTS_COLLECT_INTERVAL};
 use tables::PgStatUserTablesCacheEntry;
@@ -97,6 +99,8 @@ pub struct PostgresCollector {
     pub(crate) tables_cache_time: Option<Instant>,
     pub(crate) indexes_cache: Vec<PgStatUserIndexesCacheEntry>,
     pub(crate) indexes_cache_time: Option<Instant>,
+    pub(crate) settings_cache: Vec<PgSettingEntry>,
+    pub(crate) settings_cache_time: Option<Instant>,
     /// true if PGDATABASE was explicitly set by the user (disables multi-db collection).
     explicit_database: bool,
     /// Per-database connections for tables/indexes collection.
@@ -148,6 +152,8 @@ impl PostgresCollector {
             tables_cache_time: None,
             indexes_cache: Vec::new(),
             indexes_cache_time: None,
+            settings_cache: Vec::new(),
+            settings_cache_time: None,
             explicit_database,
             db_clients: Vec::new(),
             db_clients_last_check: None,
@@ -173,6 +179,8 @@ impl PostgresCollector {
             tables_cache_time: None,
             indexes_cache: Vec::new(),
             indexes_cache_time: None,
+            settings_cache: Vec::new(),
+            settings_cache_time: None,
             explicit_database: true,
             db_clients: Vec::new(),
             db_clients_last_check: None,
@@ -381,6 +389,8 @@ impl PostgresCollector {
         self.tables_cache_time = None;
         self.indexes_cache.clear();
         self.indexes_cache_time = None;
+        self.settings_cache.clear();
+        self.settings_cache_time = None;
     }
 
     /// Collects log data from PostgreSQL log files.

@@ -22,8 +22,8 @@ mod system;
 pub use cgroup::{CgroupCpuInfo, CgroupInfo, CgroupIoInfo, CgroupMemoryInfo, CgroupPidsInfo};
 pub use postgres::{
     PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventType, PgLogEventsInfo, PgLogSeverity,
-    PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo, PgStatStatementsInfo,
-    PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    PgSettingEntry, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
 };
 #[allow(unused_imports)]
 pub use process::{ProcessCpuInfo, ProcessDskInfo, ProcessInfo, ProcessMemInfo};
