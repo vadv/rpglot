@@ -3,14 +3,14 @@
 //! Converts internal `Snapshot` + computed rates into a JSON-serializable `ApiSnapshot`.
 //! All interned strings are resolved, all rates are pre-computed.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
+use crate::analysis::compute_backend_io_hit;
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
-    CgroupCpuInfo, DataBlock, PgLogEventType, PgLogSeverity, PgStatActivityInfo,
-    PgStatBgwriterInfo, PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo,
-    SystemNetInfo,
+    CgroupCpuInfo, DataBlock, PgLogEventType, PgLogSeverity, PgStatBgwriterInfo,
+    PgStatDatabaseInfo, ProcessInfo, Snapshot, SystemCpuInfo, SystemDiskInfo, SystemNetInfo,
 };
 
 use super::snapshot::*;
@@ -656,70 +656,6 @@ fn compute_pg_db_rates(
         sum_temp_bytes as f64 / delta_time,
         sum_deadlocks as f64,
     ))
-}
-
-/// Computes Backend IO Hit Ratio from /proc/[pid]/io for PG backend processes.
-/// Returns None if no previous snapshot or no PG activity data.
-fn compute_backend_io_hit(snap: &Snapshot, prev: Option<&Snapshot>) -> Option<f64> {
-    let prev = prev?;
-
-    let pga: &[PgStatActivityInfo] = find_block(snap, |b| {
-        if let DataBlock::PgStatActivity(rows) = b {
-            Some(rows.as_slice())
-        } else {
-            None
-        }
-    })?;
-
-    let pg_pids: HashSet<u32> = pga
-        .iter()
-        .filter_map(|a| u32::try_from(a.pid).ok())
-        .collect();
-    if pg_pids.is_empty() {
-        return None;
-    }
-
-    let curr_procs: &[ProcessInfo] = find_block(snap, |b| {
-        if let DataBlock::Processes(procs) = b {
-            Some(procs.as_slice())
-        } else {
-            None
-        }
-    })?;
-
-    let prev_procs: &[ProcessInfo] = find_block(prev, |b| {
-        if let DataBlock::Processes(procs) = b {
-            Some(procs.as_slice())
-        } else {
-            None
-        }
-    })?;
-
-    let (curr_rchar, curr_rsz) = sum_pg_io(curr_procs, &pg_pids);
-    let (prev_rchar, prev_rsz) = sum_pg_io(prev_procs, &pg_pids);
-
-    let delta_rchar = curr_rchar.saturating_sub(prev_rchar);
-    let delta_rsz = curr_rsz.saturating_sub(prev_rsz);
-
-    if delta_rchar == 0 {
-        return Some(100.0);
-    }
-
-    let cache_bytes = delta_rchar.saturating_sub(delta_rsz);
-    Some(cache_bytes as f64 * 100.0 / delta_rchar as f64)
-}
-
-/// Sums rchar and read_bytes for processes whose PID is in pg_pids.
-fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
-    let mut rchar = 0u64;
-    let mut rsz = 0u64;
-    for p in procs {
-        if pg_pids.contains(&p.pid) {
-            rchar += p.dsk.rchar;
-            rsz += p.dsk.rsz;
-        }
-    }
-    (rchar, rsz)
 }
 
 fn compute_bgw_rates(

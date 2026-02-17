@@ -3,7 +3,7 @@ pub mod rules;
 
 use crate::provider::HistoryProvider;
 use crate::storage::StringInterner;
-use crate::storage::model::{DataBlock, Snapshot};
+use crate::storage::model::{DataBlock, ProcessInfo, Snapshot};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -111,6 +111,9 @@ pub struct AnalysisContext<'a> {
     pub ewma: &'a EwmaState,
     pub prev: Option<&'a PrevSample>,
     pub dt: f64,
+    /// OS-level page cache hit % for PG backends: (rchar - read_bytes) / rchar.
+    /// None when /proc/pid/io data is unavailable (e.g. macOS, permissions).
+    pub backend_io_hit_pct: Option<f64>,
 }
 
 // ============================================================
@@ -318,6 +321,65 @@ impl EwmaState {
     pub fn is_spike(&self, current: f64, avg: f64, factor: f64) -> bool {
         self.n >= 5 && avg > 0.0 && current > avg * factor
     }
+}
+
+// ============================================================
+// Backend IO hit — OS page cache hit % for PG backends
+// ============================================================
+
+/// Compute OS-level page cache hit % for PostgreSQL backends.
+///
+/// Uses `/proc/<pid>/io` data: `rchar` (all read syscalls, incl. page cache)
+/// vs `read_bytes` (physical disk reads). Returns `(rchar - read_bytes) / rchar * 100`.
+pub fn compute_backend_io_hit(snap: &Snapshot, prev: Option<&Snapshot>) -> Option<f64> {
+    let prev = prev?;
+
+    let pga = find_block(snap, |b| match b {
+        DataBlock::PgStatActivity(rows) => Some(rows.as_slice()),
+        _ => None,
+    })?;
+
+    let pg_pids: HashSet<u32> = pga
+        .iter()
+        .filter_map(|a| u32::try_from(a.pid).ok())
+        .collect();
+    if pg_pids.is_empty() {
+        return None;
+    }
+
+    let curr_procs = find_block(snap, |b| match b {
+        DataBlock::Processes(procs) => Some(procs.as_slice()),
+        _ => None,
+    })?;
+    let prev_procs = find_block(prev, |b| match b {
+        DataBlock::Processes(procs) => Some(procs.as_slice()),
+        _ => None,
+    })?;
+
+    let (curr_rchar, curr_rsz) = sum_pg_io(curr_procs, &pg_pids);
+    let (prev_rchar, prev_rsz) = sum_pg_io(prev_procs, &pg_pids);
+
+    let delta_rchar = curr_rchar.saturating_sub(prev_rchar);
+    let delta_rsz = curr_rsz.saturating_sub(prev_rsz);
+
+    if delta_rchar == 0 {
+        return Some(100.0);
+    }
+
+    let cache_bytes = delta_rchar.saturating_sub(delta_rsz);
+    Some(cache_bytes as f64 * 100.0 / delta_rchar as f64)
+}
+
+fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
+    let mut rchar = 0u64;
+    let mut rsz = 0u64;
+    for p in procs {
+        if pg_pids.contains(&p.pid) {
+            rchar += p.dsk.rchar;
+            rsz += p.dsk.rsz;
+        }
+    }
+    (rchar, rsz)
 }
 
 // ============================================================
@@ -677,6 +739,8 @@ impl Analyzer {
 
             ewma.update(&snapshot, prev_sample.as_ref(), dt);
 
+            let backend_io_hit_pct = compute_backend_io_hit(&snapshot, prev_snap.as_ref());
+
             let ctx = AnalysisContext {
                 snapshot: &snapshot,
                 prev_snapshot: prev_snap.as_ref(),
@@ -685,6 +749,7 @@ impl Analyzer {
                 ewma: &ewma,
                 prev: prev_sample.as_ref(),
                 dt,
+                backend_io_hit_pct,
             };
 
             for rule in &self.rules {

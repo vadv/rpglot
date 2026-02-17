@@ -176,6 +176,12 @@ impl AnalysisRule for HeapReadSpikeRule {
     }
 
     fn evaluate(&self, ctx: &AnalysisContext) -> Vec<Anomaly> {
+        // Skip when OS page cache serves all reads — heap_blks_read misses
+        // shared_buffers but hits page cache, no real disk IO.
+        if ctx.backend_io_hit_pct.is_some_and(|h| h >= 97.0) {
+            return Vec::new();
+        }
+
         let prev_snapshot = match ctx.prev_snapshot {
             Some(s) => s,
             None => return Vec::new(),
@@ -374,6 +380,12 @@ impl AnalysisRule for CacheHitRatioDropRule {
     }
 
     fn evaluate(&self, ctx: &AnalysisContext) -> Vec<Anomaly> {
+        // Skip when OS page cache serves all reads — low PG buffer hit ratio
+        // is expected with small shared_buffers, but not a problem if page cache covers it.
+        if ctx.backend_io_hit_pct.is_some_and(|h| h >= 97.0) {
+            return Vec::new();
+        }
+
         let prev_snapshot = match ctx.prev_snapshot {
             Some(s) => s,
             None => return Vec::new(),
