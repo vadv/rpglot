@@ -100,14 +100,18 @@ impl AnalysisRule for LongQueryRule {
         let active_hash = xxhash_rust::xxh3::xxh3_64(b"active");
         let walsender_hash = xxhash_rust::xxh3::xxh3_64(b"walsender");
         let walreceiver_hash = xxhash_rust::xxh3::xxh3_64(b"walreceiver");
+        let autovacuum_hash = xxhash_rust::xxh3::xxh3_64(b"autovacuum worker");
 
         let mut count = 0u64;
         let mut max_duration: i64 = 0;
         let mut longest_query_hash: u64 = 0;
 
         for s in sessions {
-            // Skip replication processes — they hold long-running queries by design
-            if s.backend_type_hash == walsender_hash || s.backend_type_hash == walreceiver_hash {
+            // Skip replication and autovacuum — long-running queries by design
+            if s.backend_type_hash == walsender_hash
+                || s.backend_type_hash == walreceiver_hash
+                || s.backend_type_hash == autovacuum_hash
+            {
                 continue;
             }
             if s.state_hash == active_hash && s.query_start > 0 {
