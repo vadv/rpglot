@@ -2,6 +2,7 @@ pub mod recommendations;
 
 use super::{Incident, Severity};
 use crate::storage::model::PgSettingEntry;
+use crate::storage::model::Snapshot;
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -17,6 +18,10 @@ pub struct Recommendation {
 pub struct AdvisorContext<'a> {
     pub incidents: &'a [Incident],
     pub settings: Option<PgSettings<'a>>,
+    /// Last snapshot in the analyzed range (for data-driven advisors).
+    pub snapshot: Option<&'a Snapshot>,
+    /// Previous snapshot (for delta computation in advisors).
+    pub prev_snapshot: Option<&'a Snapshot>,
 }
 
 /// Convenient wrapper around pg_settings entries for typed access.

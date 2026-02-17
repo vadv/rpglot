@@ -865,6 +865,7 @@ impl Analyzer {
         let mut ewma = EwmaState::new(0.1);
         let mut prev_sample: Option<PrevSample> = None;
         let mut prev_snap: Option<Snapshot> = None;
+        let mut prev_prev_snap: Option<Snapshot> = None;
         let mut anomalies: Vec<Anomaly> = Vec::new();
         let mut health_scores: Vec<HealthPoint> = Vec::new();
         let mut snapshots_analyzed: usize = 0;
@@ -915,6 +916,7 @@ impl Analyzer {
             }
 
             prev_sample = Some(PrevSample::extract(&snapshot));
+            prev_prev_snap = prev_snap.take();
             prev_snap = Some(snapshot);
             snapshots_analyzed += 1;
         }
@@ -926,6 +928,8 @@ impl Analyzer {
         let advisor_ctx = advisor::AdvisorContext {
             incidents: &incidents,
             settings: pg_settings_data.as_deref().map(advisor::PgSettings::new),
+            snapshot: prev_snap.as_ref(),
+            prev_snapshot: prev_prev_snap.as_ref(),
         };
         let mut recommendations = Vec::new();
         for adv in &self.advisors {

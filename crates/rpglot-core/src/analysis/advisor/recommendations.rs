@@ -1,5 +1,6 @@
 use crate::analysis::advisor::{Advisor, AdvisorContext, Recommendation};
-use crate::analysis::{Incident, Severity};
+use crate::analysis::{Incident, Severity, find_block};
+use crate::storage::model::{DataBlock, PgStatStatementsInfo};
 
 // ============================================================
 // Helpers
@@ -1087,6 +1088,44 @@ impl Advisor for QueryRegressionAdvisor {
 
 pub struct TempFileSpillAdvisor;
 
+/// Compute total temp blocks written delta between two snapshots.
+/// Returns (delta_written, delta_read) in blocks (each block = 8 KiB).
+fn temp_blks_delta(ctx: &AdvisorContext<'_>) -> Option<(i64, i64)> {
+    let snap = ctx.snapshot?;
+    let prev = ctx.prev_snapshot?;
+
+    let stmts = find_block(snap, |b| match b {
+        DataBlock::PgStatStatements(v) => Some(v.as_slice()),
+        _ => None,
+    })?;
+    let prev_stmts: &[PgStatStatementsInfo] = find_block(prev, |b| match b {
+        DataBlock::PgStatStatements(v) => Some(v.as_slice()),
+        _ => None,
+    })?;
+
+    let mut delta_written: i64 = 0;
+    let mut delta_read: i64 = 0;
+
+    for s in stmts {
+        if let Some(ps) = prev_stmts.iter().find(|p| p.queryid == s.queryid) {
+            let dw = s.temp_blks_written.saturating_sub(ps.temp_blks_written);
+            let dr = s.temp_blks_read.saturating_sub(ps.temp_blks_read);
+            if dw > 0 {
+                delta_written += dw;
+            }
+            if dr > 0 {
+                delta_read += dr;
+            }
+        } else {
+            // New statement — count its totals as delta
+            delta_written += s.temp_blks_written;
+            delta_read += s.temp_blks_read;
+        }
+    }
+
+    Some((delta_written, delta_read))
+}
+
 impl Advisor for TempFileSpillAdvisor {
     fn id(&self) -> &'static str {
         "temp_file_spill"
@@ -1110,11 +1149,34 @@ impl Advisor for TempFileSpillAdvisor {
         }
 
         let related = vec![stmt, disk];
-        let mut desc = String::from(
-            "Possible temp file spill: query slowdown coincides with disk I/O spikes. \
-             When work_mem is too small, PostgreSQL spills sort and hash operations to \
-             temporary files on disk, dramatically increasing query time.",
-        );
+
+        // Check actual temp_blks data from pg_stat_statements.
+        let (confirmed, delta_written, delta_read) = match temp_blks_delta(ctx) {
+            Some((dw, dr)) if dw > 0 || dr > 0 => (true, dw, dr),
+            Some(_) => {
+                // temp_blks did not grow — correlation is false positive, skip.
+                return Vec::new();
+            }
+            // No snapshot data available — fall back to correlation-based advisory.
+            None => (false, 0, 0),
+        };
+
+        let mut desc = if confirmed {
+            let bytes_written = delta_written * 8192;
+            let bytes_read = delta_read * 8192;
+            format!(
+                "Confirmed temp file spill: {} written, {} read between last two snapshots. \
+                 PostgreSQL is spilling sort/hash operations to disk due to insufficient work_mem.",
+                format_bytes(bytes_written),
+                format_bytes(bytes_read),
+            )
+        } else {
+            String::from(
+                "Possible temp file spill: query slowdown coincides with disk I/O spikes. \
+                 When work_mem is too small, PostgreSQL spills sort and hash operations to \
+                 temporary files on disk, dramatically increasing query time.",
+            )
+        };
 
         if let Some(ref s) = ctx.settings {
             if let Some(wm) = s.get_bytes("work_mem") {
@@ -1134,12 +1196,23 @@ impl Advisor for TempFileSpillAdvisor {
             }
         }
 
-        let severity = worst_severity(&related);
+        let severity = if confirmed {
+            // Confirmed spill is at least Warning, use worst of related incidents.
+            worst_severity(&related).max(Severity::Warning)
+        } else {
+            worst_severity(&related)
+        };
+
+        let title = if confirmed {
+            "Temp file spill detected — increase work_mem"
+        } else {
+            "Possible temp file spill — increase work_mem"
+        };
 
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Possible temp file spill — increase work_mem".to_string(),
+            title: title.to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -1156,6 +1229,7 @@ mod tests {
     use crate::analysis::advisor::{AdvisorContext, PgSettings};
     use crate::analysis::{Category, Incident, Severity};
     use crate::storage::model::PgSettingEntry;
+    use crate::storage::model::{DataBlock, PgStatStatementsInfo, Snapshot};
 
     fn make_incident(rule_id: &str, severity: Severity) -> Incident {
         Incident {
@@ -1178,6 +1252,8 @@ mod tests {
         AdvisorContext {
             incidents,
             settings: None,
+            snapshot: None,
+            prev_snapshot: None,
         }
     }
 
@@ -1298,6 +1374,8 @@ mod tests {
         let ctx = AdvisorContext {
             incidents: &incidents,
             settings: Some(PgSettings::new(&settings)),
+            snapshot: None,
+            prev_snapshot: None,
         };
         let recs = VacuumBlockedAdvisor.evaluate(&ctx);
         assert_eq!(recs.len(), 1);
@@ -1490,5 +1568,65 @@ mod tests {
                 .evaluate(&make_ctx(&incidents))
                 .is_empty()
         );
+    }
+
+    fn make_stmt(
+        queryid: i64,
+        temp_blks_written: i64,
+        temp_blks_read: i64,
+    ) -> PgStatStatementsInfo {
+        PgStatStatementsInfo {
+            queryid,
+            temp_blks_written,
+            temp_blks_read,
+            ..Default::default()
+        }
+    }
+
+    fn make_snapshot_with_stmts(stmts: Vec<PgStatStatementsInfo>) -> Snapshot {
+        Snapshot {
+            timestamp: 1000,
+            blocks: vec![DataBlock::PgStatStatements(stmts)],
+        }
+    }
+
+    #[test]
+    fn temp_file_spill_confirmed_with_real_data() {
+        let incidents = vec![
+            make_incident("stmt_mean_time_spike", Severity::Warning),
+            make_incident("disk_io_spike", Severity::Warning),
+        ];
+        let prev_snap = make_snapshot_with_stmts(vec![make_stmt(1, 0, 0), make_stmt(2, 100, 50)]);
+        let snap = make_snapshot_with_stmts(vec![make_stmt(1, 500, 200), make_stmt(2, 300, 150)]);
+        let ctx = AdvisorContext {
+            incidents: &incidents,
+            settings: None,
+            snapshot: Some(&snap),
+            prev_snapshot: Some(&prev_snap),
+        };
+        let recs = TempFileSpillAdvisor.evaluate(&ctx);
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].id, "temp_file_spill");
+        assert!(recs[0].title.contains("detected"));
+        assert!(recs[0].description.contains("Confirmed"));
+    }
+
+    #[test]
+    fn temp_file_spill_false_positive_no_temp_growth() {
+        let incidents = vec![
+            make_incident("stmt_mean_time_spike", Severity::Warning),
+            make_incident("disk_io_spike", Severity::Warning),
+        ];
+        // Same temp_blks in both snapshots — no growth
+        let prev_snap = make_snapshot_with_stmts(vec![make_stmt(1, 100, 50)]);
+        let snap = make_snapshot_with_stmts(vec![make_stmt(1, 100, 50)]);
+        let ctx = AdvisorContext {
+            incidents: &incidents,
+            settings: None,
+            snapshot: Some(&snap),
+            prev_snapshot: Some(&prev_snap),
+        };
+        let recs = TempFileSpillAdvisor.evaluate(&ctx);
+        assert!(recs.is_empty(), "should skip when temp_blks did not grow");
     }
 }
