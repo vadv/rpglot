@@ -14,7 +14,7 @@ use tracing::warn;
 
 use crate::storage::chunk::ChunkReader;
 use crate::storage::heatmap::{self, HeatmapEntry};
-use crate::storage::model::{DataBlock, Snapshot};
+use crate::storage::model::Snapshot;
 use crate::storage::{StorageManager, StringInterner};
 
 use super::{ProviderError, SnapshotProvider};
@@ -966,20 +966,6 @@ impl SnapshotProvider for HistoryProvider {
 
     fn interner(&self) -> Option<&StringInterner> {
         self.current_interner.as_ref()
-    }
-
-    fn instance_info(&self) -> Option<(String, String)> {
-        let snapshot = self.current_buffer.as_ref()?;
-        for block in &snapshot.blocks {
-            if let DataBlock::InstanceMeta {
-                database,
-                pg_version,
-            } = block
-            {
-                return Some((database.clone(), pg_version.clone()));
-            }
-        }
-        None
     }
 }
 

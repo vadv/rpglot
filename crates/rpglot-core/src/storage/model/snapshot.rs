@@ -128,13 +128,6 @@ pub enum DataBlock {
     /// PostgreSQL runtime settings (collected once per hour).
     /// Source: `pg_settings` view
     PgSettings(Vec<PgSettingEntry>),
-
-    /// Instance metadata: largest database name and PostgreSQL version.
-    /// Written by the collector so that history mode can display instance info.
-    InstanceMeta {
-        database: String,
-        pg_version: String,
-    },
 }
 
 /// A point-in-time capture of all collected metrics.

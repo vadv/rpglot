@@ -172,6 +172,27 @@ function AppContent() {
   return <LiveApp schema={schema} />;
 }
 
+/** Derive the largest database name from PGT rows (by total size_bytes). */
+function deriveLargestDb(snapshot: ApiSnapshot | null | undefined): string {
+  if (!snapshot?.pgt?.length) return "";
+  const sizeByDb = new Map<string, number>();
+  for (const row of snapshot.pgt) {
+    sizeByDb.set(
+      row.database,
+      (sizeByDb.get(row.database) ?? 0) + row.size_bytes,
+    );
+  }
+  let best = "";
+  let bestSize = -1;
+  for (const [db, sz] of sizeByDb) {
+    if (sz > bestSize) {
+      best = db;
+      bestSize = sz;
+    }
+  }
+  return best;
+}
+
 /** Updates document.title with health score + instance name. */
 function useDocumentTitle(
   snapshot: ApiSnapshot | null | undefined,
@@ -184,7 +205,7 @@ function useDocumentTitle(
     }
     const score = snapshot.health_score;
     const prefix = score <= 50 ? `[!${score}]` : `[${score}]`;
-    const dbName = instance?.database ?? "";
+    const dbName = instance?.database ?? deriveLargestDb(snapshot);
     document.title = dbName
       ? `${prefix} ${dbName} \u2014 rpglot`
       : `${prefix} rpglot`;
@@ -947,15 +968,25 @@ function Header({
             </span>
           )}
         </div>
-        {instance && (
-          <span
-            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-default)]"
-            title={`Database: ${instance.database}\nPostgreSQL ${instance.pg_version}`}
-          >
-            <Server size={10} />
-            {instance.database} &middot; PG {instance.pg_version}
-          </span>
-        )}
+        {(() => {
+          const dbName = instance?.database ?? deriveLargestDb(snapshot);
+          const pgVer = instance?.pg_version;
+          if (!dbName) return null;
+          return (
+            <span
+              className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-default)]"
+              title={
+                pgVer
+                  ? `Database: ${dbName}\nPostgreSQL ${pgVer}`
+                  : `Database: ${dbName}`
+              }
+            >
+              <Server size={10} />
+              {dbName}
+              {pgVer ? <>&nbsp;&middot; PG {pgVer}</> : null}
+            </span>
+          );
+        })()}
         <span
           className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
             mode === "live"

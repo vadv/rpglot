@@ -584,10 +584,8 @@ fn advance_and_convert(inner: &mut WebAppInner) {
         }
     };
 
-    // Cache instance metadata.
-    // In live mode: fetched once (stable per connection).
-    // In history mode: updated from each snapshot's InstanceMeta block.
-    if inner.mode == Mode::History || inner.instance_info.is_none() {
+    // Cache instance metadata (only fetched once per connection, so cheap)
+    if inner.instance_info.is_none() {
         inner.instance_info = inner.provider.instance_info();
     }
 
