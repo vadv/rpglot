@@ -73,6 +73,57 @@ const RULES: Record<string, Classifier> = {
   cpu_pct: (v) => pctHigh(v, 50, 90),
   mem_pct: (v) => pctHigh(v, 70, 90),
 
+  // --- PRC: Memory growth (delta, can be negative) ---
+  vgrow_kb: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n > 1048576) return "critical"; // > 1 GB growth
+    if (n > 102400) return "warning"; // > 100 MB growth
+    return undefined;
+  },
+  rgrow_kb: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n > 1048576) return "critical"; // > 1 GB growth
+    if (n > 102400) return "warning"; // > 100 MB growth
+    return undefined;
+  },
+
+  // --- PRC: Swap usage (any swap = bad for performance) ---
+  vswap_kb: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n > 102400) return "critical"; // > 100 MB in swap
+    return "warning";
+  },
+
+  // --- PRC: Major page faults (physical disk reads for memory pages) ---
+  majflt: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n > 10000) return "critical";
+    if (n > 100) return "warning";
+    return undefined;
+  },
+
+  // --- PRC: Thread count (anomalously high = resource issue) ---
+  num_threads: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n > 1000) return "critical";
+    if (n > 200) return "warning";
+    return undefined;
+  },
+
   // Hit ratios (inverted — higher is better)
   io_hit_pct: (v) => pctHit(v),
   hit_pct: (v) => pctHit(v),
@@ -128,10 +179,15 @@ const RULES: Record<string, Classifier> = {
     return "warning";
   },
 
-  // PGA state
+  // PGA state + PRC process state (single-char values)
   state: (v) => {
+    // PGA states
     if (v === "idle in transaction") return "warning";
     if (v === "idle in transaction (aborted)") return "critical";
+    // PRC /proc states
+    if (v === "Z" || v === "X") return "critical"; // zombie / dead
+    if (v === "D") return "warning"; // uninterruptible sleep (disk wait)
+    if (v === "T" || v === "t") return "warning"; // stopped / traced
     return undefined;
   },
 
