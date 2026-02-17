@@ -408,8 +408,8 @@ fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
 /// Penalties:
 /// - Active PGA sessions: -1 per 2 active backends
 /// - CPU > 60%: -1 per percent above 60
-/// - Disk IOPS > 10K: -1 per 5K IOPS above threshold
-/// - Disk bandwidth > 200 MB/s: -1 per 50 MB/s above threshold
+/// - Disk IOPS > 1000: -5 per 1000 total IOPS
+/// - Disk bandwidth > 50 MB/s: -5 per 50 MB/s
 pub fn compute_health_score(
     snapshot: &Snapshot,
     prev: Option<&PrevSample>,
@@ -458,10 +458,7 @@ pub fn compute_health_score(
             let d_iops = (total_rio.saturating_sub(p.disk_rio)
                 + total_wio.saturating_sub(p.disk_wio)) as f64
                 / dt;
-            // Penalty starts at 10K IOPS, -1 per 5K above threshold
-            if d_iops > 10_000.0 {
-                bd.disk_iops = ((d_iops - 10_000.0) / 5_000.0).round().clamp(0.0, 100.0) as u8;
-            }
+            bd.disk_iops = ((d_iops / 1000.0) as i32 * 5).clamp(0, 100) as u8;
 
             let total_rsz: u64 = relevant.clone().map(|d| d.rsz).sum();
             let total_wsz: u64 = relevant.map(|d| d.wsz).sum();
@@ -470,10 +467,7 @@ pub fn compute_health_score(
                 * 512.0
                 / dt;
             let bw_mb = bw_bytes / (1024.0 * 1024.0);
-            // Penalty starts at 200 MB/s, -1 per 50 MB/s above threshold
-            if bw_mb > 200.0 {
-                bd.disk_bw = ((bw_mb - 200.0) / 50.0).round().clamp(0.0, 100.0) as u8;
-            }
+            bd.disk_bw = ((bw_mb / 50.0) as i32 * 5).clamp(0, 100) as u8;
         }
     }
 
