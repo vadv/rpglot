@@ -91,6 +91,13 @@ impl AnalysisRule for MeanTimeSpikeRule {
 // ============================================================
 // QueryCallSpikeRule — spike in calls/s for a single statement
 // ============================================================
+//
+// Uses relative threshold: alert when a single query accounts for
+// a large share of total calls/s.  This avoids false positives on
+// high-TPS machines where 500 calls/s is a tiny fraction of load.
+//
+// Warning:  one query > 30% of total calls/s (min 200 calls/s)
+// Critical: one query > 50% of total calls/s (min 500 calls/s)
 
 pub struct QueryCallSpikeRule;
 
@@ -125,6 +132,7 @@ impl AnalysisRule for QueryCallSpikeRule {
         let mut worst_rate = 0.0_f64;
         let mut worst_query_hash: u64 = 0;
         let mut worst_calls: i64 = 0;
+        let mut total_rate = 0.0_f64;
 
         for s in stmts {
             let Some(prev) = find_prev_stmt(prev_stmts, s.queryid) else {
@@ -138,26 +146,27 @@ impl AnalysisRule for QueryCallSpikeRule {
                 continue;
             }
             let delta = (s.calls - prev.calls).max(0);
-            if delta < 100 {
-                continue; // noise filter
-            }
             let rate = delta as f64 / dt;
-            if rate > worst_rate {
+            total_rate += rate;
+            if delta >= 100 && rate > worst_rate {
                 worst_rate = rate;
                 worst_query_hash = s.query_hash;
                 worst_calls = delta;
             }
         }
 
-        // Threshold: > 200 calls/s for a single query
-        if worst_rate < 200.0 {
+        if worst_rate < 200.0 || total_rate <= 0.0 {
             return Vec::new();
         }
 
-        let severity = if worst_rate >= 2000.0 {
+        let pct = worst_rate / total_rate * 100.0;
+
+        let severity = if pct >= 50.0 && worst_rate >= 500.0 {
             Severity::Critical
-        } else {
+        } else if pct >= 30.0 {
             Severity::Warning
+        } else {
+            return Vec::new();
         };
 
         let detail = if worst_query_hash != 0 {
@@ -174,7 +183,9 @@ impl AnalysisRule for QueryCallSpikeRule {
             rule_id: "stmt_call_spike",
             category: Category::PgStatements,
             severity,
-            title: format!("Query spike: {worst_rate:.0} calls/s ({worst_calls} calls)"),
+            title: format!(
+                "Query spike: {worst_rate:.0} calls/s ({pct:.0}% of total, {worst_calls} calls)"
+            ),
             detail,
             value: worst_rate,
             merge_key: None,
