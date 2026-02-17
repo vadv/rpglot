@@ -318,7 +318,6 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
-  const [flashRowId, setFlashRowId] = useState<string | number | null>(null);
 
   // Persist analysis report to sessionStorage so it survives SSO refreshes
   useEffect(() => {
@@ -453,8 +452,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       handleManualJump(jump.timestamp);
       if (jump.entityId != null) {
         tabState.handleSelectRow(jump.entityId);
-        setFlashRowId(jump.entityId);
-        setTimeout(() => setFlashRowId(null), 1500);
+        tabState.triggerFlash(jump.entityId);
       }
     },
     [handleManualJump, tabState],
@@ -598,12 +596,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       />
       <div className="flex-1 min-h-0">
         {snapshot ? (
-          <TabContent
-            snapshot={snapshot}
-            schema={schema}
-            tabState={tabState}
-            flashId={flashRowId}
-          />
+          <TabContent snapshot={snapshot} schema={schema} tabState={tabState} />
         ) : error ? (
           <div className="flex items-center justify-center h-full text-[var(--status-critical)]">
             {error}
@@ -668,6 +661,7 @@ interface TabState {
   activeView: string;
   initialView: string | null;
   initialFilter: string | null;
+  flashRowId: string | number | null;
   handleTabChange: (tab: TabKey) => void;
   handleSelectRow: (id: string | number | null) => void;
   handleOpenDetail: () => void;
@@ -676,6 +670,7 @@ interface TabState {
   handleViewChange: (view: string) => void;
   handleFilterChange: (filter: string) => void;
   setHelpOpen: (open: boolean) => void;
+  triggerFlash: (id: string | number) => void;
 }
 
 function useTabState(
@@ -699,6 +694,12 @@ function useTabState(
   // Initial view/filter from URL (consumed once by DataTable on mount)
   const [initialView, setInitialView] = useState<string | null>(urlState.view);
   const [initialFilter] = useState<string | null>(urlState.filter);
+  const [flashRowId, setFlashRowId] = useState<string | number | null>(null);
+
+  const triggerFlash = useCallback((id: string | number) => {
+    setFlashRowId(id);
+    setTimeout(() => setFlashRowId(null), 1500);
+  }, []);
 
   // Reset selection on tab change
   const handleTabChange = useCallback(
@@ -735,11 +736,13 @@ function useTabState(
       (row) => row[searchField] === drillDownTarget.value,
     );
     if (targetRow) {
-      setSelectedId(targetRow[entityId] as string | number);
+      const id = targetRow[entityId] as string | number;
+      setSelectedId(id);
       setDetailOpen(true);
+      triggerFlash(id);
     }
     setDrillDownTarget(null);
-  }, [drillDownTarget, snapshot, activeTab, schema]);
+  }, [drillDownTarget, snapshot, activeTab, schema, triggerFlash]);
 
   const handleSelectRow = useCallback((id: string | number | null) => {
     setSelectedId(id);
@@ -839,6 +842,8 @@ function useTabState(
     handleViewChange,
     handleFilterChange,
     setHelpOpen,
+    flashRowId,
+    triggerFlash,
   };
 }
 
@@ -2006,12 +2011,10 @@ function TabContent({
   snapshot,
   schema,
   tabState,
-  flashId,
 }: {
   snapshot: ApiSnapshot;
   schema: ApiSchema;
   tabState: TabState;
-  flashId?: string | number | null;
 }) {
   const {
     activeTab,
@@ -2026,6 +2029,7 @@ function TabContent({
     handleDrillDown,
     handleViewChange,
     handleFilterChange,
+    flashRowId,
   } = tabState;
   const tabSchema = schema.tabs[activeTab];
   const rawData = getTabData(snapshot, activeTab);
@@ -2292,7 +2296,7 @@ function TabContent({
           onFilterChange={handleFilterChange}
           snapshotTimestamp={snapshot.timestamp}
           toolbarControls={toolbarControls}
-          flashId={flashId}
+          flashId={flashRowId}
         />
       </div>
       {detailOpen && selectedRow && !isAggregatedView && (
