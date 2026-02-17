@@ -2736,7 +2736,7 @@ fn generate_pge_schema() -> TabSchema {
             ViewSchema {
                 key: "slow_queries".into(),
                 label: "Slow Queries".into(),
-                columns: vec!["elapsed_s", "message"]
+                columns: vec!["elapsed_s", "count", "message"]
                     .into_iter()
                     .map(String::from)
                     .collect(),
