@@ -109,7 +109,19 @@ impl AnalysisRule for SeqScanDominantRule {
     }
 
     fn evaluate(&self, ctx: &AnalysisContext) -> Vec<Anomaly> {
+        let prev_snapshot = match ctx.prev_snapshot {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+
         let Some(tables) = find_block(ctx.snapshot, |b| match b {
+            DataBlock::PgStatUserTables(v) => Some(v.as_slice()),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+
+        let Some(prev_tables) = find_block(prev_snapshot, |b| match b {
             DataBlock::PgStatUserTables(v) => Some(v.as_slice()),
             _ => None,
         }) else {
@@ -119,21 +131,33 @@ impl AnalysisRule for SeqScanDominantRule {
         let mut worst_pct: f64 = 0.0;
         let mut worst_schema_hash: u64 = 0;
         let mut worst_name_hash: u64 = 0;
+        let mut worst_d_seq: i64 = 0;
+        let mut worst_d_idx: i64 = 0;
 
         for t in tables {
             // Small tables: seq scan is optimal, planner picks it intentionally
             if t.n_live_tup < 10_000 {
                 continue;
             }
-            let total = t.seq_scan + t.idx_scan;
-            if total <= 100 {
+            let Some(prev) = find_prev_table(prev_tables, t.relid) else {
+                continue;
+            };
+            if t.collected_at == prev.collected_at {
                 continue;
             }
-            let seq_pct = t.seq_scan as f64 * 100.0 / total as f64;
+            let d_seq = (t.seq_scan - prev.seq_scan).max(0);
+            let d_idx = (t.idx_scan - prev.idx_scan).max(0);
+            let d_total = d_seq + d_idx;
+            if d_total <= 10 {
+                continue; // no meaningful scan activity in this interval
+            }
+            let seq_pct = d_seq as f64 * 100.0 / d_total as f64;
             if seq_pct > worst_pct {
                 worst_pct = seq_pct;
                 worst_schema_hash = t.schemaname_hash;
                 worst_name_hash = t.relname_hash;
+                worst_d_seq = d_seq;
+                worst_d_idx = d_idx;
             }
         }
 
@@ -142,6 +166,7 @@ impl AnalysisRule for SeqScanDominantRule {
         }
 
         let name = qualified_name(ctx.interner, worst_schema_hash, worst_name_hash);
+        let detail = format!("Δseq: {worst_d_seq}, Δidx: {worst_d_idx}");
 
         vec![Anomaly {
             timestamp: ctx.timestamp,
@@ -149,7 +174,7 @@ impl AnalysisRule for SeqScanDominantRule {
             category: Category::PgTables,
             severity: Severity::Warning,
             title: format!("Table {name}: {worst_pct:.0}% sequential scans"),
-            detail: None,
+            detail: Some(detail),
             value: worst_pct,
             merge_key: None,
         }]
