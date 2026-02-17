@@ -391,6 +391,13 @@ impl<F: FileSystem + Clone> Collector<F> {
                 blocks.push(DataBlock::PgSettings(settings));
             }
 
+            if let Some((database, pg_version)) = pg_collector.instance_info() {
+                blocks.push(DataBlock::InstanceMeta {
+                    database,
+                    pg_version,
+                });
+            }
+
             // Store last error for TUI display
             self.pg_last_error = pg_collector.last_error().map(|s| s.to_string());
 
