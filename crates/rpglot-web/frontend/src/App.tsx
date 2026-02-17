@@ -42,11 +42,7 @@ import { HelpModal } from "./components/HelpModal";
 import { AnalysisModal } from "./components/AnalysisModal";
 import type { AnalysisJump } from "./components/AnalysisModal";
 import { RichTooltip } from "./components/RichTooltip";
-import {
-  computeHealthScore,
-  healthColor,
-  healthBgColor,
-} from "./utils/healthScore";
+import { healthColor, healthBgColor } from "./utils/healthScore";
 import {
   captureTokenFromUrl,
   getToken,
@@ -1051,39 +1047,19 @@ function Header({
 }
 
 function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
-  const { score, penalties } = useMemo(
-    () => computeHealthScore(snapshot),
-    [snapshot],
-  );
+  const score = snapshot.health_score;
   const color = healthColor(score);
   const bgColor = healthBgColor(score);
 
-  const tooltipContent = (
-    <div className="space-y-1">
-      <div className="font-semibold text-[var(--text-primary)]">
-        Health Score: {score}/100
-      </div>
-      {penalties.length > 0 ? (
-        <div className="space-y-0.5 text-xs">
-          {penalties.map((p, i) => (
-            <div key={i} className="flex justify-between gap-3">
-              <span className="text-[var(--text-secondary)]">{p.label}</span>
-              <span className="text-[var(--status-critical)] font-mono">
-                {p.value}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-xs text-[var(--text-tertiary)]">
-          No penalties — database is healthy
-        </div>
-      )}
-    </div>
-  );
-
   return (
-    <RichTooltip content={tooltipContent} side="bottom">
+    <RichTooltip
+      content={
+        <div className="font-semibold text-[var(--text-primary)]">
+          Health Score: {score}/100
+        </div>
+      }
+      side="bottom"
+    >
       <span
         className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium cursor-default"
         style={{ backgroundColor: bgColor, color }}

@@ -5,6 +5,7 @@ import type {
   AnalysisReport,
   AnalysisIncident,
   AnalysisRecommendation,
+  HealthPoint,
   IncidentGroup,
   TabKey,
 } from "../api/types";
@@ -268,8 +269,9 @@ export function AnalysisModal({
             )}
           </div>
 
-          {/* Incident Timeline or All-clear */}
-          {report.incidents.length === 0 ? (
+          {/* Incident Timeline (with health lane) or All-clear */}
+          {report.incidents.length === 0 &&
+          report.health_scores.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-6 rounded-lg border border-[var(--border-default)] bg-[var(--bg-elevated)]">
               <Check size={28} className="text-[var(--status-success)] mb-2" />
               <span className="text-sm font-medium text-[var(--status-success)]">
@@ -284,6 +286,7 @@ export function AnalysisModal({
             <IncidentTimeline
               incidents={report.incidents}
               groups={groups}
+              healthScores={report.health_scores}
               startTs={report.start_ts}
               endTs={report.end_ts}
               timezone={timezone}
@@ -392,9 +395,12 @@ const LANE_HEIGHT = 28;
 const AXIS_HEIGHT = 24;
 const LABEL_WIDTH = 80;
 
+const HEALTH_LANE_HEIGHT = 24;
+
 function IncidentTimeline({
   incidents,
   groups,
+  healthScores,
   startTs,
   endTs,
   timezone,
@@ -402,6 +408,7 @@ function IncidentTimeline({
 }: {
   incidents: AnalysisIncident[];
   groups: IncidentGroup[];
+  healthScores: HealthPoint[];
   startTs: number;
   endTs: number;
   timezone: TimezoneMode;
@@ -479,7 +486,10 @@ function IncidentTimeline({
 
   if (range <= 0) return null;
 
-  const totalHeight = AXIS_HEIGHT + populatedLanes.length * LANE_HEIGHT + 4;
+  const hasHealth = healthScores.length >= 2;
+  const healthOffset = hasHealth ? HEALTH_LANE_HEIGHT : 0;
+  const totalHeight =
+    AXIS_HEIGHT + healthOffset + populatedLanes.length * LANE_HEIGHT + 4;
 
   return (
     <div
@@ -515,6 +525,57 @@ function IncidentTimeline({
         />
       ))}
 
+      {/* Health lane */}
+      {hasHealth && (
+        <div
+          className="absolute left-0 right-0 flex"
+          style={{
+            top: AXIS_HEIGHT,
+            height: HEALTH_LANE_HEIGHT,
+            borderBottom: "1px solid var(--border-default)",
+          }}
+        >
+          <div
+            className="flex items-center justify-end pr-2 text-[9px] text-[var(--text-tertiary)] font-medium shrink-0 truncate"
+            style={{ width: LABEL_WIDTH }}
+          >
+            Health
+          </div>
+          <div className="relative flex-1">
+            {healthScores.map((pt, i) => {
+              if (i === healthScores.length - 1) return null;
+              const next = healthScores[i + 1];
+              const leftPct = ((pt.ts - startTs) / range) * 100;
+              const widthPct = Math.max(
+                ((next.ts - pt.ts) / range) * 100,
+                0.15,
+              );
+              const score = pt.score;
+              const color =
+                score >= 80
+                  ? "var(--status-success)"
+                  : score >= 50
+                    ? "var(--status-warning)"
+                    : "var(--status-critical)";
+              const opacity = ((100 - score) / 100) * 0.8 + 0.2;
+              return (
+                <div
+                  key={i}
+                  className="absolute top-[3px]"
+                  style={{
+                    left: `${leftPct}%`,
+                    width: `${widthPct}%`,
+                    height: HEALTH_LANE_HEIGHT - 6,
+                    backgroundColor: color,
+                    opacity,
+                  }}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Vertical stripes behind correlated groups (2+ incidents, not persistent) */}
       {stripeGroups.map((g) => {
         const leftPct = ((g.first_ts - startTs) / range) * 100;
@@ -530,7 +591,7 @@ function IncidentTimeline({
             style={{
               left: `calc(${LABEL_WIDTH}px + (100% - ${LABEL_WIDTH}px) * ${leftPct / 100})`,
               width: `calc((100% - ${LABEL_WIDTH}px) * ${widthPct / 100})`,
-              top: AXIS_HEIGHT,
+              top: AXIS_HEIGHT + healthOffset,
               bottom: 0,
               backgroundColor: isHighlighted
                 ? "rgba(255,255,255,0.08)"
@@ -547,7 +608,7 @@ function IncidentTimeline({
           key={lane.label}
           className="absolute left-0 right-0 flex"
           style={{
-            top: AXIS_HEIGHT + laneIdx * LANE_HEIGHT,
+            top: AXIS_HEIGHT + healthOffset + laneIdx * LANE_HEIGHT,
             height: LANE_HEIGHT,
             backgroundColor:
               laneIdx % 2 === 1 ? "rgba(255,255,255,0.02)" : undefined,

@@ -35,6 +35,8 @@ pub struct ApiSnapshot {
     pub pge: Vec<PgEventsRow>,
     /// pg_locks blocking tree (flat, with depth).
     pub pgl: Vec<PgLocksRow>,
+    /// Health score 0..100 (100 = fully healthy).
+    pub health_score: u8,
 }
 
 // ============================================================

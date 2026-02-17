@@ -80,6 +80,12 @@ pub struct IncidentGroup {
 }
 
 #[derive(Serialize)]
+pub struct HealthPoint {
+    pub ts: i64,
+    pub score: u8,
+}
+
+#[derive(Serialize)]
 pub struct AnalysisReport {
     pub start_ts: i64,
     pub end_ts: i64,
@@ -88,6 +94,7 @@ pub struct AnalysisReport {
     pub incidents: Vec<Incident>,
     pub recommendations: Vec<advisor::Recommendation>,
     pub summary: AnalysisSummary,
+    pub health_scores: Vec<HealthPoint>,
 }
 
 #[derive(Serialize)]
@@ -383,6 +390,76 @@ fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
 }
 
 // ============================================================
+// Health score — 100 minus penalties
+// ============================================================
+
+/// Compute health score (0..100) from snapshot data and previous sample deltas.
+///
+/// Penalties:
+/// - Active PGA sessions: -1 per 2 active backends
+/// - CPU > 60%: -1 per percent above 60
+/// - Disk IOPS > 1000: -5 per 1000 total IOPS
+/// - Disk bandwidth > 50 MB/s: -5 per 50 MB/s
+pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: f64) -> u8 {
+    let mut score: i32 = 100;
+
+    // 1. Active PGA sessions
+    if let Some(sessions) = find_block(snapshot, |b| match b {
+        DataBlock::PgStatActivity(v) => Some(v.as_slice()),
+        _ => None,
+    }) {
+        let idle_hash = xxhash_rust::xxh3::xxh3_64(b"idle");
+        let active = sessions
+            .iter()
+            .filter(|s| s.state_hash != idle_hash && s.state_hash != 0)
+            .count() as i32;
+        score -= active / 2;
+    }
+
+    if let Some(p) = prev
+        && dt > 0.0
+    {
+        // 2. CPU > 60%
+        if let Some(cpu) = find_aggregate_cpu(snapshot) {
+            let total = sum_cpu_ticks(cpu);
+            let dt_ticks = total.saturating_sub(p.cpu_total) as f64;
+            if dt_ticks > 0.0 {
+                let idle_d = cpu.idle.saturating_sub(p.cpu_idle) as f64;
+                let cpu_pct = (1.0 - idle_d / dt_ticks) * 100.0;
+                if cpu_pct > 60.0 {
+                    score -= (cpu_pct - 60.0).round() as i32;
+                }
+            }
+        }
+
+        // 3. Disk IOPS
+        if let Some(disks) = find_block(snapshot, |b| match b {
+            DataBlock::SystemDisk(v) => Some(v.as_slice()),
+            _ => None,
+        }) {
+            let total_rio: u64 = disks.iter().map(|d| d.rio).sum();
+            let total_wio: u64 = disks.iter().map(|d| d.wio).sum();
+            let d_iops = (total_rio.saturating_sub(p.disk_rio)
+                + total_wio.saturating_sub(p.disk_wio)) as f64
+                / dt;
+            score -= (d_iops / 1000.0) as i32 * 5;
+
+            // 4. Disk bandwidth
+            let total_rsz: u64 = disks.iter().map(|d| d.rsz).sum();
+            let total_wsz: u64 = disks.iter().map(|d| d.wsz).sum();
+            let bw_bytes = (total_rsz.saturating_sub(p.disk_rsz)
+                + total_wsz.saturating_sub(p.disk_wsz)) as f64
+                * 512.0
+                / dt;
+            let bw_mb = bw_bytes / (1024.0 * 1024.0);
+            score -= (bw_mb / 50.0) as i32 * 5;
+        }
+    }
+
+    score.clamp(0, 100) as u8
+}
+
+// ============================================================
 // PrevSample — lightweight extract from previous snapshot
 // ============================================================
 
@@ -394,6 +471,8 @@ pub struct PrevSample {
     pub cpu_steal: u64,
     pub disk_rsz: u64,
     pub disk_wsz: u64,
+    pub disk_rio: u64,
+    pub disk_wio: u64,
     /// Per-device io_ms (device_hash → cumulative io_ms).
     pub disk_io_ms_per_dev: HashMap<u64, u64>,
     pub net_rx_bytes: u64,
@@ -414,6 +493,8 @@ impl PrevSample {
             cpu_steal: 0,
             disk_rsz: 0,
             disk_wsz: 0,
+            disk_rio: 0,
+            disk_wio: 0,
             disk_io_ms_per_dev: HashMap::new(),
             net_rx_bytes: 0,
             net_tx_bytes: 0,
@@ -436,6 +517,8 @@ impl PrevSample {
         }) {
             s.disk_rsz = disks.iter().map(|d| d.rsz).sum();
             s.disk_wsz = disks.iter().map(|d| d.wsz).sum();
+            s.disk_rio = disks.iter().map(|d| d.rio).sum();
+            s.disk_wio = disks.iter().map(|d| d.wio).sum();
             for d in disks {
                 s.disk_io_ms_per_dev.insert(d.device_hash, d.io_ms);
             }
@@ -725,6 +808,7 @@ impl Analyzer {
         let mut prev_sample: Option<PrevSample> = None;
         let mut prev_snap: Option<Snapshot> = None;
         let mut anomalies: Vec<Anomaly> = Vec::new();
+        let mut health_scores: Vec<HealthPoint> = Vec::new();
         let mut snapshots_analyzed: usize = 0;
 
         for pos in start_pos..end_pos {
@@ -755,6 +839,11 @@ impl Analyzer {
             for rule in &self.rules {
                 anomalies.extend(rule.evaluate(&ctx));
             }
+
+            health_scores.push(HealthPoint {
+                ts: snapshot.timestamp,
+                score: compute_health_score(&snapshot, prev_sample.as_ref(), dt),
+            });
 
             prev_sample = Some(PrevSample::extract(&snapshot));
             prev_snap = Some(snapshot);
@@ -823,6 +912,7 @@ impl Analyzer {
             incidents: flat_incidents,
             recommendations,
             summary,
+            health_scores,
         }
     }
 }

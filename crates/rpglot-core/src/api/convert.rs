@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use crate::analysis::compute_backend_io_hit;
+use crate::analysis::{PrevSample, compute_backend_io_hit, compute_health_score};
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
@@ -41,6 +41,9 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
     let snap = ctx.snapshot;
     let delta_time = get_delta_time(snap, ctx.prev_snapshot);
 
+    let prev_sample = ctx.prev_snapshot.map(PrevSample::extract);
+    let health_score = compute_health_score(snap, prev_sample.as_ref(), delta_time);
+
     ApiSnapshot {
         timestamp: snap.timestamp,
         prev_timestamp: None,
@@ -60,6 +63,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         pgi: extract_pgi(snap, ctx.interner, ctx.pgi_rates),
         pge: extract_pge(snap, ctx.interner),
         pgl: extract_pgl(snap, ctx.interner),
+        health_score,
     }
 }
 

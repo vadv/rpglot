@@ -17,6 +17,7 @@ export interface ApiSnapshot {
   pgi: PgIndexesRow[];
   pge: PgEventsRow[];
   pgl: PgLocksRow[];
+  health_score: number;
 }
 
 export interface SystemSummary {
@@ -512,6 +513,11 @@ export interface IncidentGroup {
   incidents: AnalysisIncident[];
 }
 
+export interface HealthPoint {
+  ts: number;
+  score: number;
+}
+
 export interface AnalysisReport {
   start_ts: number;
   end_ts: number;
@@ -520,6 +526,7 @@ export interface AnalysisReport {
   incidents: AnalysisIncident[];
   recommendations: AnalysisRecommendation[];
   summary: AnalysisSummary;
+  health_scores: HealthPoint[];
 }
 
 export interface AnalysisIncident {
