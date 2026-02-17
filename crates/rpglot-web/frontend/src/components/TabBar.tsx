@@ -52,7 +52,7 @@ interface TabBarProps {
 
 export function TabBar({ activeTab, onTabChange }: TabBarProps) {
   return (
-    <div className="flex border-b border-[var(--border-default)] bg-[var(--bg-surface)]">
+    <div className="flex gap-1 px-2 pt-1.5 pb-0 bg-[var(--bg-surface)] border-b border-[var(--border-default)]">
       {TAB_ORDER.map((key) => {
         const config = TAB_CONFIG[key];
         const Icon = config.icon;
@@ -61,14 +61,17 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
           <Tooltip key={key} content={config.fullName} side="bottom">
             <button
               onClick={() => onTabChange(key)}
-              className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium transition-colors ${
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
                 isActive
-                  ? "text-[var(--accent-text)] border-b-2 border-[var(--accent)] bg-[var(--accent-subtle)]"
-                  : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+                  ? "text-[var(--accent-text)]"
+                  : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
               }`}
             >
               <Icon size={14} />
               {config.label}
+              {isActive && (
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-[var(--accent)]" />
+              )}
             </button>
           </Tooltip>
         );

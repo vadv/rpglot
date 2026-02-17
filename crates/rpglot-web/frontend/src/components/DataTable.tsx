@@ -300,10 +300,10 @@ export function DataTable({
               const btn = (
                 <button
                   onClick={() => handleViewSwitch(v)}
-                  className={`px-2.5 py-0.5 text-xs rounded font-medium transition-colors ${
+                  className={`px-2 py-0.5 text-xs rounded-full font-medium transition-colors ${
                     activeView === v.key
-                      ? "bg-[var(--accent)] text-[var(--text-inverse)]"
-                      : "bg-[var(--bg-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      ? "bg-[var(--accent-subtle)] text-[var(--accent-text)]"
+                      : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                   }`}
                 >
                   {v.label}
