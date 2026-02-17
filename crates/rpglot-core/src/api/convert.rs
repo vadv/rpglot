@@ -733,6 +733,33 @@ fn compute_bgw_rates(
 // PRC (OS processes)
 // ============================================================
 
+/// Detect PostgreSQL auxiliary processes by their cmdline.
+///
+/// These processes (walwriter, stats collector, logger, archiver, etc.) are not
+/// visible in pg_stat_activity, so we parse their cmdline to identify them.
+/// Only called when a process PID is NOT found in pg_stat_activity.
+///
+/// Returns the backend type string (e.g. "walwriter", "postmaster") or None.
+fn detect_pg_auxiliary<'a>(name: &str, cmdline: &'a str) -> Option<&'a str> {
+    // Auxiliary processes have cmdline like "postgres: <cluster>: <role>"
+    if let Some(rest) = cmdline.strip_prefix("postgres: ") {
+        // Find the last ": " separator — everything after it is the role
+        if let Some(pos) = rest.rfind(": ") {
+            let role = &rest[pos + 2..];
+            if !role.is_empty() {
+                return Some(role);
+            }
+        }
+    }
+
+    // Postmaster: comm is "postgres" and cmdline contains " -D " (data directory flag)
+    if name == "postgres" && (cmdline.contains(" -D ") || cmdline.ends_with(" -D")) {
+        return Some("postmaster");
+    }
+
+    None
+}
+
 fn extract_prc(
     snap: &Snapshot,
     prev: Option<&Snapshot>,
@@ -887,7 +914,13 @@ fn extract_prc(
                         if bt.is_empty() { None } else { Some(bt) },
                     )
                 } else {
-                    (None, None)
+                    // Fallback: detect PG auxiliary processes by cmdline
+                    let name = resolve(interner, p.name_hash);
+                    let cmdline = resolve(interner, p.cmdline_hash);
+                    match detect_pg_auxiliary(&name, &cmdline) {
+                        Some(bt) => (None, Some(bt.to_string())),
+                        None => (None, None),
+                    }
                 };
 
             // Context switch rates
@@ -1672,4 +1705,102 @@ fn extract_pgl(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgLock
             state_change: n.state_change,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_pg_auxiliary_walwriter() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: production: walwriter"),
+            Some("walwriter")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_stats_collector() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: production: stats collector"),
+            Some("stats collector")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_logger() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: tmp-production-cluster: logger"),
+            Some("logger")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_checkpointer() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: 16/main: checkpointer"),
+            Some("checkpointer")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_background_writer() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: mydb: background writer"),
+            Some("background writer")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_archiver() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: mydb: archiver"),
+            Some("archiver")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_startup() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres: mydb: startup"),
+            Some("startup")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_postmaster() {
+        assert_eq!(
+            detect_pg_auxiliary(
+                "postgres",
+                "/usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main"
+            ),
+            Some("postmaster")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_postmaster_short() {
+        assert_eq!(
+            detect_pg_auxiliary("postgres", "postgres -D /data"),
+            Some("postmaster")
+        );
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_not_postgres() {
+        assert_eq!(detect_pg_auxiliary("nginx", "nginx: worker process"), None);
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_empty() {
+        assert_eq!(detect_pg_auxiliary("", ""), None);
+    }
+
+    #[test]
+    fn test_detect_pg_auxiliary_random_process() {
+        assert_eq!(
+            detect_pg_auxiliary("python3", "/usr/bin/python3 app.py"),
+            None
+        );
+    }
 }
