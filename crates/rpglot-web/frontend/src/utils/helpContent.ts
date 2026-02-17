@@ -483,16 +483,18 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
 
 export const SUMMARY_SECTION_HELP: Record<string, string> = {
   cpu: "CPU time breakdown across all cores. iow_pct >10% = disk bottleneck. steal >5% = hypervisor overcommit.",
-  load: "Load average = processes waiting for CPU/IO. Compare to core count. >2x cores = overloaded.",
+  load: "Load average = processes waiting for CPU/IO. Compare to core count. >2x cores = overloaded. In containers this is the HOST load average, not the container's.",
   memory:
     "available_kb is the key metric \u2014 includes reclaimable cache. <10% of total = memory pressure.",
   swap: "Any swap usage for PostgreSQL backends degrades performance severely. Ideally used_kb = 0.",
   psi: "Pressure Stall Information \u2014 measures actual resource contention, not just utilization.",
   vmstat:
-    "Page faults and context switches. swin_s/swout_s >0 = active swapping (bad).",
+    "Page faults and context switches. swin_s/swout_s >0 = active swapping (bad). In containers this is HOST-level data, not container-scoped.",
   pg: "Database-wide throughput. hit_ratio <99% for OLTP is concerning. temp_bytes_s >0 = work_mem overflow.",
   bgwriter:
     "buffers_backend_s >0 means bgwriter can't keep up. maxwritten_clean high = increase bgwriter_lru_maxpages.",
+  disk: "Per-device I/O throughput, IOPS, utilization, and latency (await). util >90% = saturated. await >20ms = slow disk.",
+  network: "Per-interface network throughput and packet rates.",
   cgroup_cpu:
     "Container CPU usage vs limit. throttled_ms >0 = container exceeded quota, queries slowed down. Increase CPU limit or optimize queries.",
   cgroup_memory:

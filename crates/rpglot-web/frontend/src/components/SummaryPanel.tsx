@@ -188,6 +188,21 @@ function DiskCard({ disk }: { disk: ApiSnapshot["system"]["disks"][number] }) {
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
           Disk: {disk.name}
         </span>
+        {SUMMARY_SECTION_HELP["disk"] && (
+          <RichTooltip
+            content={
+              <span className="text-[var(--text-secondary)]">
+                {SUMMARY_SECTION_HELP["disk"]}
+              </span>
+            }
+            side="bottom"
+          >
+            <Info
+              size={10}
+              className="text-[var(--text-tertiary)] opacity-50 hover:opacity-100 cursor-help"
+            />
+          </RichTooltip>
+        )}
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         <KV
@@ -259,6 +274,21 @@ function NetworkCard({
         <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
           Net: {net.name}
         </span>
+        {SUMMARY_SECTION_HELP["network"] && (
+          <RichTooltip
+            content={
+              <span className="text-[var(--text-secondary)]">
+                {SUMMARY_SECTION_HELP["network"]}
+              </span>
+            }
+            side="bottom"
+          >
+            <Info
+              size={10}
+              className="text-[var(--text-tertiary)] opacity-50 hover:opacity-100 cursor-help"
+            />
+          </RichTooltip>
+        )}
       </div>
       <div className="grid grid-cols-[auto_1fr] gap-x-2 text-xs leading-[18px]">
         <KV
