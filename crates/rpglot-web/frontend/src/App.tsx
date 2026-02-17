@@ -1129,12 +1129,11 @@ function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
     { icon: HardDrive, label: "Disk IOPS", value: bd.disk_iops },
     { icon: Activity, label: "Disk BW", value: bd.disk_bw },
   ];
-  const hasPenalty = penalties.some((p) => p.value > 0);
 
   return (
     <RichTooltip
       content={
-        <div className="w-48">
+        <div className="w-44">
           <div className="flex items-center justify-between mb-2">
             <span className="font-semibold text-[var(--text-primary)]">
               Health
@@ -1146,49 +1145,37 @@ function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
               </span>
             </span>
           </div>
-          <div className="h-2 rounded-full bg-[var(--bg-subtle)] overflow-hidden mb-3">
-            <div
-              className="h-full rounded-full transition-all"
-              style={{ width: `${score}%`, backgroundColor: color }}
-            />
+          <div className="space-y-1">
+            {penalties.map((p) => {
+              const active = p.value > 0;
+              const pColor =
+                p.value >= 20
+                  ? "var(--status-critical)"
+                  : "var(--status-warning)";
+              return (
+                <div
+                  key={p.label}
+                  className="flex items-center gap-2"
+                  style={{ opacity: active ? 1 : 0.35 }}
+                >
+                  <p.icon
+                    size={10}
+                    className="shrink-0"
+                    style={{ color: active ? pColor : "var(--text-tertiary)" }}
+                  />
+                  <span className="text-[var(--text-secondary)] flex-1">
+                    {p.label}
+                  </span>
+                  <span
+                    className="font-mono w-6 text-right"
+                    style={{ color: active ? pColor : "var(--text-tertiary)" }}
+                  >
+                    {active ? `\u2212${p.value}` : "0"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
-          {hasPenalty ? (
-            <div className="space-y-1.5">
-              {penalties
-                .filter((p) => p.value > 0)
-                .map((p) => (
-                  <div key={p.label} className="flex items-center gap-2">
-                    <p.icon
-                      size={10}
-                      className="shrink-0"
-                      style={{ color: "var(--status-warning)" }}
-                    />
-                    <span className="text-[var(--text-secondary)] flex-1">
-                      {p.label}
-                    </span>
-                    <span className="font-mono text-[var(--status-warning)]">
-                      -{p.value}
-                    </span>
-                    <div className="w-12 h-1.5 rounded-full bg-[var(--bg-subtle)] overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${Math.min(p.value * 5, 100)}%`,
-                          backgroundColor:
-                            p.value >= 20
-                              ? "var(--status-critical)"
-                              : "var(--status-warning)",
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-            </div>
-          ) : (
-            <div className="text-[var(--text-tertiary)] text-center">
-              No penalties
-            </div>
-          )}
         </div>
       }
       side="bottom"
