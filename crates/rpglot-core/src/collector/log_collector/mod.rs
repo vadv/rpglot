@@ -31,12 +31,20 @@ pub struct LogCollectResult {
     pub checkpoint_count: u16,
     /// Number of autovacuum/autoanalyze events detected in this interval.
     pub autovacuum_count: u16,
-    /// Detailed checkpoint/autovacuum event entries for snapshot storage.
+    /// Number of slow queries detected in this interval.
+    pub slow_query_count: u16,
+    /// Detailed checkpoint/autovacuum/slow query event entries for snapshot storage.
     pub events: Vec<PgLogEventEntry>,
 }
 
 /// Maximum number of unique error patterns kept per snapshot interval.
 const MAX_LOG_PATTERNS_PER_SNAPSHOT: usize = 32;
+
+/// Maximum SQL text length stored per slow query (bytes).
+const MAX_SLOW_QUERY_LEN: usize = 1024;
+
+/// Maximum number of slow queries kept per snapshot (top-N by duration).
+const MAX_SLOW_QUERIES_PER_SNAPSHOT: usize = 16;
 
 /// How often to re-check pg_current_logfile() for rotation (seconds).
 const LOG_ROTATION_CHECK_SECS: u64 = 60;
@@ -50,6 +58,13 @@ struct PendingError {
     sample: String,
     /// SQL statement from STATEMENT: line (first seen).
     statement: String,
+}
+
+/// Multiline slow query being accumulated.
+struct PendingSlowQuery {
+    duration_ms: f64,
+    sql: String,
+    truncated: bool,
 }
 
 /// Log format detected from `log_destination` setting.
@@ -95,6 +110,12 @@ pub struct LogCollector {
     /// True if `drain_pending` already held back the last error once.
     /// Prevents holding back the same error indefinitely.
     error_held_back: bool,
+    /// Slow query being accumulated (multiline SQL continuation).
+    pending_slow_query: Option<PendingSlowQuery>,
+    /// Top-N slow queries by duration (bounded to MAX_SLOW_QUERIES_PER_SNAPSHOT).
+    slow_queries: Vec<PgLogEventEntry>,
+    /// Total count of slow queries detected in this interval.
+    slow_query_count: u16,
     /// Last initialization error (for diagnostics)
     last_error: Option<String>,
 }
@@ -125,6 +146,9 @@ impl LogCollector {
             last_event_idx: None,
             last_error_key: None,
             error_held_back: false,
+            pending_slow_query: None,
+            slow_queries: Vec::new(),
+            slow_query_count: 0,
             last_error: None,
         }
     }
@@ -216,6 +240,20 @@ impl LogCollector {
         for line in &lines {
             // Continuation line (starts with whitespace): try to patch last event in-place
             if is_continuation_line(line) {
+                // Slow query multiline continuation — append SQL text
+                if let Some(ref mut pending) = self.pending_slow_query {
+                    if !pending.truncated {
+                        let trimmed = line.trim();
+                        if pending.sql.len() + 1 + trimmed.len() > MAX_SLOW_QUERY_LEN {
+                            pending.sql.truncate(MAX_SLOW_QUERY_LEN);
+                            pending.truncated = true;
+                        } else {
+                            pending.sql.push(' ');
+                            pending.sql.push_str(trimmed);
+                        }
+                    }
+                    continue;
+                }
                 if let Some(idx) = self.last_event_idx
                     && let Some(entry) = self.pending_events.get_mut(idx)
                 {
@@ -224,7 +262,8 @@ impl LogCollector {
                 continue;
             }
 
-            // New primary line — reset continuation tracking
+            // New primary line — flush pending slow query and reset continuation tracking
+            self.flush_pending_slow_query();
             self.last_event_idx = None;
 
             let parsed = self.parse_line(line);
@@ -247,13 +286,19 @@ impl LogCollector {
             }
         }
 
+        // Flush last pending slow query before drain
+        self.flush_pending_slow_query();
+
         // Drain accumulated data
         let errors = self.drain_pending(interner);
         let checkpoint_count = self.pending_checkpoints;
         let autovacuum_count = self.pending_autovacuums;
-        let events = mem::take(&mut self.pending_events);
+        let slow_query_count = self.slow_query_count;
+        let mut events = mem::take(&mut self.pending_events);
+        events.append(&mut self.slow_queries);
         self.pending_checkpoints = 0;
         self.pending_autovacuums = 0;
+        self.slow_query_count = 0;
         self.last_event_idx = None;
         // NOTE: last_error_key is NOT reset here — if the last error is
         // held back (no STATEMENT yet), the key stays alive so that a
@@ -262,6 +307,7 @@ impl LogCollector {
             errors,
             checkpoint_count,
             autovacuum_count,
+            slow_query_count,
             events,
         }
     }
@@ -331,6 +377,90 @@ impl LogCollector {
                         .push(event_data_to_entry(event_data, &parsed.message));
                 }
             }
+            LogEventKind::SlowQuery => {
+                self.last_error_key = None;
+                self.last_event_idx = None;
+                if let Some(EventData::SlowQuery { duration_ms, sql }) = parsed.event_data {
+                    let mut sql = sql;
+                    sql.truncate(MAX_SLOW_QUERY_LEN);
+                    let truncated = sql.len() >= MAX_SLOW_QUERY_LEN;
+                    self.pending_slow_query = Some(PendingSlowQuery {
+                        duration_ms,
+                        sql,
+                        truncated,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Flush the pending slow query into the top-N bounded collection.
+    fn flush_pending_slow_query(&mut self) {
+        let Some(pending) = self.pending_slow_query.take() else {
+            return;
+        };
+        self.slow_query_count = self.slow_query_count.saturating_add(1);
+
+        let duration_s = pending.duration_ms / 1000.0;
+
+        // Early discard: if heap is full and current is slower than the fastest entry, skip
+        if self.slow_queries.len() >= MAX_SLOW_QUERIES_PER_SNAPSHOT {
+            let min_elapsed = self
+                .slow_queries
+                .iter()
+                .map(|e| e.elapsed_s)
+                .fold(f64::INFINITY, f64::min);
+            if duration_s <= min_elapsed {
+                return;
+            }
+            // Replace the entry with minimum elapsed_s
+            if let Some(min_idx) = self
+                .slow_queries
+                .iter()
+                .enumerate()
+                .min_by(|(_, a), (_, b)| a.elapsed_s.partial_cmp(&b.elapsed_s).unwrap())
+                .map(|(i, _)| i)
+            {
+                self.slow_queries[min_idx] = PgLogEventEntry {
+                    event_type: PgLogEventType::SlowQuery,
+                    message: pending.sql,
+                    table_name: String::new(),
+                    elapsed_s: duration_s,
+                    extra_num1: 0,
+                    extra_num2: 0,
+                    extra_num3: 0,
+                    buffer_hits: 0,
+                    buffer_misses: 0,
+                    buffer_dirtied: 0,
+                    avg_read_rate_mbs: 0.0,
+                    avg_write_rate_mbs: 0.0,
+                    cpu_user_s: 0.0,
+                    cpu_system_s: 0.0,
+                    wal_records: 0,
+                    wal_fpi: 0,
+                    wal_bytes: 0,
+                };
+            }
+        } else {
+            self.slow_queries.push(PgLogEventEntry {
+                event_type: PgLogEventType::SlowQuery,
+                message: pending.sql,
+                table_name: String::new(),
+                elapsed_s: duration_s,
+                extra_num1: 0,
+                extra_num2: 0,
+                extra_num3: 0,
+                buffer_hits: 0,
+                buffer_misses: 0,
+                buffer_dirtied: 0,
+                avg_read_rate_mbs: 0.0,
+                avg_write_rate_mbs: 0.0,
+                cpu_user_s: 0.0,
+                cpu_system_s: 0.0,
+                wal_records: 0,
+                wal_fpi: 0,
+                wal_bytes: 0,
+            });
         }
     }
 
@@ -622,6 +752,25 @@ fn event_data_to_entry(data: EventData, message: &str) -> PgLogEventEntry {
             wal_records,
             wal_fpi,
             wal_bytes,
+        },
+        EventData::SlowQuery { duration_ms, sql } => PgLogEventEntry {
+            event_type: PgLogEventType::SlowQuery,
+            message: sql,
+            table_name: String::new(),
+            elapsed_s: duration_ms / 1000.0,
+            extra_num1: 0,
+            extra_num2: 0,
+            extra_num3: 0,
+            buffer_hits: 0,
+            buffer_misses: 0,
+            buffer_dirtied: 0,
+            avg_read_rate_mbs: 0.0,
+            avg_write_rate_mbs: 0.0,
+            cpu_user_s: 0.0,
+            cpu_system_s: 0.0,
+            wal_records: 0,
+            wal_fpi: 0,
+            wal_bytes: 0,
         },
     }
 }

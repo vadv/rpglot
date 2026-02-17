@@ -2109,6 +2109,11 @@ function TabContent({
           const t = row.event_type as string;
           return t === "autovacuum" || t === "autoanalyze";
         });
+      } else if (activeView === "slow_queries") {
+        filtered = filtered.filter((row) => {
+          const t = row.event_type as string;
+          return t === "slow_query";
+        });
       }
     }
 

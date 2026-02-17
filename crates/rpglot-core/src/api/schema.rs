@@ -2733,6 +2733,31 @@ fn generate_pge_schema() -> TabSchema {
                     },
                 ],
             },
+            ViewSchema {
+                key: "slow_queries".into(),
+                label: "Slow Queries".into(),
+                columns: vec!["elapsed_s", "message"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                default: false,
+                default_sort: Some("elapsed_s".into()),
+                default_sort_desc: true,
+                column_overrides: vec![
+                    ColumnOverride {
+                        key: "elapsed_s".into(),
+                        label: Some("Duration".into()),
+                        unit: Some(Unit::Seconds),
+                        format: Some(Format::Duration),
+                    },
+                    ColumnOverride {
+                        key: "message".into(),
+                        label: Some("Query".into()),
+                        unit: None,
+                        format: None,
+                    },
+                ],
+            },
         ],
         drill_down: None,
     }

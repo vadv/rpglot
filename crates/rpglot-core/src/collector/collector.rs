@@ -374,11 +374,15 @@ impl<F: FileSystem + Clone> Collector<F> {
             if !log_result.errors.is_empty() {
                 blocks.push(DataBlock::PgLogErrors(log_result.errors));
             }
-            if log_result.checkpoint_count > 0 || log_result.autovacuum_count > 0 {
+            if log_result.checkpoint_count > 0
+                || log_result.autovacuum_count > 0
+                || log_result.slow_query_count > 0
+            {
                 blocks.push(DataBlock::PgLogEvents(
                     crate::storage::model::PgLogEventsInfo {
                         checkpoint_count: log_result.checkpoint_count,
                         autovacuum_count: log_result.autovacuum_count,
+                        slow_query_count: log_result.slow_query_count,
                     },
                 ));
             }

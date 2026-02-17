@@ -653,14 +653,17 @@ pub struct PgLogEntry {
 
 /// Operational event counts from PostgreSQL logs for a snapshot interval.
 ///
-/// Tracks checkpoint and autovacuum/autoanalyze events detected from LOG-level
-/// messages in PostgreSQL log files.
+/// Tracks checkpoint, autovacuum/autoanalyze, and slow query events detected
+/// from LOG-level messages in PostgreSQL log files.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct PgLogEventsInfo {
     /// Number of checkpoint events (starting + complete) in this interval.
     pub checkpoint_count: u16,
     /// Number of autovacuum + autoanalyze events in this interval.
     pub autovacuum_count: u16,
+    /// Number of slow queries detected in this interval.
+    #[serde(default)]
+    pub slow_query_count: u16,
 }
 
 /// Type of PostgreSQL log event.
@@ -670,6 +673,7 @@ pub enum PgLogEventType {
     CheckpointComplete,
     Autovacuum,
     Autoanalyze,
+    SlowQuery,
 }
 
 /// A detailed PostgreSQL log event entry within a snapshot interval.

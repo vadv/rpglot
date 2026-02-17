@@ -17,6 +17,8 @@ pub enum LogEventKind {
     Checkpoint,
     /// Automatic vacuum or analyze completed (LOG level).
     Autovacuum,
+    /// Slow query: `duration: X ms  statement: SQL` (LOG level).
+    SlowQuery,
     /// STATEMENT: line following an error (contains the SQL that caused it).
     Statement,
     /// DETAIL: or CONTEXT: continuation line (skipped but recognized).
@@ -48,6 +50,10 @@ pub enum EventData {
         longest_sync_s: f64,
         /// Average file sync duration (seconds).
         average_sync_s: f64,
+    },
+    SlowQuery {
+        duration_ms: f64,
+        sql: String,
     },
     Autovacuum {
         table_name: String,
@@ -276,7 +282,17 @@ impl CsvlogParser {
 // LOG message classification and data extraction
 // ============================================================
 
-/// Classify a LOG-level message as checkpoint or autovacuum event.
+/// Duration + statement prefixes for slow query detection (EN + RU).
+///
+/// PostgreSQL emits `LOG:  duration: X ms  statement: SQL` when
+/// `log_min_duration_statement >= 0`. Lines with only `duration:` (no
+/// `statement:`) come from `log_duration=on` and are skipped.
+const DURATION_PREFIXES: &[(&str, &str, &str)] = &[
+    ("duration: ", " ms  statement: ", " ms"),
+    ("продолжительность: ", " мс  оператор: ", " мс"),
+];
+
+/// Classify a LOG-level message as checkpoint, autovacuum or slow query event.
 /// Returns `None` if the message is not a known operational event.
 fn classify_log_message(message: &str) -> Option<ParsedLogLine> {
     // Checkpoint starting
@@ -319,6 +335,50 @@ fn classify_log_message(message: &str) -> Option<ParsedLogLine> {
         }
     }
 
+    // Slow query: "duration: X ms  statement: SQL"
+    if let Some(parsed) = parse_slow_query(message) {
+        return Some(parsed);
+    }
+
+    None
+}
+
+/// Parse a `duration: X ms  statement: SQL` LOG message.
+///
+/// Returns `None` if the message doesn't match (e.g. plain `log_duration=on`
+/// lines that have `duration:` but no `statement:`).
+fn parse_slow_query(message: &str) -> Option<ParsedLogLine> {
+    for &(dur_prefix, stmt_marker, _ms_suffix) in DURATION_PREFIXES {
+        let rest = match message.strip_prefix(dur_prefix) {
+            Some(r) => r,
+            None => continue,
+        };
+
+        // Find the "ms  statement:" marker — its presence distinguishes
+        // slow query from plain log_duration output.
+        let stmt_pos = match rest.find(stmt_marker) {
+            Some(p) => p,
+            None => continue, // plain log_duration=on, no statement
+        };
+
+        // Extract duration float before " ms"
+        let dur_str = &rest[..stmt_pos];
+        let duration_ms: f64 = match dur_str.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Extract SQL after "statement: "
+        let sql_start = stmt_pos + stmt_marker.len();
+        let sql = rest[sql_start..].to_string();
+
+        return Some(ParsedLogLine {
+            severity: PgLogSeverity::Error, // placeholder, not used for display
+            message: message.to_string(),
+            event_kind: LogEventKind::SlowQuery,
+            event_data: Some(EventData::SlowQuery { duration_ms, sql }),
+        });
+    }
     None
 }
 
@@ -1082,5 +1142,63 @@ system usage: CPU: user: 0.12 s, system: 0.34 s, elapsed: 5.67 s"#;
             parser.parse_line(line).is_none(),
             "WAL-G INFO line should be ignored"
         );
+    }
+
+    // ---- Slow query tests ----
+
+    #[test]
+    fn test_stderr_slow_query() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: LOG:  duration: 5234.567 ms  statement: SELECT * FROM users WHERE id = 1";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::SlowQuery);
+        match parsed.event_data {
+            Some(EventData::SlowQuery { duration_ms, sql }) => {
+                assert!((duration_ms - 5234.567).abs() < 0.001);
+                assert_eq!(sql, "SELECT * FROM users WHERE id = 1");
+            }
+            other => panic!("expected SlowQuery, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_stderr_slow_query_russian() {
+        let parser = StderrParser::new("%t [%p]: ");
+        let line = "2024-01-15 14:30:00 UTC [12345]: СООБЩЕНИЕ:  продолжительность: 1234.5 мс  оператор: SELECT 1";
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::SlowQuery);
+        match parsed.event_data {
+            Some(EventData::SlowQuery { duration_ms, sql }) => {
+                assert!((duration_ms - 1234.5).abs() < 0.001);
+                assert_eq!(sql, "SELECT 1");
+            }
+            other => panic!("expected SlowQuery, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_log_duration_only_ignored() {
+        let parser = StderrParser::new("%t [%p]: ");
+        // log_duration=on produces lines with only duration, no statement
+        let line = "2024-01-15 14:30:00 UTC [12345]: LOG:  duration: 123.456 ms";
+        assert!(
+            parser.parse_line(line).is_none(),
+            "plain duration (no statement) should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_csvlog_slow_query() {
+        let parser = CsvlogParser;
+        let line = r#"2024-01-15 14:30:00.123 UTC,"appuser","mydb",12345,"127.0.0.1:5432","6789",1,"SELECT","2024-01-15 14:00:00 UTC","3/0",0,LOG,00000,"duration: 3000.123 ms  statement: SELECT pg_sleep(3)",,,,,"",,"#;
+        let parsed = parser.parse_line(line).unwrap();
+        assert_eq!(parsed.event_kind, LogEventKind::SlowQuery);
+        match parsed.event_data {
+            Some(EventData::SlowQuery { duration_ms, sql }) => {
+                assert!((duration_ms - 3000.123).abs() < 0.001);
+                assert_eq!(sql, "SELECT pg_sleep(3)");
+            }
+            other => panic!("expected SlowQuery, got {:?}", other),
+        }
     }
 }

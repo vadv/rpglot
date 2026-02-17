@@ -362,12 +362,19 @@ const RULES: Record<string, Classifier> = {
     return "critical";
   },
 
-  // --- PGE: Autovacuum elapsed time ---
-  elapsed_s: (v) => {
+  // --- PGE: Elapsed time (context-dependent) ---
+  elapsed_s: (v, row) => {
     if (v == null) return undefined;
     const n = Number(v);
     if (isNaN(n)) return undefined;
     if (n === 0) return "inactive";
+    // Slow queries: tighter thresholds
+    if (row && row.event_type === "slow_query") {
+      if (n < 3) return undefined;
+      if (n < 10) return "warning";
+      return "critical";
+    }
+    // Autovacuum/checkpoint: original thresholds
     if (n < 30) return undefined;
     if (n < 300) return "warning";
     return "critical";

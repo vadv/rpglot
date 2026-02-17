@@ -1600,6 +1600,7 @@ fn extract_pge(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgEven
                 PgLogEventType::CheckpointComplete => "checkpoint_complete",
                 PgLogEventType::Autovacuum => "autovacuum",
                 PgLogEventType::Autoanalyze => "autoanalyze",
+                PgLogEventType::SlowQuery => "slow_query",
             };
             let event_id = next_id;
             next_id += 1;
