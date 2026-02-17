@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use tracing::debug;
+
 use crate::storage::interner::StringInterner;
 use crate::storage::model::PgStatStatementsInfo;
 
@@ -44,10 +46,6 @@ pub(crate) struct PgStatStatementsCacheEntry {
 
 impl PostgresCollector {
     pub(super) fn statements_extension_available(&mut self) -> bool {
-        let Some(client) = self.client.as_mut() else {
-            return false;
-        };
-
         let now = Instant::now();
         if !statements_ext_check_due(self.statements_last_check, now) {
             return self.statements_ext_version.is_some();
@@ -56,23 +54,47 @@ impl PostgresCollector {
         self.statements_last_check = Some(now);
 
         let query = "SELECT extversion FROM pg_extension WHERE extname = 'pg_stat_statements'";
-        match client.query_opt(query, &[]) {
-            Ok(Some(row)) => {
-                let v: String = row.get(0);
-                self.statements_ext_version = Some(v);
-                true
-            }
-            Ok(None) => {
-                self.statements_ext_version = None;
-                false
-            }
-            Err(e) => {
-                let msg = super::format_postgres_error(&e);
-                self.last_error = Some(msg);
-                self.statements_ext_version = None;
-                false
+
+        // 1. Check main client first.
+        if let Some(ref mut client) = self.client {
+            match client.query_opt(query, &[]) {
+                Ok(Some(row)) => {
+                    let v: String = row.get(0);
+                    self.statements_ext_version = Some(v);
+                    self.statements_client_idx = None; // use main client
+                    return true;
+                }
+                Ok(None) => {} // not found in main — continue searching db_clients
+                Err(e) => {
+                    let msg = super::format_postgres_error(&e);
+                    self.last_error = Some(msg);
+                }
             }
         }
+
+        // 2. Search through per-database clients.
+        for (idx, db_client) in self.db_clients.iter_mut().enumerate() {
+            match db_client.client.query_opt(query, &[]) {
+                Ok(Some(row)) => {
+                    let v: String = row.get(0);
+                    debug!(
+                        database = %db_client.datname,
+                        version = %v,
+                        "pg_stat_statements found via per-database client"
+                    );
+                    self.statements_ext_version = Some(v);
+                    self.statements_client_idx = Some(idx);
+                    return true;
+                }
+                Ok(None) => {} // not in this DB, try next
+                Err(_) => {}   // connection issue, skip
+            }
+        }
+
+        // Not found anywhere.
+        self.statements_ext_version = None;
+        self.statements_client_idx = None;
+        false
     }
 
     /// Collects pg_stat_statements data.
@@ -89,17 +111,7 @@ impl PostgresCollector {
             now,
             self.statements_collect_interval,
         ) {
-            return self
-                .statements_cache
-                .iter()
-                .map(|e| {
-                    let mut info = e.info.clone();
-                    info.query_hash = interner.intern(&e.query_text);
-                    info.datname_hash = interner.intern(&e.datname);
-                    info.usename_hash = interner.intern(&e.usename);
-                    info
-                })
-                .collect();
+            return self.return_cached(interner);
         }
 
         // Mark the attempt time first to ensure we don't hit the server more often than
@@ -108,17 +120,7 @@ impl PostgresCollector {
 
         if let Err(e) = self.ensure_connected() {
             self.last_error = Some(e.to_string());
-            return self
-                .statements_cache
-                .iter()
-                .map(|e| {
-                    let mut info = e.info.clone();
-                    info.query_hash = interner.intern(&e.query_text);
-                    info.datname_hash = interner.intern(&e.datname);
-                    info.usename_hash = interner.intern(&e.usename);
-                    info
-                })
-                .collect();
+            return self.return_cached(interner);
         }
 
         if !self.statements_extension_available() {
@@ -126,10 +128,30 @@ impl PostgresCollector {
             return Vec::new();
         }
 
-        let client = self.client.as_mut().unwrap();
+        // Validate statements_client_idx before use.
+        let using_db_client = if let Some(idx) = self.statements_client_idx {
+            if idx >= self.db_clients.len() {
+                // Pool changed, idx is stale — reset and return cache.
+                self.statements_client_idx = None;
+                self.statements_ext_version = None;
+                self.statements_last_check = None;
+                return self.return_cached(interner);
+            }
+            true
+        } else {
+            false
+        };
+
         let query = build_stat_statements_query(self.server_version_num);
 
-        match client.query(&query, &[]) {
+        let result = if using_db_client {
+            let idx = self.statements_client_idx.unwrap();
+            self.db_clients[idx].client.query(&query, &[])
+        } else {
+            self.client.as_mut().unwrap().query(&query, &[])
+        };
+
+        match result {
             Ok(rows) => {
                 self.last_error = None;
 
@@ -191,22 +213,38 @@ impl PostgresCollector {
             Err(e) => {
                 let msg = super::format_postgres_error(&e);
                 self.last_error = Some(msg);
-                self.client = None;
-                self.server_version_num = None;
-                self.statements_ext_version = None;
-                self.statements_last_check = None;
-                self.statements_cache
-                    .iter()
-                    .map(|e| {
-                        let mut info = e.info.clone();
-                        info.query_hash = interner.intern(&e.query_text);
-                        info.datname_hash = interner.intern(&e.datname);
-                        info.usename_hash = interner.intern(&e.usename);
-                        info
-                    })
-                    .collect()
+
+                if using_db_client {
+                    // Error on a per-database client — reset statements discovery
+                    // so we re-search on next cycle. Don't touch main client.
+                    self.statements_client_idx = None;
+                    self.statements_ext_version = None;
+                    self.statements_last_check = None;
+                } else {
+                    // Error on main client — assume connection is dead.
+                    self.client = None;
+                    self.server_version_num = None;
+                    self.statements_ext_version = None;
+                    self.statements_last_check = None;
+                }
+
+                self.return_cached(interner)
             }
         }
+    }
+
+    /// Returns cached statements with interned strings.
+    fn return_cached(&self, interner: &mut StringInterner) -> Vec<PgStatStatementsInfo> {
+        self.statements_cache
+            .iter()
+            .map(|e| {
+                let mut info = e.info.clone();
+                info.query_hash = interner.intern(&e.query_text);
+                info.datname_hash = interner.intern(&e.datname);
+                info.usename_hash = interner.intern(&e.usename);
+                info
+            })
+            .collect()
     }
 }
 

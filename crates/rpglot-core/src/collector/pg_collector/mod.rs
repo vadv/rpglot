@@ -92,6 +92,9 @@ pub struct PostgresCollector {
     pub(crate) largest_dbname: Option<String>,
     pub(crate) statements_ext_version: Option<String>,
     pub(crate) statements_last_check: Option<Instant>,
+    /// Index into `db_clients` for the connection where pg_stat_statements is available.
+    /// `None` means use the main client (extension found in main DB or not yet searched).
+    pub(crate) statements_client_idx: Option<usize>,
     pub(crate) statements_cache: Vec<PgStatStatementsCacheEntry>,
     pub(crate) statements_cache_time: Option<Instant>,
     /// Interval for pg_stat_statements caching. Default: 30 seconds.
@@ -148,6 +151,7 @@ impl PostgresCollector {
             largest_dbname: None,
             statements_ext_version: None,
             statements_last_check: None,
+            statements_client_idx: None,
             statements_cache: Vec::new(),
             statements_cache_time: None,
             statements_collect_interval: STATEMENTS_COLLECT_INTERVAL,
@@ -176,6 +180,7 @@ impl PostgresCollector {
             largest_dbname: None,
             statements_ext_version: None,
             statements_last_check: None,
+            statements_client_idx: None,
             statements_cache: Vec::new(),
             statements_cache_time: None,
             statements_collect_interval: STATEMENTS_COLLECT_INTERVAL,
@@ -393,6 +398,13 @@ impl PostgresCollector {
         }
 
         if added > 0 || removed > 0 {
+            // Pool changed — reset statements discovery so it re-searches on next collect.
+            if self.statements_client_idx.is_some() {
+                self.statements_client_idx = None;
+                self.statements_ext_version = None;
+                self.statements_last_check = None;
+            }
+
             let names: Vec<&str> = self.db_clients.iter().map(|c| c.datname.as_str()).collect();
             info!(
                 databases = ?names, added, removed,
@@ -405,6 +417,7 @@ impl PostgresCollector {
     fn clear_caches(&mut self) {
         self.statements_ext_version = None;
         self.statements_last_check = None;
+        self.statements_client_idx = None;
         self.statements_cache.clear();
         self.statements_cache_time = None;
         self.tables_cache.clear();
