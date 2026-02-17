@@ -528,10 +528,16 @@ fn extract_cgroup_summaries(
         } else {
             0.0
         };
+        let anon_pct = if mem.max > 0 {
+            (mem.anon + mem.slab) as f64 * 100.0 / mem.max as f64
+        } else {
+            0.0
+        };
         CgroupMemorySummary {
             limit_bytes: mem.max,
             used_bytes: mem.current,
             used_pct,
+            anon_pct,
             anon_bytes: mem.anon,
             file_bytes: mem.file,
             slab_bytes: mem.slab,

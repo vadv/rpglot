@@ -523,6 +523,13 @@ fn generate_summary_schema() -> SummarySchema {
                         Some(Format::Percent),
                     ),
                     field(
+                        "anon_pct",
+                        "Anon%",
+                        DataType::Number,
+                        Some(Unit::Percent),
+                        Some(Format::Percent),
+                    ),
+                    field(
                         "anon_bytes",
                         "Anon",
                         DataType::Integer,

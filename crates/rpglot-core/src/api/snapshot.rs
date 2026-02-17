@@ -201,8 +201,10 @@ pub struct CgroupMemorySummary {
     pub limit_bytes: u64,
     /// Current memory usage in bytes.
     pub used_bytes: u64,
-    /// Usage percentage of limit.
+    /// Usage percentage of limit (includes file cache — evictable).
     pub used_pct: f64,
+    /// Non-evictable memory percentage of limit (anon + slab).
+    pub anon_pct: f64,
     /// Anonymous memory in bytes.
     pub anon_bytes: u64,
     /// File-backed (page cache) memory in bytes.

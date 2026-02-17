@@ -501,11 +501,12 @@ pub(super) fn render_cgroup_mem_line(metrics: &SummaryMetrics, width: usize) -> 
         return render_mem_line(metrics, width);
     };
 
-    let used_style = if mem.max > 0 {
-        let used_percent = (mem.current as f64 / mem.max as f64) * 100.0;
-        if used_percent > 95.0 {
+    // Color anon (non-evictable) memory by pressure, not total used (which includes file cache)
+    let anon_style = if mem.max > 0 {
+        let anon_pct = (mem.anon + mem.slab) as f64 / mem.max as f64 * 100.0;
+        if anon_pct > 90.0 {
             Styles::critical()
-        } else if used_percent > 80.0 {
+        } else if anon_pct > 70.0 {
             Styles::modified_item()
         } else {
             Styles::default()
@@ -528,17 +529,17 @@ pub(super) fn render_cgroup_mem_line(metrics: &SummaryMetrics, width: usize) -> 
         MEM_TOT,
     ));
     spans.push(Span::raw("  "));
-    spans.extend(metric_spans(
+    spans.extend(metric_spans_default(
         "used",
         &format_size_bytes(mem.current),
         MEM_AVAIL,
-        used_style,
     ));
     spans.push(Span::raw("  "));
-    spans.extend(metric_spans_default(
+    spans.extend(metric_spans(
         "anon",
         &format_size_bytes(mem.anon),
         MEM_CACHE,
+        anon_style,
     ));
     spans.push(Span::raw("  "));
     spans.extend(metric_spans_default(

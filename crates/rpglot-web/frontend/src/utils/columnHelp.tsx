@@ -235,9 +235,16 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   "cgroup_memory.used_pct": {
     label: "Used%",
-    description: "Memory utilization as percentage of container limit.",
-    thresholds: ">95% critical \u00b7 80-95% warning",
-    tip: "Approaching limit triggers OOM kills. Increase memory limit or optimize",
+    description:
+      "Total memory utilization as percentage of container limit. Includes file-backed (page cache) memory which the kernel can evict under pressure. High values are normal for PostgreSQL \u2014 shared_buffers and OS page cache fill available memory.",
+    tip: "Look at Anon% for real memory pressure \u2014 Used% includes evictable file cache",
+  },
+  "cgroup_memory.anon_pct": {
+    label: "Anon%",
+    description:
+      "Non-evictable memory (anonymous + slab) as percentage of container limit. This is the real memory pressure indicator \u2014 file cache (page cache) is excluded because the kernel can reclaim it.",
+    thresholds: ">90% critical \u00b7 70-90% warning",
+    tip: "High Anon% means the container is running out of non-evictable memory. Risk of OOM kills",
   },
   "cgroup_memory.oom_kills": {
     label: "OOM Kills",

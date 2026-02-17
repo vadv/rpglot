@@ -257,7 +257,10 @@ const RULES: Record<string, Classifier> = {
   },
 
   // --- Summary: Cgroup Memory (qualified keys) ---
-  "cgroup_memory.used_pct": (v) => pctHigh(v, 80, 95),
+  // used_pct includes file cache (evictable) — high values are normal for databases
+  "cgroup_memory.used_pct": (v) => pctHigh(v, 98, 100),
+  // anon_pct = (anon + slab) / limit — real memory pressure indicator
+  "cgroup_memory.anon_pct": (v) => pctHigh(v, 70, 90),
   "cgroup_memory.oom_kills": (v) => {
     if (v == null) return undefined;
     const n = Number(v);
