@@ -12,6 +12,7 @@ pub mod pg_indexes;
 pub mod pg_locks;
 pub mod pg_statements;
 pub mod pg_tables;
+pub mod process_blkdelay;
 pub mod process_io;
 
 use super::{AnalysisContext, Anomaly};
@@ -70,5 +71,6 @@ pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
         Box::new(cgroup::OomKillRule),
         // Process-level
         Box::new(process_io::ProcessIoHogRule),
+        Box::new(process_blkdelay::HighBlkDelayRule),
     ]
 }

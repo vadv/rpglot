@@ -92,6 +92,7 @@ const RULE_LABEL: Record<string, string> = {
   disk_util_high: "Disk util",
   disk_io_spike: "Disk I/O",
   process_io_hog: "I/O hog",
+  high_blk_delay: "I/O delay",
   autovacuum_impact: "Autovacuum",
   network_spike: "Network",
   cgroup_throttled: "Cgroup thr.",
