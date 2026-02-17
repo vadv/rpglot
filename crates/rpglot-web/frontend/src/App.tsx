@@ -697,7 +697,7 @@ function useTabState(
   } | null>(null);
 
   // Initial view/filter from URL (consumed once by DataTable on mount)
-  const [initialView] = useState<string | null>(urlState.view);
+  const [initialView, setInitialView] = useState<string | null>(urlState.view);
   const [initialFilter] = useState<string | null>(urlState.filter);
 
   // Reset selection on tab change
@@ -773,6 +773,7 @@ function useTabState(
   const handleViewChange = useCallback(
     (view: string) => {
       setActiveView(view);
+      setInitialView(view);
       urlSync({ view });
     },
     [urlSync],

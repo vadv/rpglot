@@ -97,6 +97,24 @@ export function DataTable({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sync view when parent requests a programmatic switch (e.g. analysis jump)
+  useEffect(() => {
+    if (
+      initialView &&
+      initialView !== activeView &&
+      views.some((v) => v.key === initialView)
+    ) {
+      setActiveView(initialView);
+      const v = views.find((vw) => vw.key === initialView);
+      if (v?.default_sort) {
+        setSorting([
+          { id: v.default_sort, desc: v.default_sort_desc ?? false },
+        ]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialView]);
+
   // Auto-focus table container on mount
   useEffect(() => {
     containerRef.current?.focus();
