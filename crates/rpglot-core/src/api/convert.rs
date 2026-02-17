@@ -1239,6 +1239,7 @@ fn extract_pgs(
                 let rate_read = r.and_then(|r| r.shared_blks_read_s);
                 match (rate_hit, rate_read) {
                     (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                    (Some(_), Some(_)) => None, // rates available but no activity
                     _ => {
                         // Fallback to cumulative when no rates available
                         let total_blks = s.shared_blks_hit + s.shared_blks_read;
@@ -1361,6 +1362,7 @@ fn extract_pgt(
                 ]);
                 match (rate_hits, rate_reads) {
                     (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                    (Some(_), Some(_)) => None, // rates available but no activity
                     _ => {
                         // Fallback to cumulative when rates unavailable
                         let all_hits =
@@ -1384,6 +1386,7 @@ fn extract_pgt(
             let idx_scan_s = r.and_then(|r| r.idx_scan_s);
             let seq_pct = match (seq_scan_s, idx_scan_s) {
                 (Some(ss), Some(is)) if ss + is > 0.0 => Some(ss * 100.0 / (ss + is)),
+                (Some(_), Some(_)) => None, // rates available but no activity
                 _ => {
                     let total_scans = t.seq_scan + t.idx_scan;
                     if total_scans > 0 {
@@ -1494,6 +1497,7 @@ fn extract_pgi(
             // Computed: io_hit_pct from rates (falls back to cumulative if no rates)
             let io_hit_pct = match (idx_blks_hit_s, idx_blks_read_s) {
                 (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                (Some(_), Some(_)) => None, // rates available but no activity
                 _ => {
                     let total = i.idx_blks_hit + i.idx_blks_read;
                     if total > 0 {
