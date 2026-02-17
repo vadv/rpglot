@@ -411,6 +411,7 @@ impl LogCollector {
             LogEventKind::SlowQuery => {
                 self.last_error_key = None;
                 self.last_event_idx = None;
+                self.flush_pending_slow_query();
                 if let Some(EventData::SlowQuery { duration_ms, sql }) = parsed.event_data {
                     let mut sql = sql;
                     sql.truncate(MAX_SLOW_QUERY_LEN);
@@ -1051,5 +1052,60 @@ mod tests {
         // Verify the statement text
         let stmt = interner.resolve(entries[0].statement_hash).unwrap();
         assert_eq!(stmt, "select pg_sleep(2);");
+    }
+
+    #[test]
+    fn test_slow_query_grouping() {
+        let mut collector = LogCollector::new();
+
+        // Three identical slow queries with different durations.
+        // accumulate() auto-flushes the previous pending before setting a new one.
+        for duration in [1000.0, 3000.0, 2000.0] {
+            collector.accumulate(ParsedLogLine {
+                severity: PgLogSeverity::Error,
+                message: format!("duration: {duration} ms  statement: select pg_sleep(3);"),
+                event_kind: LogEventKind::SlowQuery,
+                event_data: Some(EventData::SlowQuery {
+                    duration_ms: duration,
+                    sql: "select pg_sleep(3);".to_string(),
+                }),
+            });
+        }
+        // One different query
+        collector.accumulate(ParsedLogLine {
+            severity: PgLogSeverity::Error,
+            message: "duration: 5000 ms  statement: select 1;".to_string(),
+            event_kind: LogEventKind::SlowQuery,
+            event_data: Some(EventData::SlowQuery {
+                duration_ms: 5000.0,
+                sql: "select 1;".to_string(),
+            }),
+        });
+        // Final flush for the last pending
+        collector.flush_pending_slow_query();
+
+        assert_eq!(collector.slow_query_count, 4);
+        assert_eq!(collector.slow_queries.len(), 2, "should be 2 groups");
+
+        // Verify pg_sleep group: count=3, max_elapsed=3.0s
+        let sleep_group = collector
+            .slow_queries
+            .values()
+            .find(|g| g.sample_sql.contains("pg_sleep"))
+            .unwrap();
+        assert_eq!(sleep_group.count, 3, "three identical queries grouped");
+        assert!(
+            (sleep_group.max_elapsed_s - 3.0).abs() < 0.01,
+            "max duration should be 3.0s"
+        );
+
+        // Verify select group: count=1, max_elapsed=5.0s
+        let select_group = collector
+            .slow_queries
+            .values()
+            .find(|g| !g.sample_sql.contains("pg_sleep"))
+            .unwrap();
+        assert_eq!(select_group.count, 1);
+        assert!((select_group.max_elapsed_s - 5.0).abs() < 0.01);
     }
 }
