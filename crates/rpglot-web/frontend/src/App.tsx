@@ -2145,10 +2145,10 @@ function ToggleButton({
   return (
     <button
       onClick={onClick}
-      className={`text-[11px] px-1.5 py-0.5 rounded font-medium transition-colors whitespace-nowrap ${
+      className={`text-[11px] px-2 py-0.5 rounded-full font-medium transition-colors whitespace-nowrap border ${
         highlighted
-          ? "bg-[var(--accent-muted)] text-[var(--accent-text)]"
-          : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+          ? "bg-[var(--accent-muted)] text-[var(--accent-text)] border-[var(--accent-text)]/30"
+          : "bg-transparent text-[var(--text-secondary)] border-[var(--border-default)] hover:border-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
       }`}
       title={active ? `Show ${label}` : `Hide ${label}`}
     >
