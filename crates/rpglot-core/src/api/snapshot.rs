@@ -37,6 +37,21 @@ pub struct ApiSnapshot {
     pub pgl: Vec<PgLocksRow>,
     /// Health score 0..100 (100 = fully healthy).
     pub health_score: u8,
+    /// Session counts from pg_stat_activity.
+    pub session_counts: SessionCounts,
+}
+
+/// Aggregated session counts from pg_stat_activity.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SessionCounts {
+    /// Number of sessions in 'active' state.
+    pub active: u32,
+    /// Number of sessions in 'idle' state.
+    pub idle: u32,
+    /// Number of sessions in 'idle in transaction' (including aborted).
+    pub idle_in_transaction: u32,
+    /// Total number of sessions.
+    pub total: u32,
 }
 
 // ============================================================

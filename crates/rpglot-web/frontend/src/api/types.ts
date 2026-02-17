@@ -4,6 +4,13 @@
 // Snapshot
 // ============================================================
 
+export interface SessionCounts {
+  active: number;
+  idle: number;
+  idle_in_transaction: number;
+  total: number;
+}
+
 export interface ApiSnapshot {
   timestamp: number;
   prev_timestamp?: number;
@@ -18,6 +25,7 @@ export interface ApiSnapshot {
   pge: PgEventsRow[];
   pgl: PgLocksRow[];
   health_score: number;
+  session_counts: SessionCounts;
 }
 
 export interface SystemSummary {
@@ -373,10 +381,16 @@ export interface PgLocksRow {
 // Schema
 // ============================================================
 
+export interface InstanceInfo {
+  database: string;
+  pg_version: string;
+}
+
 export interface ApiSchema {
   version: string;
   mode: "live" | "history";
   timeline?: TimelineInfo;
+  instance?: InstanceInfo;
   summary: SummarySchema;
   tabs: TabsSchema;
 }

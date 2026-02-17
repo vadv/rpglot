@@ -119,4 +119,11 @@ pub trait SnapshotProvider {
     fn collector_timing(&self) -> Option<&CollectorTiming> {
         None
     }
+
+    /// Returns instance metadata: (database_name, pg_version).
+    ///
+    /// Only available for live providers with a PostgreSQL connection.
+    fn instance_info(&self) -> Option<(String, String)> {
+        None
+    }
 }

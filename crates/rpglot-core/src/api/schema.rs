@@ -16,10 +16,22 @@ pub struct ApiSchema {
     /// Timeline info (only in history mode).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeline: Option<TimelineInfo>,
+    /// PostgreSQL instance metadata (live mode only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<InstanceInfo>,
     /// Summary panel field descriptions.
     pub summary: SummarySchema,
     /// Tab descriptions.
     pub tabs: TabsSchema,
+}
+
+/// PostgreSQL instance metadata.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct InstanceInfo {
+    /// Name of the largest database (heuristic instance identifier).
+    pub database: String,
+    /// PostgreSQL version (e.g. "16.2").
+    pub pg_version: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
@@ -231,11 +243,16 @@ pub enum Format {
 
 impl ApiSchema {
     /// Generate the full schema for a given mode.
-    pub fn generate(mode: ApiMode, timeline: Option<TimelineInfo>) -> Self {
+    pub fn generate(
+        mode: ApiMode,
+        timeline: Option<TimelineInfo>,
+        instance: Option<InstanceInfo>,
+    ) -> Self {
         Self {
             version: crate::VERSION.to_string(),
             mode,
             timeline,
+            instance,
             summary: generate_summary_schema(),
             tabs: generate_tabs_schema(),
         }

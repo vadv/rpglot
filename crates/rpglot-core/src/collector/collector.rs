@@ -187,6 +187,13 @@ impl<F: FileSystem + Clone> Collector<F> {
         self.last_timing.as_ref()
     }
 
+    /// Returns instance metadata: (database_name, pg_version).
+    pub fn instance_info(&self) -> Option<(String, String)> {
+        self.postgres_collector
+            .as_ref()
+            .and_then(|pg| pg.instance_info())
+    }
+
     /// Collects a complete system snapshot.
     ///
     /// This gathers:

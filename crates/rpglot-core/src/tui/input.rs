@@ -448,7 +448,10 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
             KeyAction::None
         }
         KeyCode::Char('x') | KeyCode::Char('X') => {
-            if state.current_tab == Tab::PgTables {
+            if state.current_tab == Tab::PostgresActive {
+                state.pga.hide_system = !state.pga.hide_system;
+                state.pga.selected = 0;
+            } else if state.current_tab == Tab::PgTables {
                 state.pgt.view_mode = super::state::PgTablesViewMode::Scans;
                 state.pgt.selected = 0;
                 state.pgt.sort_column = super::state::PgTablesViewMode::Scans.default_sort_column();

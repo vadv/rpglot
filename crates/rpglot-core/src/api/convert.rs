@@ -47,6 +47,24 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
     let prev_sample = ctx.prev_snapshot.map(PrevSample::extract);
     let health_score = compute_health_score(snap, prev_sample.as_ref(), delta_time);
 
+    let pga = extract_pga(
+        snap,
+        ctx.prev_snapshot,
+        ctx.interner,
+        ctx.pgs_rates,
+        delta_time,
+    );
+
+    let session_counts = SessionCounts {
+        active: pga.iter().filter(|r| r.state == "active").count() as u32,
+        idle: pga.iter().filter(|r| r.state == "idle").count() as u32,
+        idle_in_transaction: pga
+            .iter()
+            .filter(|r| r.state.starts_with("idle in transaction"))
+            .count() as u32,
+        total: pga.len() as u32,
+    };
+
     ApiSnapshot {
         timestamp: snap.timestamp,
         prev_timestamp: None,
@@ -54,19 +72,14 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         system: extract_system_summary(snap, ctx.prev_snapshot, delta_time),
         pg: extract_pg_summary(snap, ctx.prev_snapshot, delta_time),
         prc: extract_prc(snap, ctx.prev_snapshot, ctx.interner, delta_time),
-        pga: extract_pga(
-            snap,
-            ctx.prev_snapshot,
-            ctx.interner,
-            ctx.pgs_rates,
-            delta_time,
-        ),
+        pga,
         pgs: extract_pgs(snap, ctx.interner, ctx.pgs_rates),
         pgt: extract_pgt(snap, ctx.interner, ctx.pgt_rates),
         pgi: extract_pgi(snap, ctx.interner, ctx.pgi_rates),
         pge: extract_pge(snap, ctx.interner),
         pgl: extract_pgl(snap, ctx.interner),
         health_score,
+        session_counts,
     }
 }
 

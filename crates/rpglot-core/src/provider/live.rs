@@ -100,6 +100,10 @@ impl<F: FileSystem + Clone + 'static> SnapshotProvider for LiveProvider<F> {
     fn collector_timing(&self) -> Option<&CollectorTiming> {
         self.collector.last_timing()
     }
+
+    fn instance_info(&self) -> Option<(String, String)> {
+        self.collector.instance_info()
+    }
 }
 
 #[cfg(test)]

@@ -842,6 +842,8 @@ pub(super) fn render_help_line(width: usize, tab: Tab) -> Line<'static> {
             spans.push(Span::styled(":view ", Styles::help()));
             spans.push(Span::styled("i", Styles::help_key()));
             spans.push(Span::styled(":hide idle ", Styles::help()));
+            spans.push(Span::styled("x", Styles::help_key()));
+            spans.push(Span::styled(":hide sys ", Styles::help()));
             spans.push(Span::styled(">", Styles::help_key()));
             spans.push(Span::styled(":drill ", Styles::help()));
         }

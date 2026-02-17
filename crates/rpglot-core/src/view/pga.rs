@@ -30,6 +30,7 @@ struct PgActivityRowData {
     wait: String,
     query: String,
     backend_type: String,
+    application_name: String,
     query_duration_secs: Option<i64>,
     xact_duration_secs: Option<i64>,
     backend_duration_secs: Option<i64>,
@@ -75,6 +76,7 @@ impl PgActivityRowData {
         };
         let query = resolve_hash(interner, pg.query_hash);
         let backend_type = resolve_hash(interner, pg.backend_type_hash);
+        let application_name = resolve_hash(interner, pg.application_name_hash);
 
         let query_duration_secs = if pg.query_start > 0 {
             Some(now.saturating_sub(pg.query_start))
@@ -102,6 +104,7 @@ impl PgActivityRowData {
             wait,
             query,
             backend_type,
+            application_name,
             query_duration_secs,
             xact_duration_secs,
             backend_duration_secs,
@@ -417,6 +420,14 @@ pub fn build_activity_view(
         rows_data.retain(|row| !is_idle_state(&row.state));
     }
 
+    // Hide system backends (non-client, non-autovacuum) and rpglot's own sessions
+    if pga_state.hide_system {
+        rows_data.retain(|row| {
+            (row.backend_type == "client backend" || row.backend_type == "autovacuum worker")
+                && !row.application_name.starts_with("rpglot")
+        });
+    }
+
     // Enrich with PGS stats (Stats view)
     if view_mode == PgActivityViewMode::Stats {
         let pgs_map = extract_pg_statements_map(snapshot);
@@ -471,24 +482,26 @@ pub fn build_activity_view(
         .collect();
 
     let title = {
-        let idle_marker = if pga_state.hide_idle {
-            " [hide idle]"
-        } else {
-            ""
-        };
+        let mut markers = String::new();
+        if pga_state.hide_idle {
+            markers.push_str(" [hide idle]");
+        }
+        if pga_state.hide_system {
+            markers.push_str(" [hide sys]");
+        }
         if let Some(filter) = &pga_state.filter {
             format!(
                 " PostgreSQL Activity (PGA) [{}] (filter: {}){} [{} sessions] ",
                 view_indicator,
                 filter,
-                idle_marker,
+                markers,
                 rows.len()
             )
         } else {
             format!(
                 " PostgreSQL Activity (PGA) [{}]{} [{} sessions] ",
                 view_indicator,
-                idle_marker,
+                markers,
                 rows.len()
             )
         }

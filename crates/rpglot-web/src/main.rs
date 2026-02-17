@@ -57,7 +57,7 @@ use axum::extract::Request;
 use axum::http::{Uri, header};
 use axum::middleware::Next;
 use rpglot_core::api::convert::{ConvertContext, convert};
-use rpglot_core::api::schema::{ApiMode, ApiSchema, DateInfo, TimelineInfo};
+use rpglot_core::api::schema::{ApiMode, ApiSchema, DateInfo, InstanceInfo, TimelineInfo};
 use rpglot_core::api::snapshot::ApiSnapshot;
 #[cfg(target_os = "linux")]
 use rpglot_core::collector::RealFs;
@@ -179,6 +179,8 @@ struct WebAppInner {
     // Heatmap cache: per-date ("YYYY-MM-DD" → bucketed data).
     // Past dates are immutable — cached forever. Today invalidated on refresh.
     heatmap_cache: HashMap<String, Vec<rpglot_core::storage::heatmap::HeatmapBucket>>,
+    // Instance metadata (database name + PG version), cached from provider.
+    instance_info: Option<(String, String)>,
 }
 
 type SharedState = Arc<Mutex<WebAppInner>>;
@@ -276,6 +278,7 @@ async fn async_main(args: Args) {
         history_start,
         history_end,
         heatmap_cache: HashMap::new(),
+        instance_info: None,
     };
 
     let state: SharedState = Arc::new(Mutex::new(inner));
@@ -580,6 +583,11 @@ fn advance_and_convert(inner: &mut WebAppInner) {
             return;
         }
     };
+
+    // Cache instance metadata (only fetched once per connection, so cheap)
+    if inner.instance_info.is_none() {
+        inner.instance_info = inner.provider.instance_info();
+    }
 
     // Update rates (must happen before borrowing interner)
     update_pgs_rates(inner, &snapshot);
@@ -1155,7 +1163,11 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
     } else {
         None
     };
-    Json(ApiSchema::generate(mode, timeline))
+    let instance = inner.instance_info.as_ref().map(|(db, ver)| InstanceInfo {
+        database: db.clone(),
+        pg_version: ver.clone(),
+    });
+    Json(ApiSchema::generate(mode, timeline, instance))
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]

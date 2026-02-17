@@ -88,6 +88,8 @@ pub struct PostgresCollector {
     pub(crate) client: Option<Client>,
     pub(crate) last_error: Option<String>,
     pub(crate) server_version_num: Option<i32>,
+    /// Name of the largest non-template database (heuristic instance identifier).
+    pub(crate) largest_dbname: Option<String>,
     pub(crate) statements_ext_version: Option<String>,
     pub(crate) statements_last_check: Option<Instant>,
     pub(crate) statements_cache: Vec<PgStatStatementsCacheEntry>,
@@ -128,12 +130,12 @@ impl PostgresCollector {
 
         let connection_string = if password.is_empty() {
             format!(
-                "host={} port={} user={} dbname={}",
+                "host={} port={} user={} dbname={} application_name=rpglot",
                 host, port, user, database
             )
         } else {
             format!(
-                "host={} port={} user={} password={} dbname={}",
+                "host={} port={} user={} password={} dbname={} application_name=rpglot",
                 host, port, user, password, database
             )
         };
@@ -143,6 +145,7 @@ impl PostgresCollector {
             client: None,
             last_error: None,
             server_version_num: None,
+            largest_dbname: None,
             statements_ext_version: None,
             statements_last_check: None,
             statements_cache: Vec::new(),
@@ -170,6 +173,7 @@ impl PostgresCollector {
             client: None,
             last_error: None,
             server_version_num: None,
+            largest_dbname: None,
             statements_ext_version: None,
             statements_last_check: None,
             statements_cache: Vec::new(),
@@ -240,6 +244,23 @@ impl PostgresCollector {
                     .and_then(|row| row.try_get::<_, String>(0).ok())
                     .and_then(|v| v.parse::<i32>().ok());
 
+                // Determine largest database name (instance identifier heuristic).
+                self.largest_dbname = client
+                    .query_one(
+                        "SELECT datname FROM pg_database \
+                         WHERE NOT datistemplate \
+                         ORDER BY pg_database_size(datname) DESC LIMIT 1",
+                        &[],
+                    )
+                    .ok()
+                    .and_then(|row| row.try_get::<_, String>(0).ok())
+                    .or_else(|| {
+                        client
+                            .query_one("SELECT current_database()", &[])
+                            .ok()
+                            .and_then(|row| row.try_get::<_, String>(0).ok())
+                    });
+
                 // Initialize log collector with the new connection.
                 self.log_collector.init(&mut client);
 
@@ -252,6 +273,7 @@ impl PostgresCollector {
                 let msg = format_postgres_error(&e);
                 self.last_error = Some(msg.clone());
                 self.server_version_num = None;
+                self.largest_dbname = None;
                 self.clear_caches();
                 Err(PgCollectError::ConnectionError(msg))
             }
@@ -391,6 +413,17 @@ impl PostgresCollector {
         self.indexes_cache_time = None;
         self.settings_cache.clear();
         self.settings_cache_time = None;
+    }
+
+    /// Returns PostgreSQL version as human-readable string (e.g. "16.2").
+    pub fn pg_version_string(&self) -> Option<String> {
+        let v = self.server_version_num?;
+        Some(format!("{}.{}", v / 10000, (v / 100) % 100))
+    }
+
+    /// Returns instance metadata (database name + PG version).
+    pub fn instance_info(&self) -> Option<(String, String)> {
+        Some((self.largest_dbname.clone()?, self.pg_version_string()?))
     }
 
     /// Collects log data from PostgreSQL log files.

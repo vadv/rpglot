@@ -13,6 +13,8 @@ import {
   HeartPulse,
   Zap,
   FileText,
+  Users,
+  Server,
 } from "lucide-react";
 import {
   fetchTimeline,
@@ -55,6 +57,7 @@ import type {
   AnalysisReport,
   ApiSnapshot,
   ApiSchema,
+  InstanceInfo,
   TabKey,
   DrillDown,
   TimelineInfo,
@@ -169,12 +172,32 @@ function AppContent() {
   return <LiveApp schema={schema} />;
 }
 
+/** Updates document.title with health score + instance name. */
+function useDocumentTitle(
+  snapshot: ApiSnapshot | null | undefined,
+  instance?: InstanceInfo,
+) {
+  useEffect(() => {
+    if (!snapshot) {
+      document.title = "rpglot";
+      return;
+    }
+    const score = snapshot.health_score;
+    const prefix = score <= 50 ? `[!${score}]` : `[${score}]`;
+    const dbName = instance?.database ?? "";
+    document.title = dbName
+      ? `${prefix} ${dbName} \u2014 rpglot`
+      : `${prefix} rpglot`;
+  }, [snapshot?.health_score, instance?.database, snapshot]);
+}
+
 function LiveApp({ schema }: { schema: ApiSchema }) {
   const { snapshot, paused, togglePause } = useLiveSnapshot();
   const tabState = useTabState(schema, snapshot);
   const urlSync = useUrlSync();
   const themeHook = useTheme();
   const timezoneHook = useTimezone();
+  useDocumentTitle(snapshot, schema.instance);
 
   // Sync pause timestamp to URL
   useEffect(() => {
@@ -211,6 +234,7 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         onHelpOpen={() => tabState.setHelpOpen(true)}
         snapshot={snapshot}
         version={schema.version}
+        instance={schema.instance}
       />
       {snapshot && <SummaryPanel snapshot={snapshot} schema={schema.summary} />}
       <TabBar
@@ -251,6 +275,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const tabState = useTabState(schema, snapshot);
   const themeHook = useTheme();
   const timezoneHook = useTimezone();
+  useDocumentTitle(snapshot, schema.instance);
   const [timeline, setTimeline] = useState(schema.timeline ?? null);
   const [heatmapBuckets, setHeatmapBuckets] = useState<HeatmapBucket[]>([]);
   const snapshotRef = useRef(snapshot);
@@ -527,6 +552,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         snapshot={snapshot}
         currentHour={hourRange?.hour}
         version={schema.version}
+        instance={schema.instance}
         analyzing={analyzing}
         analyzeStartedAt={analyzeStartedAt}
         onAnalyze={handleAnalyze}
@@ -809,6 +835,7 @@ function Header({
   snapshot,
   currentHour,
   version,
+  instance,
   analyzing,
   analyzeStartedAt,
   onAnalyze,
@@ -828,6 +855,7 @@ function Header({
   snapshot?: ApiSnapshot | null;
   currentHour?: number;
   version?: string;
+  instance?: InstanceInfo;
   analyzing?: boolean;
   analyzeStartedAt?: number | null;
   onAnalyze?: () => void;
@@ -919,6 +947,15 @@ function Header({
             </span>
           )}
         </div>
+        {instance && (
+          <span
+            className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-default)]"
+            title={`Database: ${instance.database}\nPostgreSQL ${instance.pg_version}`}
+          >
+            <Server size={10} />
+            {instance.database} &middot; PG {instance.pg_version}
+          </span>
+        )}
         <span
           className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium ${
             mode === "live"
@@ -943,6 +980,7 @@ function Header({
           </button>
         )}
         {snapshot && <HealthBadge snapshot={snapshot} />}
+        {snapshot && <SessionBadge snapshot={snapshot} />}
         {onAnalyze && (
           <button
             onClick={onAnalyze}
@@ -1066,6 +1104,41 @@ function HealthBadge({ snapshot }: { snapshot: ApiSnapshot }) {
       >
         <HeartPulse size={12} />
         {score}
+      </span>
+    </RichTooltip>
+  );
+}
+
+function SessionBadge({ snapshot }: { snapshot: ApiSnapshot }) {
+  const sc = snapshot.session_counts;
+  const activeColor =
+    sc.active > 50
+      ? "var(--status-critical)"
+      : sc.active > 20
+        ? "var(--status-warning)"
+        : "var(--text-secondary)";
+
+  return (
+    <RichTooltip
+      content={
+        <div className="space-y-1">
+          <div className="font-semibold text-[var(--text-primary)]">
+            Sessions: {sc.total}
+          </div>
+          <div className="text-xs text-[var(--text-secondary)]">
+            Active: {sc.active} &middot; Idle: {sc.idle} &middot; IdleTx:{" "}
+            {sc.idle_in_transaction}
+          </div>
+        </div>
+      }
+      side="bottom"
+    >
+      <span
+        className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium cursor-default bg-[var(--bg-elevated)] border border-[var(--border-default)]"
+        style={{ color: activeColor }}
+      >
+        <Users size={10} />
+        {sc.active}/{sc.total}
       </span>
     </RichTooltip>
   );
@@ -1886,12 +1959,18 @@ function TabContent({
     if (activeTab === "pga") {
       filtered = filtered.filter((row) => {
         if (hideIdle && row.state === "idle") return false;
-        if (
-          hideSystem &&
-          row.backend_type !== "client backend" &&
-          row.backend_type !== "autovacuum worker"
-        )
-          return false;
+        if (hideSystem) {
+          if (
+            row.backend_type !== "client backend" &&
+            row.backend_type !== "autovacuum worker"
+          )
+            return false;
+          if (
+            typeof row.application_name === "string" &&
+            (row.application_name as string).startsWith("rpglot")
+          )
+            return false;
+        }
         return true;
       });
     }
@@ -1947,8 +2026,10 @@ function TabContent({
       if (hideSystem)
         counts.system = rawData.filter(
           (r) =>
-            r.backend_type !== "client backend" &&
-            r.backend_type !== "autovacuum worker",
+            (r.backend_type !== "client backend" &&
+              r.backend_type !== "autovacuum worker") ||
+            (typeof r.application_name === "string" &&
+              (r.application_name as string).startsWith("rpglot")),
         ).length;
     }
     if (activeTab === "prc" && pgOnly) {
