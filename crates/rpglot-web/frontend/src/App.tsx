@@ -449,6 +449,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       if (jump.view) {
         tabState.handleViewChange(jump.view);
       }
+      // Reset smart filters so the target row is visible
+      tabState.resetSmartFilters();
       handleManualJump(jump.timestamp);
       if (jump.entityId != null) {
         tabState.handleSelectRow(jump.entityId);
@@ -662,6 +664,7 @@ interface TabState {
   initialView: string | null;
   initialFilter: string | null;
   flashRowId: string | number | null;
+  smartFilterResetKey: number;
   handleTabChange: (tab: TabKey) => void;
   handleSelectRow: (id: string | number | null) => void;
   handleOpenDetail: () => void;
@@ -671,6 +674,7 @@ interface TabState {
   handleFilterChange: (filter: string) => void;
   setHelpOpen: (open: boolean) => void;
   triggerFlash: (id: string | number) => void;
+  resetSmartFilters: () => void;
 }
 
 function useTabState(
@@ -695,6 +699,8 @@ function useTabState(
   const [initialView, setInitialView] = useState<string | null>(urlState.view);
   const [initialFilter] = useState<string | null>(urlState.filter);
   const [flashRowId, setFlashRowId] = useState<string | number | null>(null);
+  // Incremented on drill-down / analysis jump to reset smart filters in TabContent
+  const [smartFilterResetKey, setSmartFilterResetKey] = useState(0);
 
   const triggerFlash = useCallback((id: string | number) => {
     setFlashRowId(id);
@@ -768,6 +774,7 @@ function useTabState(
       setActiveTab(targetTab);
       setSelectedId(null);
       setDetailOpen(false);
+      setSmartFilterResetKey((k) => k + 1);
       urlSync({ tab: targetTab, view: null, filter: null });
     },
     [urlSync],
@@ -844,6 +851,11 @@ function useTabState(
     setHelpOpen,
     flashRowId,
     triggerFlash,
+    smartFilterResetKey,
+    resetSmartFilters: useCallback(
+      () => setSmartFilterResetKey((k) => k + 1),
+      [],
+    ),
   };
 }
 
@@ -2030,6 +2042,7 @@ function TabContent({
     handleViewChange,
     handleFilterChange,
     flashRowId,
+    smartFilterResetKey,
   } = tabState;
   const tabSchema = schema.tabs[activeTab];
   const rawData = getTabData(snapshot, activeTab);
@@ -2066,6 +2079,19 @@ function TabContent({
   useEffect(() => {
     setProblemsOnly(false);
   }, [activeTab]);
+
+  // Reset all smart filters on drill-down / analysis jump so the target row is visible
+  const prevResetKey = useRef(smartFilterResetKey);
+  useEffect(() => {
+    if (smartFilterResetKey !== prevResetKey.current) {
+      prevResetKey.current = smartFilterResetKey;
+      setHideIdle(false);
+      setHideSystem(false);
+      setPgOnly(false);
+      setHideInactive(false);
+      setProblemsOnly(false);
+    }
+  }, [smartFilterResetKey]);
 
   const data = useMemo(() => {
     let filtered = rawData;
