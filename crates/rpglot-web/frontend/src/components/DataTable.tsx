@@ -40,6 +40,8 @@ interface DataTableProps {
   snapshotTimestamp?: number;
   /** Extra toolbar controls rendered before the filter input */
   toolbarControls?: React.ReactNode;
+  /** Row ID to flash-highlight (pulsing animation after analysis jump) */
+  flashId?: string | number | null;
 }
 
 export function DataTable({
@@ -58,6 +60,7 @@ export function DataTable({
   onFilterChange,
   snapshotTimestamp,
   toolbarControls,
+  flashId,
 }: DataTableProps) {
   const [activeView, setActiveView] = useState(() => {
     if (initialView && views.some((v) => v.key === initialView)) {
@@ -413,6 +416,8 @@ export function DataTable({
             {rows.map((row, idx) => {
               const rowId = row.original[entityId] as string | number;
               const isSelected = rowId === selectedId;
+              const isFlashing =
+                isSelected && flashId != null && rowId === flashId;
               return (
                 <tr
                   key={row.id}
@@ -420,7 +425,7 @@ export function DataTable({
                   onClick={() => handleRowClick(row.original)}
                   className={`cursor-pointer transition-colors duration-100 ${
                     isSelected
-                      ? "bg-[var(--selection-bg)] border-l-[3px] border-l-[var(--selection-border)] shadow-[inset_0_0_0_1px_var(--selection-border)]"
+                      ? `bg-[var(--selection-bg)] border-l-[3px] border-l-[var(--selection-border)] shadow-[inset_0_0_0_1px_var(--selection-border)]${isFlashing ? " flash-row" : ""}`
                       : `${idx % 2 === 0 ? "bg-[var(--bg-base)]" : "bg-[var(--bg-overlay)]"} hover:bg-[var(--bg-hover)] border-l-2 border-l-transparent`
                   }`}
                 >

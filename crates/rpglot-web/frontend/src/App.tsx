@@ -318,6 +318,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeStartedAt, setAnalyzeStartedAt] = useState<number | null>(null);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
+  const [flashRowId, setFlashRowId] = useState<string | number | null>(null);
 
   // Persist analysis report to sessionStorage so it survives SSO refreshes
   useEffect(() => {
@@ -452,6 +453,8 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       handleManualJump(jump.timestamp);
       if (jump.entityId != null) {
         tabState.handleSelectRow(jump.entityId);
+        setFlashRowId(jump.entityId);
+        setTimeout(() => setFlashRowId(null), 1500);
       }
     },
     [handleManualJump, tabState],
@@ -595,7 +598,12 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       />
       <div className="flex-1 min-h-0">
         {snapshot ? (
-          <TabContent snapshot={snapshot} schema={schema} tabState={tabState} />
+          <TabContent
+            snapshot={snapshot}
+            schema={schema}
+            tabState={tabState}
+            flashId={flashRowId}
+          />
         ) : error ? (
           <div className="flex items-center justify-center h-full text-[var(--status-critical)]">
             {error}
@@ -1997,10 +2005,12 @@ function TabContent({
   snapshot,
   schema,
   tabState,
+  flashId,
 }: {
   snapshot: ApiSnapshot;
   schema: ApiSchema;
   tabState: TabState;
+  flashId?: string | number | null;
 }) {
   const {
     activeTab,
@@ -2281,6 +2291,7 @@ function TabContent({
           onFilterChange={handleFilterChange}
           snapshotTimestamp={snapshot.timestamp}
           toolbarControls={toolbarControls}
+          flashId={flashId}
         />
       </div>
       {detailOpen && selectedRow && !isAggregatedView && (

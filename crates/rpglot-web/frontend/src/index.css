@@ -161,3 +161,17 @@ body {
 .animate-pulse-btn {
     animation: pulse-btn 1.5s ease-in-out infinite;
 }
+
+@keyframes flash-row {
+    0%,
+    100% {
+        background-color: var(--selection-bg);
+    }
+    50% {
+        background-color: rgba(59, 130, 246, 0.45);
+    }
+}
+
+.flash-row {
+    animation: flash-row 0.4s ease-in-out 3;
+}
