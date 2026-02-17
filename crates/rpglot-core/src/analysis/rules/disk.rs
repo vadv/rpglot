@@ -1,4 +1,7 @@
-use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
+use crate::analysis::{
+    AnalysisContext, Anomaly, Category, Severity, find_block, is_container_snapshot,
+    is_relevant_disk,
+};
 use crate::storage::model::DataBlock;
 
 use super::AnalysisRule;
@@ -30,9 +33,13 @@ impl AnalysisRule for DiskUtilHighRule {
             return Vec::new();
         };
 
-        // Per-device utilization: take the max across all devices.
+        // Per-device utilization: take the max across relevant devices.
+        let is_container = is_container_snapshot(ctx.snapshot);
         let mut util_pct = 0.0_f64;
         for d in disks {
+            if !is_relevant_disk(d, is_container) {
+                continue;
+            }
             let prev_io_ms = prev
                 .disk_io_ms_per_dev
                 .get(&d.device_hash)
@@ -91,8 +98,10 @@ impl AnalysisRule for DiskIoSpikeRule {
             return Vec::new();
         };
 
-        let total_rsz: u64 = disks.iter().map(|d| d.rsz).sum();
-        let total_wsz: u64 = disks.iter().map(|d| d.wsz).sum();
+        let is_container = is_container_snapshot(ctx.snapshot);
+        let relevant = disks.iter().filter(|d| is_relevant_disk(d, is_container));
+        let total_rsz: u64 = relevant.clone().map(|d| d.rsz).sum();
+        let total_wsz: u64 = relevant.map(|d| d.wsz).sum();
         let rsz_d = total_rsz.saturating_sub(prev.disk_rsz);
         let wsz_d = total_wsz.saturating_sub(prev.disk_wsz);
         let bytes_s = (rsz_d + wsz_d) as f64 * 512.0 / ctx.dt;

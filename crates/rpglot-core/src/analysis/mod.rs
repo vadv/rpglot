@@ -210,7 +210,7 @@ impl EwmaState {
             Self::update_val(self.n, self.alpha, used_pct, &mut self.mem_used_pct);
         }
 
-        // Disk
+        // Disk (only relevant devices — skip partitions, loop, ram, container host devices)
         if let (Some(disks), Some(p)) = (
             find_block(snapshot, |b| match b {
                 DataBlock::SystemDisk(v) => Some(v.as_slice()),
@@ -219,13 +219,22 @@ impl EwmaState {
             prev,
         ) && dt > 0.0
         {
-            let total_rsz: u64 = disks.iter().map(|d| d.rsz).sum();
-            let total_wsz: u64 = disks.iter().map(|d| d.wsz).sum();
+            let is_ctr = is_container_snapshot(snapshot);
+            let total_rsz: u64 = disks
+                .iter()
+                .filter(|d| is_relevant_disk(d, is_ctr))
+                .map(|d| d.rsz)
+                .sum();
+            let total_wsz: u64 = disks
+                .iter()
+                .filter(|d| is_relevant_disk(d, is_ctr))
+                .map(|d| d.wsz)
+                .sum();
             let read_s = (total_rsz.saturating_sub(p.disk_rsz) as f64 * 512.0) / dt;
             let write_s = (total_wsz.saturating_sub(p.disk_wsz) as f64 * 512.0) / dt;
-            // Per-device utilization: max across all devices
+            // Per-device utilization: max across relevant devices
             let mut max_util = 0.0_f64;
-            for d in disks {
+            for d in disks.iter().filter(|d| is_relevant_disk(d, is_ctr)) {
                 let prev_io_ms = p
                     .disk_io_ms_per_dev
                     .get(&d.device_hash)
@@ -437,16 +446,18 @@ pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: 
             DataBlock::SystemDisk(v) => Some(v.as_slice()),
             _ => None,
         }) {
-            let total_rio: u64 = disks.iter().map(|d| d.rio).sum();
-            let total_wio: u64 = disks.iter().map(|d| d.wio).sum();
+            let is_ctr = is_container_snapshot(snapshot);
+            let relevant = disks.iter().filter(|d| is_relevant_disk(d, is_ctr));
+            let total_rio: u64 = relevant.clone().map(|d| d.rio).sum();
+            let total_wio: u64 = relevant.clone().map(|d| d.wio).sum();
             let d_iops = (total_rio.saturating_sub(p.disk_rio)
                 + total_wio.saturating_sub(p.disk_wio)) as f64
                 / dt;
             score -= (d_iops / 1000.0) as i32 * 5;
 
             // 4. Disk bandwidth
-            let total_rsz: u64 = disks.iter().map(|d| d.rsz).sum();
-            let total_wsz: u64 = disks.iter().map(|d| d.wsz).sum();
+            let total_rsz: u64 = relevant.clone().map(|d| d.rsz).sum();
+            let total_wsz: u64 = relevant.map(|d| d.wsz).sum();
             let bw_bytes = (total_rsz.saturating_sub(p.disk_rsz)
                 + total_wsz.saturating_sub(p.disk_wsz)) as f64
                 * 512.0
@@ -515,11 +526,13 @@ impl PrevSample {
             DataBlock::SystemDisk(v) => Some(v.as_slice()),
             _ => None,
         }) {
-            s.disk_rsz = disks.iter().map(|d| d.rsz).sum();
-            s.disk_wsz = disks.iter().map(|d| d.wsz).sum();
-            s.disk_rio = disks.iter().map(|d| d.rio).sum();
-            s.disk_wio = disks.iter().map(|d| d.wio).sum();
-            for d in disks {
+            let is_ctr = is_container_snapshot(snapshot);
+            let relevant = disks.iter().filter(|d| is_relevant_disk(d, is_ctr));
+            s.disk_rsz = relevant.clone().map(|d| d.rsz).sum();
+            s.disk_wsz = relevant.clone().map(|d| d.wsz).sum();
+            s.disk_rio = relevant.clone().map(|d| d.rio).sum();
+            s.disk_wio = relevant.clone().map(|d| d.wio).sum();
+            for d in relevant {
                 s.disk_io_ms_per_dev.insert(d.device_hash, d.io_ms);
             }
         }
@@ -569,6 +582,38 @@ fn find_aggregate_cpu(snapshot: &Snapshot) -> Option<&crate::storage::model::Sys
         DataBlock::SystemCpu(v) => v.iter().find(|c| c.cpu_id == -1),
         _ => None,
     })
+}
+
+/// Check if snapshot comes from a container (has Cgroup block).
+pub fn is_container_snapshot(snapshot: &Snapshot) -> bool {
+    snapshot
+        .blocks
+        .iter()
+        .any(|b| matches!(b, DataBlock::Cgroup(_)))
+}
+
+/// Filter disk suitable for analysis (same logic as api/convert.rs).
+///
+/// Skips loop/ram devices, partitions (name ending in digit, except nvme),
+/// and in container mode skips devices without mountinfo (major=0, minor=0).
+pub fn is_relevant_disk(disk: &crate::storage::model::SystemDiskInfo, is_container: bool) -> bool {
+    if is_container && disk.major == 0 && disk.minor == 0 {
+        return false;
+    }
+    if disk.device_name.starts_with("loop") || disk.device_name.starts_with("ram") {
+        return false;
+    }
+    if !is_container
+        && disk
+            .device_name
+            .chars()
+            .last()
+            .is_some_and(|c| c.is_ascii_digit())
+        && !disk.device_name.starts_with("nvme")
+    {
+        return false;
+    }
+    true
 }
 
 fn sum_cpu_ticks(cpu: &crate::storage::model::SystemCpuInfo) -> u64 {

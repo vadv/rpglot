@@ -5,7 +5,10 @@
 
 use std::collections::HashMap;
 
-use crate::analysis::{PrevSample, compute_backend_io_hit, compute_health_score};
+use crate::analysis::{
+    PrevSample, compute_backend_io_hit, compute_health_score, is_container_snapshot,
+    is_relevant_disk,
+};
 use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
@@ -253,31 +256,11 @@ fn extract_disk_summaries(
         .map(|ds| ds.iter().map(|d| (d.device_hash, d)).collect())
         .unwrap_or_default();
 
-    let is_container = snap
-        .blocks
-        .iter()
-        .any(|b| matches!(b, DataBlock::Cgroup(_)));
+    let is_container = is_container_snapshot(snap);
 
     disks
         .iter()
-        .filter(|d| {
-            if is_container && d.major == 0 && d.minor == 0 {
-                return false;
-            }
-            if d.device_name.starts_with("loop") || d.device_name.starts_with("ram") {
-                return false;
-            }
-            if !is_container
-                && d.device_name
-                    .chars()
-                    .last()
-                    .is_some_and(|c| c.is_ascii_digit())
-                && !d.device_name.starts_with("nvme")
-            {
-                return false;
-            }
-            true
-        })
+        .filter(|d| is_relevant_disk(d, is_container))
         .map(|disk| {
             if let Some(p) = prev_disks.get(&disk.device_hash) {
                 let read_sectors = disk.rsz.saturating_sub(p.rsz);
