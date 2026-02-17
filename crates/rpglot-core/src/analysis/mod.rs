@@ -412,15 +412,15 @@ fn sum_pg_io(procs: &[ProcessInfo], pg_pids: &HashSet<u32>) -> (u64, u64) {
 pub fn compute_health_score(snapshot: &Snapshot, prev: Option<&PrevSample>, dt: f64) -> u8 {
     let mut score: i32 = 100;
 
-    // 1. Active PGA sessions
+    // 1. Active PGA sessions (state = "active" only, not "idle in transaction" etc.)
     if let Some(sessions) = find_block(snapshot, |b| match b {
         DataBlock::PgStatActivity(v) => Some(v.as_slice()),
         _ => None,
     }) {
-        let idle_hash = xxhash_rust::xxh3::xxh3_64(b"idle");
+        let active_hash = xxhash_rust::xxh3::xxh3_64(b"active");
         let active = sessions
             .iter()
-            .filter(|s| s.state_hash != idle_hash && s.state_hash != 0)
+            .filter(|s| s.state_hash == active_hash)
             .count() as i32;
         score -= active / 2;
     }
