@@ -2,12 +2,18 @@ import { useState, useRef, useCallback, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 interface TooltipProps {
-  content: string;
+  content: ReactNode;
   children: ReactNode;
   side?: "top" | "bottom";
+  wide?: boolean;
 }
 
-export function Tooltip({ content, children, side = "top" }: TooltipProps) {
+export function Tooltip({
+  content,
+  children,
+  side = "top",
+  wide,
+}: TooltipProps) {
   const [show, setShow] = useState(false);
   const [coords, setCoords] = useState({ x: 0, y: 0 });
   const timeout = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -42,8 +48,9 @@ export function Tooltip({ content, children, side = "top" }: TooltipProps) {
       {show &&
         createPortal(
           <span
-            className={`fixed z-[9999] px-2 py-1 text-xs rounded whitespace-nowrap pointer-events-none
-              bg-[var(--text-primary)] text-[var(--text-inverse)]`}
+            className={`fixed z-[9999] px-2 py-1 text-xs rounded pointer-events-none
+              bg-[var(--text-primary)] text-[var(--text-inverse)]
+              ${wide ? "max-w-xs whitespace-pre-line text-left leading-relaxed" : "whitespace-nowrap"}`}
             style={{
               left: coords.x,
               top: coords.y,

@@ -14,35 +14,50 @@ const TAB_ORDER: TabKey[] = ["prc", "pga", "pgs", "pgt", "pgi", "pge", "pgl"];
 
 const TAB_CONFIG: Record<
   TabKey,
-  { label: string; fullName: string; icon: typeof Monitor }
+  { label: string; description: string; icon: typeof Monitor }
 > = {
-  prc: { label: "Processes", fullName: "OS Processes", icon: Monitor },
+  prc: {
+    label: "Processes",
+    icon: Monitor,
+    description:
+      "OS-level view of all processes on the server.\nFind who is eating CPU or memory \u2014 is it PostgreSQL, a backup job, or something unexpected?\nSpot runaway processes, zombie workers, or OOM candidates before the kernel does.",
+  },
   pga: {
     label: "Activity",
-    fullName: "pg_stat_activity",
     icon: Activity,
+    description:
+      "Live sessions inside PostgreSQL (pg_stat_activity).\nSee which queries are running right now, who is waiting on locks, and who has been idle in transaction for too long.\nThis is your first stop when the database feels slow.",
   },
   pgs: {
     label: "Statements",
-    fullName: "pg_stat_statements",
     icon: BarChart3,
+    description:
+      "Cumulative query statistics (pg_stat_statements).\nFind the heaviest queries by total time, calls/sec, or rows returned.\nSpot cache misses, temp file spills, and queries that suddenly got slower.",
   },
   pgt: {
     label: "Tables",
-    fullName: "pg_stat_user_tables",
     icon: Table2,
+    description:
+      "Per-table I/O and maintenance stats.\nCheck if autovacuum is keeping up, find tables with excessive sequential scans, and see dead tuple bloat.\nSwitch between Reads / Writes / Scans / Maintenance views.",
   },
   pgi: {
     label: "Indexes",
-    fullName: "pg_stat_user_indexes",
     icon: ListTree,
+    description:
+      "Per-index usage and I/O stats.\nFind unused indexes that waste disk and slow down writes.\nSpot missing indexes \u2014 tables with high seq scans but no index activity.",
   },
   pge: {
     label: "Events",
-    fullName: "PG Log Events",
     icon: AlertTriangle,
+    description:
+      "PostgreSQL log events: errors, checkpoints, autovacuums, slow queries.\nSee error spikes, checkpoint frequency, vacuum duration, and slowest queries.\nSwitch views to focus on what matters right now.",
   },
-  pgl: { label: "Locks", fullName: "pg_locks", icon: Lock },
+  pgl: {
+    label: "Locks",
+    icon: Lock,
+    description:
+      "Lock dependency tree (pg_locks).\nVisualize who blocks whom \u2014 find the root blocker and the full cascade of waiting sessions.\nCritical when transactions pile up and throughput drops to zero.",
+  },
 };
 
 interface TabBarProps {
@@ -58,7 +73,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
         const Icon = config.icon;
         const isActive = activeTab === key;
         return (
-          <Tooltip key={key} content={config.fullName} side="bottom">
+          <Tooltip key={key} content={config.description} side="bottom" wide>
             <button
               onClick={() => onTabChange(key)}
               className={`relative flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-t transition-colors ${
