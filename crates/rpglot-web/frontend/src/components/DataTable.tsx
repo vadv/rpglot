@@ -43,6 +43,8 @@ interface DataTableProps {
   toolbarControls?: React.ReactNode;
   /** Row ID to flash-highlight (pulsing animation after analysis jump) */
   flashId?: string | number | null;
+  /** Column filter to apply (e.g. from schema view drill-down). Consumed once on change. */
+  columnFilterPreset?: { column: string; value: string } | null;
 }
 
 export function DataTable({
@@ -62,6 +64,7 @@ export function DataTable({
   snapshotTimestamp,
   toolbarControls,
   flashId,
+  columnFilterPreset,
 }: DataTableProps) {
   const [activeView, setActiveView] = useState(() => {
     if (initialView && views.some((v) => v.key === initialView)) {
@@ -88,6 +91,17 @@ export function DataTable({
 
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState(initialFilter ?? "");
+
+  // Apply column filter preset (e.g. from schema view drill-down)
+  const prevPreset = useRef(columnFilterPreset);
+  useEffect(() => {
+    if (columnFilterPreset && columnFilterPreset !== prevPreset.current) {
+      setColumnFilters([
+        { id: columnFilterPreset.column, value: [columnFilterPreset.value] },
+      ]);
+    }
+    prevPreset.current = columnFilterPreset;
+  }, [columnFilterPreset]);
   const [filterPopover, setFilterPopover] = useState<{
     columnId: string;
     rect: DOMRect;

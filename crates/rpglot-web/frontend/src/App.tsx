@@ -2057,6 +2057,47 @@ function TabContent({
     (activeTab === "pgt" || activeTab === "pgi") &&
     (activeView === "schema" || activeView === "database");
 
+  // Column filter preset for drill-down from aggregated (schema/database) view
+  const [columnFilterPreset, setColumnFilterPreset] = useState<{
+    column: string;
+    value: string;
+  } | null>(null);
+
+  // In aggregated view, clicking a row drills down into the default view with a column filter
+  const handleAggregatedSelect = useCallback(
+    (id: string | number | null) => {
+      if (!isAggregatedView || id == null) {
+        handleSelectRow(id);
+        return;
+      }
+      // Switch to default view with column filter by schema/database
+      const groupColumn = activeView === "database" ? "database" : "schema";
+      const defaultView =
+        tabSchema.views.find((v) => v.default) ?? tabSchema.views[0];
+      if (defaultView) {
+        handleViewChange(defaultView.key);
+        setColumnFilterPreset({ column: groupColumn, value: String(id) });
+        handleSelectRow(null);
+      }
+    },
+    [
+      isAggregatedView,
+      activeView,
+      tabSchema.views,
+      handleViewChange,
+      handleSelectRow,
+    ],
+  );
+
+  // Clear column filter preset when user manually switches view
+  const handleViewChangeWithReset = useCallback(
+    (view: string) => {
+      setColumnFilterPreset(null);
+      handleViewChange(view);
+    },
+    [handleViewChange],
+  );
+
   // Inject Schema + Database views into PGT/PGI views list
   const effectiveViews = useMemo(() => {
     if (activeTab === "pgt") {
@@ -2323,17 +2364,20 @@ function TabContent({
           views={effectiveViews}
           entityId={effectiveEntityId}
           selectedId={selectedId}
-          onSelectRow={handleSelectRow}
+          onSelectRow={
+            isAggregatedView ? handleAggregatedSelect : handleSelectRow
+          }
           onOpenDetail={handleOpenDetail}
           isLockTree={activeTab === "pgl"}
           activeTab={activeTab}
           initialView={initialView}
           initialFilter={initialFilter}
-          onViewChange={handleViewChange}
+          onViewChange={handleViewChangeWithReset}
           onFilterChange={handleFilterChange}
           snapshotTimestamp={snapshot.timestamp}
           toolbarControls={toolbarControls}
           flashId={flashRowId}
+          columnFilterPreset={columnFilterPreset}
         />
       </div>
       {detailOpen && selectedRow && !isAggregatedView && (
