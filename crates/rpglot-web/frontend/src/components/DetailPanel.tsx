@@ -449,7 +449,7 @@ function DetailSection({
 
   const fields = section.fields.filter((key) => {
     const val = row[key];
-    return (val != null && val !== "" && val !== 0) || colMap.has(key);
+    return val != null && val !== "" && val !== 0;
   });
 
   if (fields.length === 0) return null;
