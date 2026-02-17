@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::analysis::rules::AnalysisRule;
 use crate::analysis::{AnalysisContext, Anomaly, Category, Severity, find_block};
 use crate::storage::model::DataBlock;
@@ -21,7 +23,12 @@ impl AnalysisRule for BlockedSessionsRule {
             return Vec::new();
         };
 
-        let count = nodes.iter().filter(|n| !n.lock_granted).count() as u64;
+        let count = nodes
+            .iter()
+            .filter(|n| !n.lock_granted)
+            .map(|n| n.pid)
+            .collect::<HashSet<_>>()
+            .len() as u64;
 
         if count == 0 {
             return Vec::new();
