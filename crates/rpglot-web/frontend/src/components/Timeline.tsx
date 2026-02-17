@@ -134,7 +134,7 @@ export function Timeline({
       )}
 
       {/* Intra-day slider with heatmap overlay */}
-      <div className="relative flex-1 h-6 flex items-center">
+      <div className="relative flex-1 h-8 flex items-center">
         {heatmapBuckets && heatmapBuckets.length > 0 && (
           <ActivityHeatmap
             buckets={heatmapBuckets}

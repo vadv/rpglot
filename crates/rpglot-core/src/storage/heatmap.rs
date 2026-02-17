@@ -20,11 +20,14 @@ use super::model::{
     CgroupCpuInfo, CgroupMemoryInfo, DataBlock, PgLogEventType, Snapshot, SystemCpuInfo,
 };
 
-/// Magic bytes identifying heatmap sidecar files.
-const HEATMAP_MAGIC: &[u8; 4] = b"HM01";
+/// Magic bytes identifying heatmap sidecar files (v2: 13 bytes per entry).
+const HEATMAP_MAGIC: &[u8; 4] = b"HM02";
+
+/// Entry size in bytes.
+const ENTRY_SIZE: usize = 13;
 
 /// Lightweight per-snapshot heatmap entry.
-/// 12 bytes per entry.
+/// 13 bytes per entry.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct HeatmapEntry {
@@ -42,6 +45,8 @@ pub struct HeatmapEntry {
     pub checkpoint_count: u8,
     /// Number of autovacuum/autoanalyze events in this snapshot interval.
     pub autovacuum_count: u8,
+    /// Number of slow query events in this snapshot interval.
+    pub slow_query_count: u8,
 }
 
 /// A bucketed heatmap data point for frontend display.
@@ -63,6 +68,8 @@ pub struct HeatmapBucket {
     pub checkpoints: u8,
     /// Total autovacuum/autoanalyze events in this bucket.
     pub autovacuums: u8,
+    /// Total slow query events in this bucket.
+    pub slow_queries: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -75,9 +82,9 @@ pub fn heatmap_path(chunk_path: &Path) -> PathBuf {
 }
 
 /// Writes heatmap entries to a `.heatmap` sidecar file.
-/// Format: 4-byte magic `b"HM01"` + 12-byte little-endian entries.
+/// Format: 4-byte magic `b"HM02"` + 13-byte little-endian entries.
 pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
-    let mut buf = Vec::with_capacity(4 + entries.len() * 12);
+    let mut buf = Vec::with_capacity(4 + entries.len() * ENTRY_SIZE);
     buf.extend_from_slice(HEATMAP_MAGIC);
     for e in entries {
         buf.extend_from_slice(&e.active_sessions.to_le_bytes());
@@ -87,6 +94,7 @@ pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
         buf.extend_from_slice(&e.error_count.to_le_bytes());
         buf.push(e.checkpoint_count);
         buf.push(e.autovacuum_count);
+        buf.push(e.slow_query_count);
     }
     fs::write(path, buf)
 }
@@ -100,13 +108,13 @@ pub fn read_heatmap(path: &Path) -> io::Result<Vec<HeatmapEntry>> {
     }
 
     let payload = &data[4..];
-    if payload.len() % 12 != 0 {
+    if payload.len() % ENTRY_SIZE != 0 {
         return Err(io::Error::other("invalid heatmap file size"));
     }
-    let count = payload.len() / 12;
+    let count = payload.len() / ENTRY_SIZE;
     let mut entries = Vec::with_capacity(count);
     for i in 0..count {
-        let off = i * 12;
+        let off = i * ENTRY_SIZE;
         entries.push(HeatmapEntry {
             active_sessions: u16::from_le_bytes([payload[off], payload[off + 1]]),
             cpu_pct_x10: u16::from_le_bytes([payload[off + 2], payload[off + 3]]),
@@ -115,6 +123,7 @@ pub fn read_heatmap(path: &Path) -> io::Result<Vec<HeatmapEntry>> {
             error_count: u16::from_le_bytes([payload[off + 8], payload[off + 9]]),
             checkpoint_count: payload[off + 10],
             autovacuum_count: payload[off + 11],
+            slow_query_count: payload[off + 12],
         });
     }
     Ok(entries)
@@ -187,6 +196,33 @@ pub fn count_autovacuum_events(snapshot: &Snapshot) -> u8 {
         .find_map(|b| {
             if let DataBlock::PgLogEvents(info) = b {
                 Some(info.autovacuum_count.min(255) as u8)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0)
+}
+
+/// Count slow query events in a snapshot.
+/// Checks both `PgLogDetailedEvents` (preferred) and legacy `PgLogEvents`.
+pub fn count_slow_query_events(snapshot: &Snapshot) -> u8 {
+    // Prefer detailed events (source-of-truth)
+    for b in &snapshot.blocks {
+        if let DataBlock::PgLogDetailedEvents(events) = b {
+            let count = events
+                .iter()
+                .filter(|e| matches!(e.event_type, PgLogEventType::SlowQuery))
+                .count();
+            return count.min(255) as u8;
+        }
+    }
+    // Fallback to legacy counters
+    snapshot
+        .blocks
+        .iter()
+        .find_map(|b| {
+            if let DataBlock::PgLogEvents(info) = b {
+                Some(info.slow_query_count.min(255) as u8)
             } else {
                 None
             }
@@ -350,9 +386,10 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
         // PostgreSQL log error count
         let errors = count_error_entries(snap);
 
-        // Checkpoint / autovacuum events
+        // Checkpoint / autovacuum / slow query events
         let checkpoints = count_checkpoint_events(snap);
         let autovacuums = count_autovacuum_events(snap);
+        let slow_queries = count_slow_query_events(snap);
 
         entries.push(HeatmapEntry {
             active_sessions: active,
@@ -362,6 +399,7 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
             error_count: errors,
             checkpoint_count: checkpoints,
             autovacuum_count: autovacuums,
+            slow_query_count: slow_queries,
         });
 
         prev_cpu = extract_system_cpu(snap);
@@ -400,6 +438,7 @@ pub fn bucket_heatmap(
                 errors: 0,
                 checkpoints: 0,
                 autovacuums: 0,
+                slow_queries: 0,
             }
         })
         .collect();
@@ -418,6 +457,9 @@ pub fn bucket_heatmap(
         buckets[idx].autovacuums = buckets[idx]
             .autovacuums
             .saturating_add(entry.autovacuum_count);
+        buckets[idx].slow_queries = buckets[idx]
+            .slow_queries
+            .saturating_add(entry.slow_query_count);
     }
 
     buckets
@@ -438,6 +480,7 @@ mod tests {
                 error_count: 3,
                 checkpoint_count: 1,
                 autovacuum_count: 2,
+                slow_query_count: 4,
             },
             HeatmapEntry {
                 active_sessions: 0,
@@ -447,6 +490,7 @@ mod tests {
                 error_count: 0,
                 checkpoint_count: 0,
                 autovacuum_count: 0,
+                slow_query_count: 0,
             },
             HeatmapEntry {
                 active_sessions: 100,
@@ -456,6 +500,7 @@ mod tests {
                 error_count: 42,
                 checkpoint_count: 3,
                 autovacuum_count: 7,
+                slow_query_count: 16,
             },
         ];
         let dir = std::env::temp_dir().join("rpglot_test_heatmap");
@@ -472,6 +517,7 @@ mod tests {
         assert_eq!(loaded[0].error_count, 3);
         assert_eq!(loaded[0].checkpoint_count, 1);
         assert_eq!(loaded[0].autovacuum_count, 2);
+        assert_eq!(loaded[0].slow_query_count, 4);
         assert_eq!(loaded[2].active_sessions, 100);
         assert_eq!(loaded[2].cpu_pct_x10, 999);
         assert_eq!(loaded[2].cgroup_cpu_pct_x10, 500);
@@ -479,6 +525,7 @@ mod tests {
         assert_eq!(loaded[2].error_count, 42);
         assert_eq!(loaded[2].checkpoint_count, 3);
         assert_eq!(loaded[2].autovacuum_count, 7);
+        assert_eq!(loaded[2].slow_query_count, 16);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -497,6 +544,7 @@ mod tests {
                     error_count: 0,
                     checkpoint_count: 1,
                     autovacuum_count: 0,
+                    slow_query_count: 2,
                 },
             ),
             (
@@ -509,6 +557,7 @@ mod tests {
                     error_count: 5,
                     checkpoint_count: 0,
                     autovacuum_count: 2,
+                    slow_query_count: 1,
                 },
             ),
             (
@@ -521,6 +570,7 @@ mod tests {
                     error_count: 2,
                     checkpoint_count: 1,
                     autovacuum_count: 3,
+                    slow_query_count: 3,
                 },
             ),
         ];
@@ -534,6 +584,7 @@ mod tests {
         assert_eq!(buckets[0].errors, 0);
         assert_eq!(buckets[0].checkpoints, 1);
         assert_eq!(buckets[0].autovacuums, 0);
+        assert_eq!(buckets[0].slow_queries, 2);
         // Second bucket [150, 200]: entries at 150 and 200 — sum for events
         assert_eq!(buckets[1].active, 10);
         assert_eq!(buckets[1].cpu, 700);
@@ -542,6 +593,7 @@ mod tests {
         assert_eq!(buckets[1].errors, 5);
         assert_eq!(buckets[1].checkpoints, 1); // 0 + 1
         assert_eq!(buckets[1].autovacuums, 5); // 2 + 3
+        assert_eq!(buckets[1].slow_queries, 4); // 1 + 3
     }
 
     #[test]

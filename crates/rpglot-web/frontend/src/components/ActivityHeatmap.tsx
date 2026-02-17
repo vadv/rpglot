@@ -97,6 +97,17 @@ export function ActivityHeatmap({
           />
         ) : null,
       )}
+      {/* Slow query indicators — amber triangles near top */}
+      {buckets.map((b, i) =>
+        b.slow_queries > 0 ? (
+          <polygon
+            key={`sq-${i}`}
+            points={`${i + 0.5},0.5 ${i + 1},3 ${i},3`}
+            fill="var(--status-warning)"
+            opacity={0.8}
+          />
+        ) : null,
+      )}
       {currentTs > startTs && currentTs < endTs && (
         <line
           x1={((currentTs - startTs) / range) * n}

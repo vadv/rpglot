@@ -517,6 +517,7 @@ export interface HeatmapBucket {
   errors: number;
   checkpoints: number;
   autovacuums: number;
+  slow_queries: number;
 }
 
 // Tab key type

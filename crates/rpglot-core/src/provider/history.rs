@@ -798,6 +798,7 @@ impl HistoryProvider {
                             let errors = heatmap::count_error_entries(&snap);
                             let checkpoints = heatmap::count_checkpoint_events(&snap);
                             let autovacuums = heatmap::count_autovacuum_events(&snap);
+                            let slow_queries = heatmap::count_slow_query_events(&snap);
                             // CPU% for WAL: simplified to 0 (WAL entries will be flushed
                             // to chunk with full CPU% soon, < 1 hour of data)
                             result.push((
@@ -810,6 +811,7 @@ impl HistoryProvider {
                                     error_count: errors,
                                     checkpoint_count: checkpoints,
                                     autovacuum_count: autovacuums,
+                                    slow_query_count: slow_queries,
                                 },
                             ));
                         }
@@ -822,6 +824,7 @@ impl HistoryProvider {
                             let errors = heatmap::count_error_entries(snap);
                             let checkpoints = heatmap::count_checkpoint_events(snap);
                             let autovacuums = heatmap::count_autovacuum_events(snap);
+                            let slow_queries = heatmap::count_slow_query_events(snap);
                             result.push((
                                 snap.timestamp,
                                 HeatmapEntry {
@@ -832,6 +835,7 @@ impl HistoryProvider {
                                     error_count: errors,
                                     checkpoint_count: checkpoints,
                                     autovacuum_count: autovacuums,
+                                    slow_query_count: slow_queries,
                                 },
                             ));
                         }
