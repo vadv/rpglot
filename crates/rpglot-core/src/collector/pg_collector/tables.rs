@@ -1,12 +1,12 @@
-//! Collector for pg_stat_user_tables (per-database view).
+//! Collector for pg_stat_user_tables (per-database view) with activity-only filtering.
 //!
 //! Collects from all databases via `db_clients` pool.
 
-use crate::storage::interner::StringInterner;
-use crate::storage::model::PgStatUserTablesInfo;
+use std::collections::HashMap;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use std::collections::HashMap;
+use crate::storage::interner::StringInterner;
+use crate::storage::model::PgStatUserTablesInfo;
 
 use super::PgCollectError;
 use super::PostgresCollector;
@@ -31,23 +31,13 @@ impl PostgresCollector {
         &mut self,
         interner: &mut StringInterner,
     ) -> Result<Vec<PgStatUserTablesInfo>, PgCollectError> {
-        // Return cached data if fresh (re-intern strings for current interner state)
+        // Return cached filtered data if fresh (re-intern strings for current interner state)
         if let Some(cache_time) = self.tables_cache_time
             && self.statements_collect_interval > std::time::Duration::ZERO
             && cache_time.elapsed() < self.statements_collect_interval
             && !self.tables_cache.is_empty()
         {
-            return Ok(self
-                .tables_cache
-                .iter()
-                .map(|entry| {
-                    let mut info = entry.info.clone();
-                    info.datname_hash = interner.intern(&entry.datname);
-                    info.schemaname_hash = interner.intern(&entry.schemaname);
-                    info.relname_hash = interner.intern(&entry.relname);
-                    info
-                })
-                .collect());
+            return Ok(self.return_filtered_tables_cached(interner));
         }
 
         let collected_at = SystemTime::now()
@@ -114,7 +104,42 @@ impl PostgresCollector {
         self.tables_cache = all_cache;
         self.tables_cache_time = Some(Instant::now());
 
-        Ok(all_results)
+        // Activity-only filtering: only keep rows where cumulative counters changed.
+        let filtered = filter_tables(&all_results, &self.pgt_prev, self.pgt_first_collect);
+
+        // Update prev with the full (unfiltered) snapshot.
+        self.pgt_prev = all_results
+            .iter()
+            .map(|info| (info.relid, info.clone()))
+            .collect();
+        self.pgt_first_collect = false;
+        self.pgt_filtered_cache = filtered.clone();
+
+        Ok(filtered)
+    }
+
+    /// Returns the cached filtered result with re-interned strings.
+    fn return_filtered_tables_cached(
+        &self,
+        interner: &mut StringInterner,
+    ) -> Vec<PgStatUserTablesInfo> {
+        let cache_map: HashMap<u32, &PgStatUserTablesCacheEntry> = self
+            .tables_cache
+            .iter()
+            .map(|e| (e.info.relid, e))
+            .collect();
+
+        self.pgt_filtered_cache
+            .iter()
+            .filter_map(|info| {
+                let entry = cache_map.get(&info.relid)?;
+                let mut out = info.clone();
+                out.datname_hash = interner.intern(&entry.datname);
+                out.schemaname_hash = interner.intern(&entry.schemaname);
+                out.relname_hash = interner.intern(&entry.relname);
+                Some(out)
+            })
+            .collect()
     }
 }
 
@@ -207,4 +232,156 @@ fn parse_table_row(
     };
 
     Some((info, schemaname, relname))
+}
+
+/// Filters tables to only include rows where any cumulative counter changed.
+///
+/// On first collect (`first_collect == true`), returns all rows (full snapshot).
+fn filter_tables(
+    rows: &[PgStatUserTablesInfo],
+    prev: &HashMap<u32, PgStatUserTablesInfo>,
+    first_collect: bool,
+) -> Vec<PgStatUserTablesInfo> {
+    if first_collect {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|row| match prev.get(&row.relid) {
+            Some(prev_row) => table_changed(row, prev_row),
+            None => true,
+        })
+        .cloned()
+        .collect()
+}
+
+/// Returns true if any cumulative counter changed between two snapshots of the same relid.
+fn table_changed(curr: &PgStatUserTablesInfo, prev: &PgStatUserTablesInfo) -> bool {
+    curr.seq_scan != prev.seq_scan
+        || curr.seq_tup_read != prev.seq_tup_read
+        || curr.idx_scan != prev.idx_scan
+        || curr.idx_tup_fetch != prev.idx_tup_fetch
+        || curr.n_tup_ins != prev.n_tup_ins
+        || curr.n_tup_upd != prev.n_tup_upd
+        || curr.n_tup_del != prev.n_tup_del
+        || curr.n_tup_hot_upd != prev.n_tup_hot_upd
+        || curr.vacuum_count != prev.vacuum_count
+        || curr.autovacuum_count != prev.autovacuum_count
+        || curr.analyze_count != prev.analyze_count
+        || curr.autoanalyze_count != prev.autoanalyze_count
+        || curr.heap_blks_read != prev.heap_blks_read
+        || curr.heap_blks_hit != prev.heap_blks_hit
+        || curr.idx_blks_read != prev.idx_blks_read
+        || curr.idx_blks_hit != prev.idx_blks_hit
+        || curr.toast_blks_read != prev.toast_blks_read
+        || curr.toast_blks_hit != prev.toast_blks_hit
+        || curr.tidx_blks_read != prev.tidx_blks_read
+        || curr.tidx_blks_hit != prev.tidx_blks_hit
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filter_tables_first_collect_returns_all() {
+        let rows = vec![
+            PgStatUserTablesInfo {
+                relid: 1,
+                seq_scan: 10,
+                ..Default::default()
+            },
+            PgStatUserTablesInfo {
+                relid: 2,
+                seq_scan: 5,
+                ..Default::default()
+            },
+        ];
+        let prev = HashMap::new();
+        let filtered = filter_tables(&rows, &prev, true);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_tables_removes_unchanged() {
+        let unchanged = PgStatUserTablesInfo {
+            relid: 1,
+            seq_scan: 10,
+            ..Default::default()
+        };
+        let changed = PgStatUserTablesInfo {
+            relid: 2,
+            seq_scan: 20,
+            n_tup_ins: 5,
+            ..Default::default()
+        };
+
+        let rows = vec![unchanged.clone(), changed.clone()];
+
+        let mut prev = HashMap::new();
+        prev.insert(1, unchanged.clone());
+        prev.insert(
+            2,
+            PgStatUserTablesInfo {
+                relid: 2,
+                seq_scan: 19,
+                n_tup_ins: 5,
+                ..Default::default()
+            },
+        );
+
+        let filtered = filter_tables(&rows, &prev, false);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].relid, 2);
+    }
+
+    #[test]
+    fn table_changed_detects_all_cumulative_fields() {
+        let base = PgStatUserTablesInfo::default();
+        assert!(!table_changed(&base, &base));
+
+        let fields: Vec<fn(&mut PgStatUserTablesInfo)> = vec![
+            |t| t.seq_scan = 1,
+            |t| t.seq_tup_read = 1,
+            |t| t.idx_scan = 1,
+            |t| t.idx_tup_fetch = 1,
+            |t| t.n_tup_ins = 1,
+            |t| t.n_tup_upd = 1,
+            |t| t.n_tup_del = 1,
+            |t| t.n_tup_hot_upd = 1,
+            |t| t.vacuum_count = 1,
+            |t| t.autovacuum_count = 1,
+            |t| t.analyze_count = 1,
+            |t| t.autoanalyze_count = 1,
+            |t| t.heap_blks_read = 1,
+            |t| t.heap_blks_hit = 1,
+            |t| t.idx_blks_read = 1,
+            |t| t.idx_blks_hit = 1,
+            |t| t.toast_blks_read = 1,
+            |t| t.toast_blks_hit = 1,
+            |t| t.tidx_blks_read = 1,
+            |t| t.tidx_blks_hit = 1,
+        ];
+
+        for mutator in fields {
+            let mut m = base.clone();
+            mutator(&mut m);
+            assert!(table_changed(&m, &base));
+        }
+    }
+
+    #[test]
+    fn table_changed_ignores_gauge_fields() {
+        let base = PgStatUserTablesInfo::default();
+
+        // Gauge fields should NOT trigger change.
+        let mut m = base.clone();
+        m.n_live_tup = 1000;
+        m.n_dead_tup = 500;
+        m.size_bytes = 999999;
+        m.last_vacuum = 12345;
+        m.last_autovacuum = 12345;
+        m.last_analyze = 12345;
+        m.last_autoanalyze = 12345;
+        assert!(!table_changed(&m, &base));
+    }
 }

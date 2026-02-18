@@ -32,13 +32,15 @@ mod statements;
 mod tables;
 
 use postgres::{Client, NoTls};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use super::log_collector::LogCollector;
-use crate::storage::model::PgSettingEntry;
+use crate::storage::model::{
+    PgSettingEntry, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+};
 use indexes::PgStatUserIndexesCacheEntry;
 use statements::{PgStatStatementsCacheEntry, STATEMENTS_COLLECT_INTERVAL};
 use tables::PgStatUserTablesCacheEntry;
@@ -107,6 +109,28 @@ pub struct PostgresCollector {
     pub(crate) indexes_cache_time: Option<Instant>,
     pub(crate) settings_cache: Vec<PgSettingEntry>,
     pub(crate) settings_cache_time: Option<Instant>,
+    // --- Activity-only storage: prev snapshots for filtering unchanged rows ---
+    /// Previous full pg_stat_statements snapshot (by queryid), used to filter unchanged rows.
+    pub(crate) pgs_prev: HashMap<i64, PgStatStatementsInfo>,
+    /// True until first successful pg_stat_statements collection (write all rows on first collect).
+    pub(crate) pgs_first_collect: bool,
+    /// Cached filtered result for pg_stat_statements (returned when collector cache is fresh).
+    pub(crate) pgs_filtered_cache: Vec<PgStatStatementsInfo>,
+
+    /// Previous full pg_stat_user_tables snapshot (by relid).
+    pub(crate) pgt_prev: HashMap<u32, PgStatUserTablesInfo>,
+    /// True until first successful tables collection.
+    pub(crate) pgt_first_collect: bool,
+    /// Cached filtered result for pg_stat_user_tables.
+    pub(crate) pgt_filtered_cache: Vec<PgStatUserTablesInfo>,
+
+    /// Previous full pg_stat_user_indexes snapshot (by indexrelid).
+    pub(crate) pgi_prev: HashMap<u32, PgStatUserIndexesInfo>,
+    /// True until first successful indexes collection.
+    pub(crate) pgi_first_collect: bool,
+    /// Cached filtered result for pg_stat_user_indexes.
+    pub(crate) pgi_filtered_cache: Vec<PgStatUserIndexesInfo>,
+
     /// true if PGDATABASE was explicitly set by the user (disables multi-db collection).
     explicit_database: bool,
     /// Per-database connections for tables/indexes collection.
@@ -162,6 +186,15 @@ impl PostgresCollector {
             indexes_cache_time: None,
             settings_cache: Vec::new(),
             settings_cache_time: None,
+            pgs_prev: HashMap::new(),
+            pgs_first_collect: true,
+            pgs_filtered_cache: Vec::new(),
+            pgt_prev: HashMap::new(),
+            pgt_first_collect: true,
+            pgt_filtered_cache: Vec::new(),
+            pgi_prev: HashMap::new(),
+            pgi_first_collect: true,
+            pgi_filtered_cache: Vec::new(),
             explicit_database,
             db_clients: Vec::new(),
             db_clients_last_check: None,
@@ -191,6 +224,15 @@ impl PostgresCollector {
             indexes_cache_time: None,
             settings_cache: Vec::new(),
             settings_cache_time: None,
+            pgs_prev: HashMap::new(),
+            pgs_first_collect: true,
+            pgs_filtered_cache: Vec::new(),
+            pgt_prev: HashMap::new(),
+            pgt_first_collect: true,
+            pgt_filtered_cache: Vec::new(),
+            pgi_prev: HashMap::new(),
+            pgi_first_collect: true,
+            pgi_filtered_cache: Vec::new(),
             explicit_database: true,
             db_clients: Vec::new(),
             db_clients_last_check: None,
@@ -427,6 +469,16 @@ impl PostgresCollector {
         self.indexes_cache_time = None;
         self.settings_cache.clear();
         self.settings_cache_time = None;
+        // Reset activity-only filtering state — next collect will write all rows.
+        self.pgs_prev.clear();
+        self.pgs_first_collect = true;
+        self.pgs_filtered_cache.clear();
+        self.pgt_prev.clear();
+        self.pgt_first_collect = true;
+        self.pgt_filtered_cache.clear();
+        self.pgi_prev.clear();
+        self.pgi_first_collect = true;
+        self.pgi_filtered_cache.clear();
     }
 
     /// Returns PostgreSQL version as human-readable string (e.g. "16.2").

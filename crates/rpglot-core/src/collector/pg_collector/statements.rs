@@ -1,5 +1,6 @@
-//! pg_stat_statements collection with caching.
+//! pg_stat_statements collection with caching and activity-only filtering.
 
+use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tracing::debug;
@@ -111,7 +112,8 @@ impl PostgresCollector {
             now,
             self.statements_collect_interval,
         ) {
-            return self.return_cached(interner);
+            // Cache is fresh — return previously filtered result (re-intern strings).
+            return self.return_filtered_cached(interner);
         }
 
         // Mark the attempt time first to ensure we don't hit the server more often than
@@ -120,7 +122,7 @@ impl PostgresCollector {
 
         if let Err(e) = self.ensure_connected() {
             self.last_error = Some(e.to_string());
-            return self.return_cached(interner);
+            return self.return_filtered_cached(interner);
         }
 
         if !self.statements_extension_available() {
@@ -135,7 +137,7 @@ impl PostgresCollector {
                 self.statements_client_idx = None;
                 self.statements_ext_version = None;
                 self.statements_last_check = None;
-                return self.return_cached(interner);
+                return self.return_filtered_cached(interner);
             }
             true
         } else {
@@ -208,7 +210,19 @@ impl PostgresCollector {
                 }
 
                 self.statements_cache = entries;
-                out
+
+                // Activity-only filtering: only keep rows where cumulative counters changed.
+                let filtered = filter_statements(&out, &self.pgs_prev, self.pgs_first_collect);
+
+                // Update prev with the full (unfiltered) snapshot.
+                self.pgs_prev = out
+                    .iter()
+                    .map(|info| (info.queryid, info.clone()))
+                    .collect();
+                self.pgs_first_collect = false;
+                self.pgs_filtered_cache = filtered.clone();
+
+                filtered
             }
             Err(e) => {
                 let msg = super::format_postgres_error(&e);
@@ -228,24 +242,73 @@ impl PostgresCollector {
                     self.statements_last_check = None;
                 }
 
-                self.return_cached(interner)
+                self.return_filtered_cached(interner)
             }
         }
     }
 
-    /// Returns cached statements with interned strings.
-    fn return_cached(&self, interner: &mut StringInterner) -> Vec<PgStatStatementsInfo> {
-        self.statements_cache
+    /// Returns the cached filtered result with re-interned strings.
+    ///
+    /// Uses `pgs_filtered_cache` (activity-only rows) and looks up original strings
+    /// from the full `statements_cache` for re-interning.
+    fn return_filtered_cached(&self, interner: &mut StringInterner) -> Vec<PgStatStatementsInfo> {
+        // Build a lookup from queryid → cache entry for string re-interning.
+        let cache_map: HashMap<i64, &PgStatStatementsCacheEntry> = self
+            .statements_cache
             .iter()
-            .map(|e| {
-                let mut info = e.info.clone();
-                info.query_hash = interner.intern(&e.query_text);
-                info.datname_hash = interner.intern(&e.datname);
-                info.usename_hash = interner.intern(&e.usename);
-                info
+            .map(|e| (e.info.queryid, e))
+            .collect();
+
+        self.pgs_filtered_cache
+            .iter()
+            .filter_map(|info| {
+                let entry = cache_map.get(&info.queryid)?;
+                let mut out = info.clone();
+                out.query_hash = interner.intern(&entry.query_text);
+                out.datname_hash = interner.intern(&entry.datname);
+                out.usename_hash = interner.intern(&entry.usename);
+                Some(out)
             })
             .collect()
     }
+}
+
+/// Filters statements to only include rows where any cumulative counter changed.
+///
+/// On first collect (`first_collect == true`), returns all rows (full snapshot).
+fn filter_statements(
+    rows: &[PgStatStatementsInfo],
+    prev: &HashMap<i64, PgStatStatementsInfo>,
+    first_collect: bool,
+) -> Vec<PgStatStatementsInfo> {
+    if first_collect {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|row| match prev.get(&row.queryid) {
+            Some(prev_row) => stmt_changed(row, prev_row),
+            None => true, // new row
+        })
+        .cloned()
+        .collect()
+}
+
+/// Returns true if any cumulative counter changed between two snapshots of the same queryid.
+fn stmt_changed(curr: &PgStatStatementsInfo, prev: &PgStatStatementsInfo) -> bool {
+    curr.calls != prev.calls
+        || curr.rows != prev.rows
+        || curr.total_exec_time != prev.total_exec_time
+        || curr.total_plan_time != prev.total_plan_time
+        || curr.shared_blks_read != prev.shared_blks_read
+        || curr.shared_blks_hit != prev.shared_blks_hit
+        || curr.shared_blks_written != prev.shared_blks_written
+        || curr.shared_blks_dirtied != prev.shared_blks_dirtied
+        || curr.local_blks_read != prev.local_blks_read
+        || curr.local_blks_written != prev.local_blks_written
+        || curr.temp_blks_read != prev.temp_blks_read
+        || curr.temp_blks_written != prev.temp_blks_written
+        || curr.wal_records != prev.wal_records
+        || curr.wal_bytes != prev.wal_bytes
 }
 
 #[cfg(test)]
@@ -297,16 +360,20 @@ mod tests {
     fn collect_statements_returns_cached_without_connecting_when_fresh() {
         let mut collector = PostgresCollector::with_connection_string("host=invalid".to_string());
         collector.statements_cache_time = Some(Instant::now());
+        let info = PgStatStatementsInfo {
+            queryid: 42,
+            query_hash: 0,
+            total_exec_time: 123.0,
+            ..PgStatStatementsInfo::default()
+        };
         collector.statements_cache = vec![PgStatStatementsCacheEntry {
-            info: PgStatStatementsInfo {
-                query_hash: 0,
-                total_exec_time: 123.0,
-                ..PgStatStatementsInfo::default()
-            },
+            info: info.clone(),
             query_text: "SELECT 1".to_string(),
             datname: "testdb".to_string(),
             usename: "testuser".to_string(),
         }];
+        // Populate filtered cache (simulates a previous fresh collect).
+        collector.pgs_filtered_cache = vec![info];
 
         let mut interner = StringInterner::new();
         let rows = collector.collect_statements(&mut interner);
@@ -316,5 +383,131 @@ mod tests {
         assert_eq!(rows[0].total_exec_time, 123.0);
         assert_eq!(interner.resolve(rows[0].datname_hash), Some("testdb"));
         assert_eq!(interner.resolve(rows[0].usename_hash), Some("testuser"));
+    }
+
+    #[test]
+    fn filter_statements_first_collect_returns_all() {
+        let rows = vec![
+            PgStatStatementsInfo {
+                queryid: 1,
+                calls: 10,
+                ..Default::default()
+            },
+            PgStatStatementsInfo {
+                queryid: 2,
+                calls: 5,
+                ..Default::default()
+            },
+        ];
+        let prev = HashMap::new();
+        let filtered = filter_statements(&rows, &prev, true);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn filter_statements_removes_unchanged() {
+        let unchanged = PgStatStatementsInfo {
+            queryid: 1,
+            calls: 10,
+            rows: 100,
+            total_exec_time: 50.0,
+            ..Default::default()
+        };
+        let changed = PgStatStatementsInfo {
+            queryid: 2,
+            calls: 6,
+            rows: 60,
+            ..Default::default()
+        };
+        let new_row = PgStatStatementsInfo {
+            queryid: 3,
+            calls: 1,
+            ..Default::default()
+        };
+
+        let rows = vec![unchanged.clone(), changed.clone(), new_row.clone()];
+
+        let mut prev = HashMap::new();
+        prev.insert(1, unchanged.clone()); // same → should be filtered out
+        prev.insert(
+            2,
+            PgStatStatementsInfo {
+                queryid: 2,
+                calls: 5, // different → should be kept
+                rows: 50,
+                ..Default::default()
+            },
+        );
+        // queryid 3 not in prev → new → should be kept
+
+        let filtered = filter_statements(&rows, &prev, false);
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].queryid, 2);
+        assert_eq!(filtered[1].queryid, 3);
+    }
+
+    #[test]
+    fn stmt_changed_detects_all_cumulative_fields() {
+        let base = PgStatStatementsInfo::default();
+
+        // No change
+        assert!(!stmt_changed(&base, &base));
+
+        // Each cumulative field individually
+        let mut m = base.clone();
+        m.calls = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.rows = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.total_exec_time = 1.0;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.total_plan_time = 1.0;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.shared_blks_read = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.shared_blks_hit = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.shared_blks_written = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.shared_blks_dirtied = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.local_blks_read = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.local_blks_written = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.temp_blks_read = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.temp_blks_written = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.wal_records = 1;
+        assert!(stmt_changed(&m, &base));
+
+        let mut m = base.clone();
+        m.wal_bytes = 1;
+        assert!(stmt_changed(&m, &base));
     }
 }
