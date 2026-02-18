@@ -25,7 +25,11 @@ interface DetailPanelProps {
   columnOverrides?: ColumnOverride[];
   drillDown?: DrillDown;
   onClose: () => void;
-  onDrillDown: (drillDown: DrillDown, value: unknown) => void;
+  onDrillDown: (
+    drillDown: DrillDown,
+    value: unknown,
+    sourceRow: Record<string, unknown>,
+  ) => void;
   snapshotTimestamp?: number;
 }
 
@@ -423,7 +427,7 @@ export function DetailPanel({
       {hasDrillDown && (
         <div className="px-4 py-2 border-t border-[var(--border-default)]">
           <button
-            onClick={() => onDrillDown(drillDown!, drillDownValue)}
+            onClick={() => onDrillDown(drillDown!, drillDownValue, row)}
             className="flex items-center justify-center gap-1.5 w-full px-3 py-1.5 text-xs rounded bg-[var(--accent-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent)] hover:text-[var(--text-inverse)] transition-colors font-medium"
           >
             <ExternalLink size={12} />

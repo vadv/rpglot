@@ -674,14 +674,22 @@ interface TabState {
   initialFilter: string | null;
   flashRowId: string | number | null;
   smartFilterResetKey: number;
+  columnFilterPreset: { column: string; value: string } | null;
   handleTabChange: (tab: TabKey) => void;
   handleSelectRow: (id: string | number | null) => void;
   handleOpenDetail: () => void;
   handleCloseDetail: () => void;
-  handleDrillDown: (drillDown: DrillDown, value: unknown) => void;
+  handleDrillDown: (
+    drillDown: DrillDown,
+    value: unknown,
+    sourceRow: Record<string, unknown>,
+  ) => void;
   handleViewChange: (view: string) => void;
   handleFilterChange: (filter: string) => void;
   setHelpOpen: (open: boolean) => void;
+  setColumnFilterPreset: (
+    preset: { column: string; value: string } | null,
+  ) => void;
   triggerFlash: (id: string | number) => void;
   resetSmartFilters: () => void;
 }
@@ -702,6 +710,12 @@ function useTabState(
     tab: TabKey;
     targetField?: string;
     value: unknown;
+    filterColumn?: string;
+    filterValue?: string;
+  } | null>(null);
+  const [columnFilterPreset, setColumnFilterPreset] = useState<{
+    column: string;
+    value: string;
   } | null>(null);
 
   // Initial view/filter from URL (consumed once by DataTable on mount)
@@ -728,6 +742,7 @@ function useTabState(
       setActiveTab(tab);
       setSelectedId(null);
       setDetailOpen(false);
+      setColumnFilterPreset(null);
       urlSync({ tab, view: null, filter: null });
     },
     [urlSync],
@@ -745,11 +760,27 @@ function useTabState(
     }
   }, [snapshot, selectedId, activeTab, schema]);
 
-  // Drill-down: after tab switch, find and select target row
+  // Drill-down: after tab switch, apply column filter and/or find and select target row
   useEffect(() => {
     if (!drillDownTarget || !snapshot) return;
     if (activeTab !== drillDownTarget.tab) return;
 
+    // 1. Column filter (if specified) — switch to default view and set filter
+    if (drillDownTarget.filterColumn && drillDownTarget.filterValue) {
+      const tabSch = schema.tabs[drillDownTarget.tab];
+      const defaultView =
+        tabSch.views.find((v) => v.default) ?? tabSch.views[0];
+      if (defaultView) {
+        setActiveView(defaultView.key);
+        setInitialView(defaultView.key);
+      }
+      setColumnFilterPreset({
+        column: drillDownTarget.filterColumn,
+        value: drillDownTarget.filterValue,
+      });
+    }
+
+    // 2. Find and select target row (if via was specified)
     const data = getTabData(snapshot, drillDownTarget.tab);
     const entityId = schema.tabs[drillDownTarget.tab].entity_id;
     const searchField = drillDownTarget.targetField ?? entityId;
@@ -779,12 +810,22 @@ function useTabState(
   }, []);
 
   const handleDrillDown = useCallback(
-    (drillDown: DrillDown, value: unknown) => {
+    (
+      drillDown: DrillDown,
+      value: unknown,
+      sourceRow: Record<string, unknown>,
+    ) => {
       const targetTab = drillDown.target as TabKey;
+      const filterValue =
+        drillDown.filter_via && sourceRow[drillDown.filter_via] != null
+          ? String(sourceRow[drillDown.filter_via])
+          : undefined;
       setDrillDownTarget({
         tab: targetTab,
         targetField: drillDown.target_field,
         value,
+        filterColumn: drillDown.filter_target ?? undefined,
+        filterValue: filterValue || undefined,
       });
       setActiveTab(targetTab);
       setSelectedId(null);
@@ -864,6 +905,8 @@ function useTabState(
     handleViewChange,
     handleFilterChange,
     setHelpOpen,
+    columnFilterPreset,
+    setColumnFilterPreset,
     flashRowId,
     triggerFlash,
     smartFilterResetKey,
@@ -2056,6 +2099,8 @@ function TabContent({
     handleDrillDown,
     handleViewChange,
     handleFilterChange,
+    columnFilterPreset,
+    setColumnFilterPreset,
     flashRowId,
     smartFilterResetKey,
   } = tabState;
@@ -2065,12 +2110,6 @@ function TabContent({
   const isAggregatedView =
     (activeTab === "pgt" || activeTab === "pgi") &&
     (activeView === "schema" || activeView === "database");
-
-  // Column filter preset for drill-down from aggregated (schema/database) view
-  const [columnFilterPreset, setColumnFilterPreset] = useState<{
-    column: string;
-    value: string;
-  } | null>(null);
 
   // In aggregated view, clicking a row drills down into the default view with a column filter
   const handleAggregatedSelect = useCallback(

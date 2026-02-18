@@ -172,6 +172,12 @@ pub struct DrillDown {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_field: Option<String>,
     pub description: String,
+    /// Field in the SOURCE tab whose value becomes a column filter in the target tab.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter_via: Option<String>,
+    /// Column in the TARGET tab to apply the column filter on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -1144,6 +1150,8 @@ fn generate_prc_schema() -> TabSchema {
             via: "pid".into(),
             target_field: None,
             description: "Navigate to session details for this PID".into(),
+            filter_via: None,
+            filter_target: None,
         }),
     }
 }
@@ -1448,6 +1456,8 @@ fn generate_pga_schema() -> TabSchema {
             via: "query_id".into(),
             target_field: Some("queryid".into()),
             description: "Navigate to statement stats by query_id".into(),
+            filter_via: None,
+            filter_target: None,
         }),
     }
 }
@@ -2212,7 +2222,9 @@ fn generate_pgt_schema() -> TabSchema {
             target: "pgi".into(),
             via: "relid".into(),
             target_field: Some("relid".into()),
-            description: "Navigate to indexes for this table".into(),
+            description: "Show indexes".into(),
+            filter_via: Some("display_name".into()),
+            filter_target: Some("display_table".into()),
         }),
     }
 }
@@ -2407,7 +2419,14 @@ fn generate_pgi_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: None,
+        drill_down: Some(DrillDown {
+            target: "pgt".into(),
+            via: "relid".into(),
+            target_field: None,
+            description: "Go to table".into(),
+            filter_via: Some("display_table".into()),
+            filter_target: Some("display_name".into()),
+        }),
     }
 }
 
@@ -2943,6 +2962,8 @@ fn generate_pgl_schema() -> TabSchema {
             via: "pid".into(),
             target_field: None,
             description: "Navigate to session details for this PID".into(),
+            filter_via: None,
+            filter_target: None,
         }),
     }
 }

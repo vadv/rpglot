@@ -512,6 +512,8 @@ export interface DrillDown {
   via: string;
   target_field?: string;
   description: string;
+  filter_via?: string;
+  filter_target?: string;
 }
 
 export type DataType = "integer" | "number" | "string" | "boolean";
