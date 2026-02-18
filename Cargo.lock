@@ -1646,6 +1646,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpglotd-dump"
+version = "0.2.5"
+dependencies = [
+ "chrono",
+ "clap",
+ "crc32fast",
+ "postcard",
+ "rpglot-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rust-embed"
 version = "8.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
