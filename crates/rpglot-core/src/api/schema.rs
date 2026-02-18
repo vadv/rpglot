@@ -1805,6 +1805,15 @@ fn generate_pgt_schema() -> TabSchema {
                 true,
             ),
             col(
+                "tablespace",
+                "Tablespace",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
+            col(
                 "n_live_tup",
                 "Live Tuples",
                 DataType::Integer,
@@ -2268,6 +2277,15 @@ fn generate_pgi_schema() -> TabSchema {
             col(
                 "display_table",
                 "Table Name",
+                DataType::String,
+                None,
+                None,
+                true,
+                true,
+            ),
+            col(
+                "tablespace",
+                "Tablespace",
                 DataType::String,
                 None,
                 None,

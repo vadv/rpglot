@@ -2077,6 +2077,269 @@ const PGI_DATABASE_COLUMNS: ColumnSchema[] = [
   },
 ];
 
+// ============================================================
+// PGT Tablespace view — client-side aggregation by tablespace
+// ============================================================
+
+const TABLESPACE_VIEW: ViewSchema = {
+  key: "tablespace",
+  label: "Tablespace",
+  columns: [
+    "tablespace",
+    "tables",
+    "size_bytes",
+    "n_live_tup",
+    "n_dead_tup",
+    "dead_pct",
+    "seq_scan_s",
+    "idx_scan_s",
+    "seq_pct",
+    "tup_read_s",
+    "ins_s",
+    "upd_s",
+    "del_s",
+    "blk_rd_s",
+    "blk_hit_s",
+    "io_hit_pct",
+  ],
+  default: false,
+  default_sort: "blk_rd_s",
+  default_sort_desc: true,
+};
+
+const TABLESPACE_COLUMNS: ColumnSchema[] = [
+  {
+    key: "tablespace",
+    label: "Tablespace",
+    type: "string" as DataType,
+    sortable: true,
+    filterable: true,
+  },
+  {
+    key: "tables",
+    label: "Tables",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "size_bytes",
+    label: "Size",
+    type: "integer" as DataType,
+    unit: "bytes" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "n_live_tup",
+    label: "Live Tuples",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "n_dead_tup",
+    label: "Dead Tuples",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "dead_pct",
+    label: "DEAD%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+  {
+    key: "seq_scan_s",
+    label: "Seq/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_scan_s",
+    label: "Idx/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "seq_pct",
+    label: "SEQ%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+  {
+    key: "tup_read_s",
+    label: "Tup Rd/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "ins_s",
+    label: "Ins/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "upd_s",
+    label: "Upd/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "del_s",
+    label: "Del/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_rd_s",
+    label: "Disk Read/s",
+    type: "number" as DataType,
+    unit: "blks/s" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_hit_s",
+    label: "Buf Hit/s",
+    type: "number" as DataType,
+    unit: "blks/s" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "io_hit_pct",
+    label: "HIT%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+];
+
+// ============================================================
+// PGI Tablespace view — client-side aggregation by tablespace
+// ============================================================
+
+const PGI_TABLESPACE_VIEW: ViewSchema = {
+  key: "tablespace",
+  label: "Tablespace",
+  columns: [
+    "tablespace",
+    "indexes",
+    "tables",
+    "size_bytes",
+    "idx_scan_s",
+    "idx_tup_read_s",
+    "idx_tup_fetch_s",
+    "blk_rd_s",
+    "blk_hit_s",
+    "io_hit_pct",
+    "unused",
+  ],
+  default: false,
+  default_sort: "blk_rd_s",
+  default_sort_desc: true,
+};
+
+const PGI_TABLESPACE_COLUMNS: ColumnSchema[] = [
+  {
+    key: "tablespace",
+    label: "Tablespace",
+    type: "string" as DataType,
+    sortable: true,
+    filterable: true,
+  },
+  {
+    key: "indexes",
+    label: "Indexes",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "tables",
+    label: "Tables",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+  {
+    key: "size_bytes",
+    label: "Size",
+    type: "integer" as DataType,
+    unit: "bytes" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_scan_s",
+    label: "Scan/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_tup_read_s",
+    label: "Tup Rd/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "idx_tup_fetch_s",
+    label: "Tup Ft/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_rd_s",
+    label: "Disk Read/s",
+    type: "number" as DataType,
+    unit: "blks/s" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "blk_hit_s",
+    label: "Buf Hit/s",
+    type: "number" as DataType,
+    unit: "blks/s" as Unit,
+    format: "bytes" as Format,
+    sortable: true,
+  },
+  {
+    key: "io_hit_pct",
+    label: "HIT%",
+    type: "number" as DataType,
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+    sortable: true,
+  },
+  {
+    key: "unused",
+    label: "Unused",
+    type: "integer" as DataType,
+    sortable: true,
+  },
+];
+
 function TabContent({
   snapshot,
   schema,
@@ -2109,7 +2372,9 @@ function TabContent({
 
   const isAggregatedView =
     (activeTab === "pgt" || activeTab === "pgi") &&
-    (activeView === "schema" || activeView === "database");
+    (activeView === "schema" ||
+      activeView === "database" ||
+      activeView === "tablespace");
 
   // In aggregated view, clicking a row drills down into the default view with a column filter
   const handleAggregatedSelect = useCallback(
@@ -2118,8 +2383,13 @@ function TabContent({
         handleSelectRow(id);
         return;
       }
-      // Switch to default view with column filter by schema/database
-      const groupColumn = activeView === "database" ? "database" : "schema";
+      // Switch to default view with column filter by schema/database/tablespace
+      const groupColumn =
+        activeView === "database"
+          ? "database"
+          : activeView === "tablespace"
+            ? "tablespace"
+            : "schema";
       const defaultView =
         tabSchema.views.find((v) => v.default) ?? tabSchema.views[0];
       if (defaultView) {
@@ -2146,13 +2416,18 @@ function TabContent({
     [handleViewChange],
   );
 
-  // Inject Schema + Database views into PGT/PGI views list
+  // Inject Schema + Database + Tablespace views into PGT/PGI views list
   const effectiveViews = useMemo(() => {
     if (activeTab === "pgt") {
-      return [...tabSchema.views, SCHEMA_VIEW, DATABASE_VIEW];
+      return [...tabSchema.views, SCHEMA_VIEW, DATABASE_VIEW, TABLESPACE_VIEW];
     }
     if (activeTab === "pgi") {
-      return [...tabSchema.views, PGI_SCHEMA_VIEW, PGI_DATABASE_VIEW];
+      return [
+        ...tabSchema.views,
+        PGI_SCHEMA_VIEW,
+        PGI_DATABASE_VIEW,
+        PGI_TABLESPACE_VIEW,
+      ];
     }
     return tabSchema.views;
   }, [activeTab, tabSchema.views]);
@@ -2370,10 +2645,14 @@ function TabContent({
     isAggregatedView,
   ]);
 
-  // Aggregated views: schema or database grouping
+  // Aggregated views: schema, database, or tablespace grouping
   const aggregatedData = useMemo(() => {
     if (!isAggregatedView) return null;
-    if (activeView === "schema" || activeView === "database") {
+    if (
+      activeView === "schema" ||
+      activeView === "database" ||
+      activeView === "tablespace"
+    ) {
       if (activeTab === "pgt") return aggregateTableRows(rawData, activeView);
       if (activeTab === "pgi") return aggregateIndexRows(rawData, activeView);
     }
@@ -2386,14 +2665,20 @@ function TabContent({
       ? activeTab === "pgi"
         ? PGI_DATABASE_COLUMNS
         : DATABASE_COLUMNS
-      : activeTab === "pgi"
-        ? PGI_SCHEMA_COLUMNS
-        : SCHEMA_COLUMNS
+      : activeView === "tablespace"
+        ? activeTab === "pgi"
+          ? PGI_TABLESPACE_COLUMNS
+          : TABLESPACE_COLUMNS
+        : activeTab === "pgi"
+          ? PGI_SCHEMA_COLUMNS
+          : SCHEMA_COLUMNS
     : tabSchema.columns;
   const effectiveEntityId = isAggregatedView
     ? activeView === "database"
       ? "database"
-      : "schema"
+      : activeView === "tablespace"
+        ? "tablespace"
+        : "schema"
     : tabSchema.entity_id;
 
   const selectedRow =

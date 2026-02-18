@@ -538,6 +538,11 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
       "Name of the PostgreSQL database. For PGA: database the backend is connected to. For PGT/PGI: database containing the table/index.",
     docUrl: PG_STAT_ACTIVITY,
   },
+  tablespace: {
+    label: "Tablespace",
+    description:
+      "PostgreSQL tablespace where the table/index is stored. 'pg_default' is the default tablespace.",
+  },
   user: {
     label: "User",
     description: "Database user name of this backend.",
@@ -1355,6 +1360,8 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
       "Tables aggregated by schema \u2014 identify which schema consumes most I/O",
     database:
       "Tables aggregated by database \u2014 compare load across databases",
+    tablespace:
+      "Tables aggregated by tablespace \u2014 compare I/O across storage locations",
   },
   pgi: {
     usage: "Active index usage \u2014 scans and tuple fetches",
@@ -1364,6 +1371,8 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
       "Indexes aggregated by schema \u2014 identify which schema consumes most index I/O",
     database:
       "Indexes aggregated by database \u2014 compare index load across databases",
+    tablespace:
+      "Indexes aggregated by tablespace \u2014 compare index I/O across storage locations",
   },
   pge: {
     errors: "Grouped PostgreSQL errors by pattern",

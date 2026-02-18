@@ -350,6 +350,12 @@ pub struct PgStatUserTablesInfo {
     /// Source: `pg_stat_user_tables.relname` — interned via StringInterner
     pub relname_hash: u64,
 
+    /// Hash of tablespace name.
+    /// Source: `pg_tablespace.spcname` via JOIN — interned via StringInterner.
+    /// 'pg_default' when reltablespace = 0.
+    #[serde(default)]
+    pub tablespace_hash: u64,
+
     /// Sequential scans initiated (cumulative).
     /// Source: `pg_stat_user_tables.seq_scan`
     pub seq_scan: i64,
@@ -507,6 +513,12 @@ pub struct PgStatUserIndexesInfo {
     /// Hash of index name.
     /// Source: `pg_stat_user_indexes.indexrelname` — interned via StringInterner
     pub indexrelname_hash: u64,
+
+    /// Hash of tablespace name.
+    /// Source: `pg_tablespace.spcname` via JOIN — interned via StringInterner.
+    /// 'pg_default' when reltablespace = 0.
+    #[serde(default)]
+    pub tablespace_hash: u64,
 
     /// Index scans initiated (cumulative).
     /// Source: `pg_stat_user_indexes.idx_scan`

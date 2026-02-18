@@ -1400,6 +1400,7 @@ fn extract_pgt(
             let database = resolve(interner, t.datname_hash);
             let schema = resolve(interner, t.schemaname_hash);
             let table = resolve(interner, t.relname_hash);
+            let tablespace = resolve(interner, t.tablespace_hash);
             let display_name = if schema.is_empty() || schema == "public" {
                 table.clone()
             } else {
@@ -1509,6 +1510,7 @@ fn extract_pgt(
                 schema,
                 table,
                 display_name,
+                tablespace,
                 n_live_tup: t.n_live_tup,
                 n_dead_tup: t.n_dead_tup,
                 size_bytes: t.size_bytes,
@@ -1573,6 +1575,7 @@ fn extract_pgi(
             let schema = resolve(interner, i.schemaname_hash);
             let table = resolve(interner, i.relname_hash);
             let index = resolve(interner, i.indexrelname_hash);
+            let tablespace = resolve(interner, i.tablespace_hash);
             let display_table = if schema.is_empty() || schema == "public" {
                 table.clone()
             } else {
@@ -1605,6 +1608,7 @@ fn extract_pgi(
                 table,
                 index,
                 display_table,
+                tablespace,
                 idx_scan: i.idx_scan,
                 size_bytes: i.size_bytes,
                 idx_scan_s: r.and_then(|r| r.idx_scan_s),

@@ -527,6 +527,7 @@ pub struct PgTablesRow {
     pub table: String,
     /// `schema.table` or just `table` if public.
     pub display_name: String,
+    pub tablespace: String,
     /// Current live tuple count (gauge).
     pub n_live_tup: i64,
     /// Current dead tuple count (gauge).
@@ -590,6 +591,7 @@ pub struct PgIndexesRow {
     pub table: String,
     pub index: String,
     pub display_table: String,
+    pub tablespace: String,
     /// Cumulative index scan count (gauge).
     pub idx_scan: i64,
     /// Index size in bytes.

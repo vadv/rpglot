@@ -20,6 +20,7 @@ pub(crate) struct PgStatUserTablesCacheEntry {
     pub datname: String,
     pub schemaname: String,
     pub relname: String,
+    pub tablespace: String,
 }
 
 impl PostgresCollector {
@@ -72,6 +73,7 @@ impl PostgresCollector {
                     datname: datname.clone(),
                     schemaname: info.1,
                     relname: info.2,
+                    tablespace: info.3,
                 });
                 results.push(info.0);
             }
@@ -137,6 +139,7 @@ impl PostgresCollector {
                 out.datname_hash = interner.intern(&entry.datname);
                 out.schemaname_hash = interner.intern(&entry.schemaname);
                 out.relname_hash = interner.intern(&entry.relname);
+                out.tablespace_hash = interner.intern(&entry.tablespace);
                 Some(out)
             })
             .collect()
@@ -191,35 +194,37 @@ fn parse_table_row(
     interner: &mut StringInterner,
     collected_at: i64,
     datname: &str,
-) -> Option<(PgStatUserTablesInfo, String, String)> {
+) -> Option<(PgStatUserTablesInfo, String, String, String)> {
     let relid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
     let schemaname: String = row.try_get(1).unwrap_or_default();
     let relname: String = row.try_get(2).unwrap_or_default();
+    let tablespace: String = row.try_get(3).unwrap_or_default();
 
     let info = PgStatUserTablesInfo {
         relid,
         datname_hash: interner.intern(datname),
         schemaname_hash: interner.intern(&schemaname),
         relname_hash: interner.intern(&relname),
-        seq_scan: row.try_get(3).unwrap_or(0),
-        seq_tup_read: row.try_get(4).unwrap_or(0),
-        idx_scan: row.try_get(5).unwrap_or(0),
-        idx_tup_fetch: row.try_get(6).unwrap_or(0),
-        n_tup_ins: row.try_get(7).unwrap_or(0),
-        n_tup_upd: row.try_get(8).unwrap_or(0),
-        n_tup_del: row.try_get(9).unwrap_or(0),
-        n_tup_hot_upd: row.try_get(10).unwrap_or(0),
-        n_live_tup: row.try_get(11).unwrap_or(0),
-        n_dead_tup: row.try_get(12).unwrap_or(0),
-        vacuum_count: row.try_get(13).unwrap_or(0),
-        autovacuum_count: row.try_get(14).unwrap_or(0),
-        analyze_count: row.try_get(15).unwrap_or(0),
-        autoanalyze_count: row.try_get(16).unwrap_or(0),
-        last_vacuum: row.try_get(17).unwrap_or(0),
-        last_autovacuum: row.try_get(18).unwrap_or(0),
-        last_analyze: row.try_get(19).unwrap_or(0),
-        last_autoanalyze: row.try_get(20).unwrap_or(0),
-        size_bytes: row.try_get(21).unwrap_or(0),
+        tablespace_hash: interner.intern(&tablespace),
+        seq_scan: row.try_get(4).unwrap_or(0),
+        seq_tup_read: row.try_get(5).unwrap_or(0),
+        idx_scan: row.try_get(6).unwrap_or(0),
+        idx_tup_fetch: row.try_get(7).unwrap_or(0),
+        n_tup_ins: row.try_get(8).unwrap_or(0),
+        n_tup_upd: row.try_get(9).unwrap_or(0),
+        n_tup_del: row.try_get(10).unwrap_or(0),
+        n_tup_hot_upd: row.try_get(11).unwrap_or(0),
+        n_live_tup: row.try_get(12).unwrap_or(0),
+        n_dead_tup: row.try_get(13).unwrap_or(0),
+        vacuum_count: row.try_get(14).unwrap_or(0),
+        autovacuum_count: row.try_get(15).unwrap_or(0),
+        analyze_count: row.try_get(16).unwrap_or(0),
+        autoanalyze_count: row.try_get(17).unwrap_or(0),
+        last_vacuum: row.try_get(18).unwrap_or(0),
+        last_autovacuum: row.try_get(19).unwrap_or(0),
+        last_analyze: row.try_get(20).unwrap_or(0),
+        last_autoanalyze: row.try_get(21).unwrap_or(0),
+        size_bytes: row.try_get(22).unwrap_or(0),
         heap_blks_read: 0,
         heap_blks_hit: 0,
         idx_blks_read: 0,
@@ -231,7 +236,7 @@ fn parse_table_row(
         collected_at,
     };
 
-    Some((info, schemaname, relname))
+    Some((info, schemaname, relname, tablespace))
 }
 
 /// Filters tables to only include rows where any cumulative counter changed.

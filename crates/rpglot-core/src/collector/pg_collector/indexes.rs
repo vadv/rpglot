@@ -21,6 +21,7 @@ pub(crate) struct PgStatUserIndexesCacheEntry {
     pub schemaname: String,
     pub relname: String,
     pub indexrelname: String,
+    pub tablespace: String,
 }
 
 impl PostgresCollector {
@@ -74,6 +75,7 @@ impl PostgresCollector {
                     schemaname: info.1,
                     relname: info.2,
                     indexrelname: info.3,
+                    tablespace: info.4,
                 });
                 results.push(info.0);
             }
@@ -139,6 +141,7 @@ impl PostgresCollector {
                 out.schemaname_hash = interner.intern(&entry.schemaname);
                 out.relname_hash = interner.intern(&entry.relname);
                 out.indexrelname_hash = interner.intern(&entry.indexrelname);
+                out.tablespace_hash = interner.intern(&entry.tablespace);
                 Some(out)
             })
             .collect()
@@ -152,12 +155,13 @@ fn parse_index_row(
     interner: &mut StringInterner,
     collected_at: i64,
     datname: &str,
-) -> Option<(PgStatUserIndexesInfo, String, String, String)> {
+) -> Option<(PgStatUserIndexesInfo, String, String, String, String)> {
     let indexrelid: u32 = row.try_get::<_, i64>(0).ok()? as u32;
     let relid: u32 = row.try_get::<_, i64>(1).ok()? as u32;
     let schemaname: String = row.try_get(2).unwrap_or_default();
     let relname: String = row.try_get(3).unwrap_or_default();
     let indexrelname: String = row.try_get(4).unwrap_or_default();
+    let tablespace: String = row.try_get(5).unwrap_or_default();
 
     let info = PgStatUserIndexesInfo {
         indexrelid,
@@ -166,16 +170,17 @@ fn parse_index_row(
         schemaname_hash: interner.intern(&schemaname),
         relname_hash: interner.intern(&relname),
         indexrelname_hash: interner.intern(&indexrelname),
-        idx_scan: row.try_get(5).unwrap_or(0),
-        idx_tup_read: row.try_get(6).unwrap_or(0),
-        idx_tup_fetch: row.try_get(7).unwrap_or(0),
-        size_bytes: row.try_get(8).unwrap_or(0),
+        tablespace_hash: interner.intern(&tablespace),
+        idx_scan: row.try_get(6).unwrap_or(0),
+        idx_tup_read: row.try_get(7).unwrap_or(0),
+        idx_tup_fetch: row.try_get(8).unwrap_or(0),
+        size_bytes: row.try_get(9).unwrap_or(0),
         idx_blks_read: 0,
         idx_blks_hit: 0,
         collected_at,
     };
 
-    Some((info, schemaname, relname, indexrelname))
+    Some((info, schemaname, relname, indexrelname, tablespace))
 }
 
 struct IndexStatioRow {
