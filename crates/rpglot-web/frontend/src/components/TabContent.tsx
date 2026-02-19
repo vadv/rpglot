@@ -77,10 +77,12 @@ export function TabContent({
           : activeView === "tablespace"
             ? "tablespace"
             : "schema";
-      const defaultView =
-        tabSchema.views.find((v) => v.default) ?? tabSchema.views[0];
-      if (defaultView) {
-        handleViewChange(defaultView.key);
+      const aggregatedKeys = new Set(["schema", "database", "tablespace"]);
+      const drillTarget =
+        tabSchema.views.find((v) => !aggregatedKeys.has(v.key)) ??
+        tabSchema.views[0];
+      if (drillTarget) {
+        handleViewChange(drillTarget.key);
         setColumnFilterPreset({ column: groupColumn, value: String(id) });
         handleSelectRow(null);
       }

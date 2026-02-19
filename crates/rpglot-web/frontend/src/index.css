@@ -168,10 +168,10 @@ body {
         background-color: var(--selection-bg);
     }
     50% {
-        background-color: rgba(59, 130, 246, 0.45);
+        background-color: rgba(59, 130, 246, 0.6);
     }
 }
 
 .flash-row {
-    animation: flash-row 0.5s ease-in-out 5;
+    animation: flash-row 0.8s ease-in-out 6;
 }

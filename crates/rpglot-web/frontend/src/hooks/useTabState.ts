@@ -84,7 +84,7 @@ export function useTabState(
         .getElementById(`row-${id}`)
         ?.scrollIntoView({ block: "center", behavior: "smooth" });
     });
-    setTimeout(() => setFlashRowId(null), 3000);
+    setTimeout(() => setFlashRowId(null), 5500);
   }, []);
 
   // Reset selection on tab change
