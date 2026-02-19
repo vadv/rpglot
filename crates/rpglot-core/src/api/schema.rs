@@ -1805,7 +1805,15 @@ fn generate_pgs_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_downs: vec![],
+        drill_downs: vec![DrillDown {
+            target: "pgp".into(),
+            via: "queryid".into(),
+            target_field: Some("stmt_queryid".into()),
+            description: "View execution plans".into(),
+            filter_via: Some("queryid".into()),
+            filter_target: Some("stmt_queryid".into()),
+            condition: None,
+        }],
     }
 }
 

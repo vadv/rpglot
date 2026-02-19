@@ -193,6 +193,8 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       "Aggregated query statistics from pg_stat_statements. Shows performance per normalized query pattern.",
     howToRead:
       "Sort by Time/s to find queries consuming most CPU. Sort by Calls/s for high-frequency queries where even small improvements yield big impact. Check I/O view for queries with low HIT% \u2014 they do excessive physical reads. Temp view finds queries spilling to disk (increase work_mem).",
+    drillDown:
+      "Navigate to PGP to see execution plans for the selected statement.",
     views: {
       calls: {
         description: "Most frequently executed query patterns.",
