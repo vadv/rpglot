@@ -532,7 +532,7 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
   return (
     <RichTooltip
       content={
-        <div className="w-52">
+        <div className="w-72">
           <div className="font-semibold text-[var(--text-primary)] mb-1">
             Primary (Master)
           </div>
@@ -553,15 +553,15 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
                     }}
                   />
                   <span
-                    className="text-[var(--text-secondary)] flex-1 truncate"
-                    title={r.client_addr || undefined}
+                    className="text-[var(--text-secondary)] flex-1 min-w-0 truncate"
+                    title={r.application_name || r.client_addr || undefined}
                   >
                     {r.application_name || r.client_addr || "local"}
                   </span>
-                  <span className="text-[var(--text-tertiary)]">
+                  <span className="text-[var(--text-tertiary)] shrink-0">
                     {r.sync_state}
                   </span>
-                  <span className="text-[var(--text-tertiary)] font-mono">
+                  <span className="text-[var(--text-tertiary)] font-mono shrink-0">
                     {formatBytes(r.replay_lag_bytes)}
                   </span>
                 </div>
