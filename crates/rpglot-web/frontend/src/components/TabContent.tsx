@@ -299,7 +299,7 @@ export function TabContent({
         />
       );
     }
-    if (activeTab === "pgs" || activeTab === "pgp") {
+    if (activeTab === "pgs" || (activeTab === "pgp" && !isRegressionView)) {
       return (
         <ToggleButton
           active={hideInactive}
@@ -330,6 +330,7 @@ export function TabContent({
     problemsOnly,
     hiddenCounts,
     isAggregatedView,
+    isRegressionView,
   ]);
 
   // Aggregated views: schema, database, or tablespace grouping
@@ -346,10 +347,11 @@ export function TabContent({
     return null;
   }, [isAggregatedView, activeView, activeTab, rawData]);
 
+  // Regression view needs ALL plans (including inactive) to detect regressions
   const regressionData = useMemo(() => {
     if (!isRegressionView) return null;
-    return computePgpRegression(data);
-  }, [isRegressionView, data]);
+    return computePgpRegression(rawData);
+  }, [isRegressionView, rawData]);
 
   const effectiveData = isRegressionView
     ? regressionData!
