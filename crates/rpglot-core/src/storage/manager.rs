@@ -245,6 +245,15 @@ impl StorageManager {
                 DataBlock::PgStatStatements(stmts) => {
                     for s in stmts {
                         hashes.insert(s.query_hash);
+                        hashes.insert(s.datname_hash);
+                        hashes.insert(s.usename_hash);
+                    }
+                }
+                DataBlock::PgStorePlans(plans) => {
+                    for p in plans {
+                        hashes.insert(p.plan_hash);
+                        hashes.insert(p.datname_hash);
+                        hashes.insert(p.usename_hash);
                     }
                 }
                 DataBlock::PgStatDatabase(dbs) => {
@@ -254,15 +263,25 @@ impl StorageManager {
                 }
                 DataBlock::PgStatUserTables(tables) => {
                     for t in tables {
+                        hashes.insert(t.datname_hash);
                         hashes.insert(t.schemaname_hash);
                         hashes.insert(t.relname_hash);
+                        hashes.insert(t.tablespace_hash);
                     }
                 }
                 DataBlock::PgStatUserIndexes(indexes) => {
                     for i in indexes {
+                        hashes.insert(i.datname_hash);
                         hashes.insert(i.schemaname_hash);
                         hashes.insert(i.relname_hash);
                         hashes.insert(i.indexrelname_hash);
+                        hashes.insert(i.tablespace_hash);
+                    }
+                }
+                DataBlock::PgStatProgressVacuum(vacuums) => {
+                    for v in vacuums {
+                        hashes.insert(v.datname_hash);
+                        hashes.insert(v.phase_hash);
                     }
                 }
                 DataBlock::PgLockTree(nodes) => {
