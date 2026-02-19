@@ -832,6 +832,35 @@ pub struct PgStatProgressVacuumInfo {
     pub indexes_processed: i64,
 }
 
+/// Replication status of the PostgreSQL instance.
+///
+/// Collected via `pg_is_in_recovery()`, `pg_last_xact_replay_timestamp()`,
+/// and `pg_stat_replication`. Cached for 30 seconds.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ReplicationStatus {
+    /// Whether this instance is in recovery mode (standby/replica).
+    pub is_in_recovery: bool,
+    /// Replay lag in seconds (standby only).
+    pub replay_lag_s: Option<i64>,
+    /// Number of connected streaming replicas (primary only).
+    pub connected_replicas: u32,
+    /// Details of connected replicas (primary only).
+    pub replicas: Vec<ReplicaInfo>,
+}
+
+/// Information about a connected streaming replica.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReplicaInfo {
+    /// Client address of the replica.
+    pub client_addr: String,
+    /// Replication state (streaming, catchup, etc.).
+    pub state: String,
+    /// Sync state (async, sync, quorum, potential).
+    pub sync_state: String,
+    /// Replay lag in bytes (sent_lsn - replay_lsn).
+    pub replay_lag_bytes: Option<i64>,
+}
+
 /// Single PostgreSQL setting from pg_settings view.
 ///
 /// Stored as raw (name, setting, unit) triple — no version-specific assumptions.

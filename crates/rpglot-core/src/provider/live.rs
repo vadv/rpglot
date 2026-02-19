@@ -104,6 +104,10 @@ impl<F: FileSystem + Clone + 'static> SnapshotProvider for LiveProvider<F> {
     fn instance_info(&self) -> Option<(String, String)> {
         self.collector.instance_info()
     }
+
+    fn is_in_recovery(&self) -> Option<bool> {
+        self.collector.is_in_recovery()
+    }
 }
 
 #[cfg(test)]

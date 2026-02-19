@@ -17,6 +17,8 @@ import {
   Server,
   HardDrive,
   Activity,
+  GitBranch,
+  ArrowDown,
 } from "lucide-react";
 import {
   fetchTimeline,
@@ -1107,6 +1109,7 @@ function Header({
           </button>
         )}
         {snapshot && <SessionBadge snapshot={snapshot} />}
+        {snapshot && <ReplicationBadge snapshot={snapshot} />}
         {snapshot && (
           <div className="flex items-center gap-1">
             <HealthBadge snapshot={snapshot} />
@@ -1319,6 +1322,125 @@ function SessionBadge({ snapshot }: { snapshot: ApiSnapshot }) {
       >
         <Users size={10} />
         {sc.active}/{sc.total}
+      </span>
+    </RichTooltip>
+  );
+}
+
+function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
+  const repl = snapshot.replication;
+  if (!repl) return null;
+
+  if (repl.is_standby) {
+    const lag = repl.replay_lag_s;
+    const lagText =
+      lag == null ? "?" : lag < 1 ? "<1s" : `${lag}s`;
+    const color =
+      lag == null
+        ? "var(--text-tertiary)"
+        : lag <= 5
+          ? "var(--status-success)"
+          : lag <= 30
+            ? "var(--status-warning)"
+            : "var(--status-critical)";
+    const bgColor =
+      lag == null
+        ? "var(--bg-elevated)"
+        : lag <= 5
+          ? "var(--status-success-bg)"
+          : lag <= 30
+            ? "var(--status-warning-bg)"
+            : "var(--status-critical-bg)";
+
+    return (
+      <RichTooltip
+        content={
+          <div className="w-44">
+            <div className="font-semibold text-[var(--text-primary)] mb-1">
+              Standby (Replica)
+            </div>
+            <div className="text-xs text-[var(--text-secondary)]">
+              Replay lag: {lagText}
+            </div>
+          </div>
+        }
+        side="bottom"
+      >
+        <span
+          className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium cursor-default"
+          style={{ backgroundColor: bgColor, color }}
+        >
+          <ArrowDown size={10} />
+          Standby &middot; {lagText}
+        </span>
+      </RichTooltip>
+    );
+  }
+
+  // Primary
+  const n = repl.connected_replicas;
+  const color = "var(--status-success)";
+  const bgColor = "var(--status-success-bg)";
+
+  const formatBytes = (b: number | undefined) => {
+    if (b == null) return "?";
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KiB`;
+    if (b < 1024 * 1024 * 1024)
+      return `${(b / 1024 / 1024).toFixed(1)} MiB`;
+    return `${(b / 1024 / 1024 / 1024).toFixed(1)} GiB`;
+  };
+
+  return (
+    <RichTooltip
+      content={
+        <div className="w-52">
+          <div className="font-semibold text-[var(--text-primary)] mb-1">
+            Primary (Master)
+          </div>
+          {repl.replicas.length > 0 ? (
+            <div className="space-y-1">
+              {repl.replicas.map((r, i) => (
+                <div
+                  key={i}
+                  className="text-xs flex items-center gap-1.5"
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{
+                      backgroundColor:
+                        r.state === "streaming"
+                          ? "var(--status-success)"
+                          : "var(--status-warning)",
+                    }}
+                  />
+                  <span className="text-[var(--text-secondary)] flex-1 truncate">
+                    {r.client_addr || "local"}
+                  </span>
+                  <span className="text-[var(--text-tertiary)]">
+                    {r.sync_state}
+                  </span>
+                  <span className="text-[var(--text-tertiary)] font-mono">
+                    {formatBytes(r.replay_lag_bytes)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-[var(--text-tertiary)]">
+              No connected replicas
+            </div>
+          )}
+        </div>
+      }
+      side="bottom"
+    >
+      <span
+        className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium cursor-default"
+        style={{ backgroundColor: bgColor, color }}
+      >
+        <GitBranch size={10} />
+        Primary{n > 0 ? ` \u00b7 ${n}R` : ""}
       </span>
     </RichTooltip>
   );

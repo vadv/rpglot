@@ -134,6 +134,7 @@ fn block_info(block: &DataBlock) -> (&'static str, usize) {
         DataBlock::SystemStat(_) => ("SystemStat", 1),
         DataBlock::SystemNetSnmp(_) => ("SystemNetSnmp", 1),
         DataBlock::Cgroup(_) => ("Cgroup", 1),
+        DataBlock::ReplicationStatus(_) => ("ReplicationStatus", 1),
     }
 }
 

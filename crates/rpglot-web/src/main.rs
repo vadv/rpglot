@@ -179,8 +179,8 @@ struct WebAppInner {
     // Heatmap cache: per-date ("YYYY-MM-DD" → bucketed data).
     // Past dates are immutable — cached forever. Today invalidated on refresh.
     heatmap_cache: HashMap<String, Vec<rpglot_core::storage::heatmap::HeatmapBucket>>,
-    // Instance metadata (database name + PG version), cached from provider.
-    instance_info: Option<(String, String)>,
+    // Instance metadata (database name + PG version + is_standby), cached from provider.
+    instance_info: Option<(String, String, Option<bool>)>,
 }
 
 type SharedState = Arc<Mutex<WebAppInner>>;
@@ -584,9 +584,17 @@ fn advance_and_convert(inner: &mut WebAppInner) {
         }
     };
 
-    // Cache instance metadata (only fetched once per connection, so cheap)
-    if inner.instance_info.is_none() {
-        inner.instance_info = inner.provider.instance_info();
+    // Cache instance metadata; update is_in_recovery every tick (may change on failover)
+    let is_in_recovery = inner.provider.is_in_recovery();
+    match &mut inner.instance_info {
+        Some(info) => {
+            info.2 = is_in_recovery;
+        }
+        None => {
+            if let Some((db, ver)) = inner.provider.instance_info() {
+                inner.instance_info = Some((db, ver, is_in_recovery));
+            }
+        }
     }
 
     // Update rates (must happen before borrowing interner)
@@ -1163,10 +1171,14 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
     } else {
         None
     };
-    let instance = inner.instance_info.as_ref().map(|(db, ver)| InstanceInfo {
-        database: db.clone(),
-        pg_version: ver.clone(),
-    });
+    let instance = inner
+        .instance_info
+        .as_ref()
+        .map(|(db, ver, is_standby)| InstanceInfo {
+            database: db.clone(),
+            pg_version: ver.clone(),
+            is_standby: *is_standby,
+        });
     Json(ApiSchema::generate(mode, timeline, instance))
 }
 
@@ -1883,6 +1895,8 @@ async fn basic_auth_middleware(
         rpglot_core::api::snapshot::PgTablesRow,
         rpglot_core::api::snapshot::PgIndexesRow,
         rpglot_core::api::snapshot::PgLocksRow,
+        rpglot_core::api::snapshot::ReplicationInfo,
+        rpglot_core::api::snapshot::ReplicaDetail,
     )),
     info(
         title = "rpglot API",

@@ -196,6 +196,13 @@ impl<F: FileSystem + Clone> Collector<F> {
             .and_then(|pg| pg.instance_info())
     }
 
+    /// Returns whether the PostgreSQL instance is in recovery mode (standby).
+    pub fn is_in_recovery(&self) -> Option<bool> {
+        self.postgres_collector
+            .as_ref()
+            .and_then(|pg| pg.is_in_recovery())
+    }
+
     /// Collects a complete system snapshot.
     ///
     /// This gathers:
@@ -403,6 +410,10 @@ impl<F: FileSystem + Clone> Collector<F> {
             let settings = pg_collector.collect_settings();
             if !settings.is_empty() {
                 blocks.push(DataBlock::PgSettings(settings));
+            }
+
+            if let Some(repl_status) = pg_collector.collect_replication_status() {
+                blocks.push(DataBlock::ReplicationStatus(repl_status));
             }
 
             // Store last error for TUI display

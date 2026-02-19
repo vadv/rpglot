@@ -28,6 +28,7 @@ export interface ApiSnapshot {
   health_score: number;
   health_breakdown: HealthBreakdown;
   session_counts: SessionCounts;
+  replication?: ReplicationInfo;
 }
 
 export interface HealthBreakdown {
@@ -416,6 +417,21 @@ export interface PgProgressVacuumRow {
 export interface InstanceInfo {
   database: string;
   pg_version: string;
+  is_standby?: boolean;
+}
+
+export interface ReplicaDetail {
+  client_addr: string;
+  state: string;
+  sync_state: string;
+  replay_lag_bytes?: number;
+}
+
+export interface ReplicationInfo {
+  is_standby: boolean;
+  replay_lag_s?: number;
+  connected_replicas: number;
+  replicas: ReplicaDetail[];
 }
 
 export interface ApiSchema {

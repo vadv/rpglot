@@ -10,7 +10,7 @@ use super::cgroup::CgroupInfo;
 use super::postgres::{
     PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventsInfo, PgSettingEntry,
     PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo, PgStatProgressVacuumInfo,
-    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, ReplicationStatus,
 };
 use super::process::ProcessInfo;
 use super::system::{
@@ -132,6 +132,10 @@ pub enum DataBlock {
     /// Real-time VACUUM progress (instance-level, PG 9.6+).
     /// Source: `pg_stat_progress_vacuum` view
     PgStatProgressVacuum(Vec<PgStatProgressVacuumInfo>),
+
+    /// Replication status (primary/standby, replica info).
+    /// Source: `pg_is_in_recovery()`, `pg_stat_replication`, `pg_last_xact_replay_timestamp()`
+    ReplicationStatus(ReplicationStatus),
 }
 
 /// A point-in-time capture of all collected metrics.

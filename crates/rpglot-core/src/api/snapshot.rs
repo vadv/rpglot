@@ -43,6 +43,37 @@ pub struct ApiSnapshot {
     pub health_breakdown: HealthBreakdown,
     /// Session counts from pg_stat_activity.
     pub session_counts: SessionCounts,
+    /// Replication status (primary/standby).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replication: Option<ReplicationInfo>,
+}
+
+/// Replication status of the PostgreSQL instance.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReplicationInfo {
+    /// Whether this instance is a standby (replica).
+    pub is_standby: bool,
+    /// Replay lag in seconds (standby only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_lag_s: Option<i64>,
+    /// Number of connected streaming replicas (primary only).
+    pub connected_replicas: u32,
+    /// Details of connected replicas (primary only).
+    pub replicas: Vec<ReplicaDetail>,
+}
+
+/// Detail of a connected streaming replica.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReplicaDetail {
+    /// Client address of the replica.
+    pub client_addr: String,
+    /// Replication state (streaming, catchup, etc.).
+    pub state: String,
+    /// Sync state (async, sync, quorum, potential).
+    pub sync_state: String,
+    /// Replay lag in bytes (sent_lsn - replay_lsn).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_lag_bytes: Option<i64>,
 }
 
 /// Breakdown of health score penalties by category.

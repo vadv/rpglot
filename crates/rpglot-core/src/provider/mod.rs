@@ -126,4 +126,11 @@ pub trait SnapshotProvider {
     fn instance_info(&self) -> Option<(String, String)> {
         None
     }
+
+    /// Returns whether the PostgreSQL instance is in recovery mode (standby).
+    ///
+    /// Only available for live providers with a PostgreSQL connection.
+    fn is_in_recovery(&self) -> Option<bool> {
+        None
+    }
 }

@@ -83,6 +83,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         health_score,
         health_breakdown,
         session_counts,
+        replication: extract_replication(snap),
     }
 }
 
@@ -1837,6 +1838,34 @@ fn extract_pgv(snap: &Snapshot, interner: Option<&StringInterner>) -> Vec<PgProg
             }
         })
         .collect()
+}
+
+// ============================================================
+// Replication status
+// ============================================================
+
+fn extract_replication(snap: &Snapshot) -> Option<ReplicationInfo> {
+    find_block(snap, |b| {
+        if let DataBlock::ReplicationStatus(r) = b {
+            Some(ReplicationInfo {
+                is_standby: r.is_in_recovery,
+                replay_lag_s: r.replay_lag_s,
+                connected_replicas: r.connected_replicas,
+                replicas: r
+                    .replicas
+                    .iter()
+                    .map(|ri| ReplicaDetail {
+                        client_addr: ri.client_addr.clone(),
+                        state: ri.state.clone(),
+                        sync_state: ri.sync_state.clone(),
+                        replay_lag_bytes: ri.replay_lag_bytes,
+                    })
+                    .collect(),
+            })
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ mod indexes;
 mod locks;
 mod progress_vacuum;
 mod queries;
+mod replication;
 mod settings;
 mod statements;
 mod tables;
@@ -40,6 +41,7 @@ use tracing::{debug, info, warn};
 use super::log_collector::LogCollector;
 use crate::storage::model::{
     PgSettingEntry, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
+    ReplicationStatus,
 };
 use indexes::PgStatUserIndexesCacheEntry;
 use statements::{PgStatStatementsCacheEntry, STATEMENTS_COLLECT_INTERVAL};
@@ -137,6 +139,10 @@ pub struct PostgresCollector {
     pub(crate) db_clients: Vec<DatabaseClient>,
     /// Last time we refreshed the database connection pool.
     db_clients_last_check: Option<Instant>,
+    /// Cached replication status.
+    pub(crate) replication_cache: Option<ReplicationStatus>,
+    /// Last time replication status was collected.
+    pub(crate) replication_cache_time: Option<Instant>,
     /// PostgreSQL log file collector.
     log_collector: LogCollector,
 }
@@ -198,6 +204,8 @@ impl PostgresCollector {
             explicit_database,
             db_clients: Vec::new(),
             db_clients_last_check: None,
+            replication_cache: None,
+            replication_cache_time: None,
             log_collector: LogCollector::new(),
         })
     }
@@ -236,6 +244,8 @@ impl PostgresCollector {
             explicit_database: true,
             db_clients: Vec::new(),
             db_clients_last_check: None,
+            replication_cache: None,
+            replication_cache_time: None,
             log_collector: LogCollector::new(),
         }
     }
@@ -479,6 +489,8 @@ impl PostgresCollector {
         self.pgi_prev.clear();
         self.pgi_first_collect = true;
         self.pgi_filtered_cache.clear();
+        self.replication_cache = None;
+        self.replication_cache_time = None;
     }
 
     /// Returns PostgreSQL version as human-readable string (e.g. "16.2").
@@ -490,6 +502,13 @@ impl PostgresCollector {
     /// Returns instance metadata (database name + PG version).
     pub fn instance_info(&self) -> Option<(String, String)> {
         Some((self.largest_dbname.clone()?, self.pg_version_string()?))
+    }
+
+    /// Returns whether the PostgreSQL instance is in recovery mode (standby).
+    ///
+    /// Value is taken from the cached replication status (updated every 30s).
+    pub fn is_in_recovery(&self) -> Option<bool> {
+        self.replication_cache.as_ref().map(|r| r.is_in_recovery)
     }
 
     /// Collects log data from PostgreSQL log files.

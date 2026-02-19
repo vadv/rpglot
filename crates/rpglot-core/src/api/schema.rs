@@ -32,6 +32,9 @@ pub struct InstanceInfo {
     pub database: String,
     /// PostgreSQL version (e.g. "16.2").
     pub pg_version: String,
+    /// Whether the instance is a standby (replica). None if unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_standby: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
