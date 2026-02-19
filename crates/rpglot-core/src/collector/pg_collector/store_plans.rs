@@ -147,8 +147,12 @@ impl PostgresCollector {
 
                 let mut entries = Vec::with_capacity(rows.len());
                 let mut out = Vec::with_capacity(rows.len());
+                let mut plan_lens_sample: Vec<usize> = Vec::new();
                 for row in rows {
                     let plan_text: String = row.get("plan");
+                    if plan_lens_sample.len() < 5 {
+                        plan_lens_sample.push(plan_text.len());
+                    }
                     let datname: String = row.get("datname");
                     let usename: String = row.get("usename");
                     let collected_at = SystemTime::now()
@@ -192,6 +196,12 @@ impl PostgresCollector {
                     });
                     out.push(info);
                 }
+
+                debug!(
+                    rows = out.len(),
+                    plan_text_lens = ?plan_lens_sample,
+                    "pg_store_plans collected"
+                );
 
                 if entries.len() > MAX_CACHED_STORE_PLANS {
                     entries.truncate(MAX_CACHED_STORE_PLANS);

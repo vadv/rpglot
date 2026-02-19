@@ -1412,6 +1412,18 @@ fn extract_pgp(
     .map(|ss| ss.iter().map(|s| (s.queryid, s.query_hash)).collect())
     .unwrap_or_default();
 
+    if !plans.is_empty() {
+        let sample: Vec<(i64, usize)> = plans
+            .iter()
+            .take(3)
+            .map(|p| {
+                let resolved = interner.and_then(|i| i.resolve(p.plan_hash));
+                (p.planid, resolved.map(|s| s.len()).unwrap_or(0))
+            })
+            .collect();
+        tracing::debug!(count = plans.len(), plan_resolve_sample = ?sample, "extract_pgp");
+    }
+
     plans
         .iter()
         .map(|p| {
