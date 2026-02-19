@@ -105,5 +105,6 @@ pub fn all_advisors() -> Vec<Box<dyn Advisor>> {
         Box::new(recommendations::OomRiskAdvisor),
         Box::new(recommendations::QueryRegressionAdvisor),
         Box::new(recommendations::TempFileSpillAdvisor),
+        Box::new(recommendations::PlanRegressionAdvisor),
     ]
 }

@@ -10,6 +10,7 @@ pub mod pg_errors;
 pub mod pg_events;
 pub mod pg_indexes;
 pub mod pg_locks;
+pub mod pg_plans;
 pub mod pg_statements;
 pub mod pg_tables;
 pub mod process_blkdelay;
@@ -48,6 +49,8 @@ pub fn all_rules() -> Vec<Box<dyn AnalysisRule>> {
         // PG Statements
         Box::new(pg_statements::MeanTimeSpikeRule),
         Box::new(pg_statements::QueryCallSpikeRule),
+        // PG Plans (pg_store_plans)
+        Box::new(pg_plans::PlanRegressionRule),
         // PG Locks
         Box::new(pg_locks::BlockedSessionsRule),
         // PG Tables

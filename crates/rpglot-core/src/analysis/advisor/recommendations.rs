@@ -1374,6 +1374,94 @@ impl Advisor for TempFileSpillAdvisor {
 }
 
 // ============================================================
+// 20. PlanRegressionAdvisor
+// ============================================================
+
+pub struct PlanRegressionAdvisor;
+
+impl Advisor for PlanRegressionAdvisor {
+    fn id(&self) -> &'static str {
+        "plan_regression"
+    }
+
+    fn evaluate(&self, ctx: &AdvisorContext<'_>) -> Vec<Recommendation> {
+        let plan_inc = match find_incident(ctx.incidents, "plan_regression") {
+            Some(i) => i,
+            None => return Vec::new(),
+        };
+
+        // pg_store_plans updates every ~5 min; require 3+ snapshots for confidence.
+        if plan_inc.snapshot_count < 3 {
+            return Vec::new();
+        }
+
+        let ratio = plan_inc.peak_value;
+        let mut related = vec![plan_inc];
+
+        let has_stmt_spike = find_incident(ctx.incidents, "stmt_mean_time_spike").is_some();
+        if let Some(spike) = find_incident(ctx.incidents, "stmt_mean_time_spike") {
+            related.push(spike);
+        }
+
+        let mut desc = if has_stmt_spike {
+            format!(
+                "Plan flip confirmed via pg_store_plans — same query uses multiple execution \
+                 plans with {ratio:.1}x difference in mean_time. The slow plan is actively \
+                 degrading performance.\n\
+                 \n\
+                 Diagnose:\n\
+                 \u{2022} PGP tab \u{2192} Regression view: see all affected plans\n\
+                 \u{2022} EXPLAIN (ANALYZE, BUFFERS) on the query — confirm plan identity\n\
+                 \u{2022} If plan flipped to seq scan: check ANALYZE freshness, missing indexes\n\
+                 \u{2022} To fix immediately: pg_hint_plan or plan_cache_mode = force_generic_plan"
+            )
+        } else {
+            format!(
+                "pg_store_plans shows multiple plans for the same query with {ratio:.1}x \
+                 mean_time difference. The regression has not yet caused overall slowdown, \
+                 but the inefficient plan is in use.\n\
+                 \n\
+                 Diagnose:\n\
+                 \u{2022} PGP tab \u{2192} Regression view: see all affected plans\n\
+                 \u{2022} EXPLAIN (ANALYZE, BUFFERS) on the query — confirm plan identity\n\
+                 \u{2022} If plan flipped to seq scan: check ANALYZE freshness, missing indexes\n\
+                 \u{2022} To fix immediately: pg_hint_plan or plan_cache_mode = force_generic_plan"
+            )
+        };
+
+        if let Some(ref s) = ctx.settings
+            && let Some(rpc) = s.get_f64("random_page_cost")
+            && rpc >= 4.0
+        {
+            desc.push_str(&format!(
+                "\n\nrandom_page_cost = {rpc} (HDD default). If using SSD, set to 1.1 \
+                 — this alone can fix plan regressions caused by seq scan preference."
+            ));
+        }
+
+        let severity = if has_stmt_spike {
+            worst_severity(&related)
+        } else {
+            Severity::Warning
+        };
+
+        let title = if has_stmt_spike {
+            format!("Plan regression confirmed — {ratio:.1}x slowdown")
+        } else {
+            format!("Latent plan regression — {ratio:.1}x difference")
+        };
+
+        vec![Recommendation {
+            id: self.id().to_string(),
+            severity,
+            title,
+            description: desc,
+            related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
+        }]
+    }
+}
+
+// ============================================================
 // Tests
 // ============================================================
 
@@ -1782,5 +1870,54 @@ mod tests {
         };
         let recs = TempFileSpillAdvisor.evaluate(&ctx);
         assert!(recs.is_empty(), "should skip when temp_blks did not grow");
+    }
+
+    // --- PlanRegressionAdvisor tests ---
+
+    #[test]
+    fn plan_regression_advisor_fires() {
+        let mut inc = make_incident("plan_regression", Severity::Warning);
+        inc.snapshot_count = 10;
+        inc.peak_value = 5.0;
+        let incidents = vec![inc];
+        let recs = PlanRegressionAdvisor.evaluate(&make_ctx(&incidents));
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].id, "plan_regression");
+    }
+
+    #[test]
+    fn plan_regression_advisor_skips_transient() {
+        let mut inc = make_incident("plan_regression", Severity::Warning);
+        inc.snapshot_count = 1;
+        let incidents = vec![inc];
+        let recs = PlanRegressionAdvisor.evaluate(&make_ctx(&incidents));
+        assert!(recs.is_empty());
+    }
+
+    #[test]
+    fn plan_regression_advisor_with_stmt_spike() {
+        let mut plan_inc = make_incident("plan_regression", Severity::Warning);
+        plan_inc.snapshot_count = 10;
+        plan_inc.peak_value = 8.0;
+        let incidents = vec![
+            plan_inc,
+            make_incident("stmt_mean_time_spike", Severity::Warning),
+        ];
+        let recs = PlanRegressionAdvisor.evaluate(&make_ctx(&incidents));
+        assert_eq!(recs.len(), 1);
+        assert!(recs[0].title.contains("confirmed"));
+        assert!(recs[0].description.contains("confirmed"));
+    }
+
+    #[test]
+    fn plan_regression_advisor_without_stmt_spike() {
+        let mut plan_inc = make_incident("plan_regression", Severity::Warning);
+        plan_inc.snapshot_count = 10;
+        plan_inc.peak_value = 3.0;
+        let incidents = vec![plan_inc];
+        let recs = PlanRegressionAdvisor.evaluate(&make_ctx(&incidents));
+        assert_eq!(recs.len(), 1);
+        assert!(recs[0].title.contains("Latent"));
+        assert!(recs[0].description.contains("not yet caused"));
     }
 }
