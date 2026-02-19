@@ -120,6 +120,8 @@ pub struct LogCollector {
     /// True if `drain_pending` already held back the last error once.
     /// Prevents holding back the same error indefinitely.
     error_held_back: bool,
+    /// Key of the error whose STATEMENT is being accumulated across continuation lines.
+    pending_statement_key: Option<(String, PgLogSeverity)>,
     /// Slow query being accumulated (multiline SQL continuation).
     pending_slow_query: Option<PendingSlowQuery>,
     /// Top-N slow queries grouped by normalized SQL (bounded to MAX_SLOW_QUERIES_PER_SNAPSHOT).
@@ -156,6 +158,7 @@ impl LogCollector {
             last_event_idx: None,
             last_error_key: None,
             error_held_back: false,
+            pending_statement_key: None,
             pending_slow_query: None,
             slow_queries: HashMap::new(),
             slow_query_count: 0,
@@ -250,6 +253,19 @@ impl LogCollector {
         for line in &lines {
             // Continuation line (starts with whitespace): try to patch last event in-place
             if is_continuation_line(line) {
+                // Multiline STATEMENT continuation — append SQL text to pending error
+                if let Some(ref key) = self.pending_statement_key {
+                    if let Some(entry) = self.pending_errors.get_mut(key) {
+                        let trimmed = line.trim();
+                        if entry.statement.len() + 1 + trimmed.len() <= MAX_LOG_MESSAGE_LEN {
+                            if !entry.statement.is_empty() {
+                                entry.statement.push(' ');
+                            }
+                            entry.statement.push_str(trimmed);
+                        }
+                    }
+                    continue;
+                }
                 // Slow query multiline continuation — append SQL text
                 if let Some(ref mut pending) = self.pending_slow_query {
                     if !pending.truncated {
@@ -274,6 +290,7 @@ impl LogCollector {
 
             // New primary line — flush pending slow query and reset continuation tracking
             self.flush_pending_slow_query();
+            self.pending_statement_key = None;
             self.last_event_idx = None;
 
             let parsed = self.parse_line(line);
@@ -385,7 +402,12 @@ impl LogCollector {
                 {
                     let mut stmt = parsed.message;
                     stmt.truncate(MAX_LOG_MESSAGE_LEN);
-                    entry.statement = stmt;
+                    // If statement body is on continuation lines, keep key for accumulation
+                    if stmt.trim().is_empty() {
+                        self.pending_statement_key = Some(key.clone());
+                    } else {
+                        entry.statement = stmt;
+                    }
                 }
                 self.last_error_key = None;
             }
@@ -1053,6 +1075,65 @@ mod tests {
         // Verify the statement text
         let stmt = interner.resolve(entries[0].statement_hash).unwrap();
         assert_eq!(stmt, "select pg_sleep(2);");
+    }
+
+    /// End-to-end test: multiline STATEMENT (body on continuation lines).
+    #[test]
+    fn test_e2e_multiline_statement() {
+        let mut collector = LogCollector::new();
+        collector.stderr_parser = Some(StderrParser::new("%t [%p] => "));
+        collector.log_format = Some(LogFormat::Stderr);
+        let mut interner = StringInterner::new();
+
+        let lines = vec![
+            "2026-02-15 21:04:11 GMT [716338] => [1-1] client=[local],db=postgres,user=postgres ERROR:  canceling statement due to user request".to_string(),
+            "2026-02-15 21:04:11 GMT [716338] => [2-1] client=[local],db=postgres,user=postgres STATEMENT:  ".to_string(),
+            "\tselect * from bucket_65.posting_receiver".to_string(),
+            "\twhere proxy_phone is not null".to_string(),
+        ];
+
+        // Simulate the collect() loop
+        for line in &lines {
+            if is_continuation_line(line) {
+                // Multiline STATEMENT continuation
+                if let Some(ref key) = collector.pending_statement_key {
+                    if let Some(entry) = collector.pending_errors.get_mut(key) {
+                        let trimmed = line.trim();
+                        if entry.statement.len() + 1 + trimmed.len() <= MAX_LOG_MESSAGE_LEN {
+                            if !entry.statement.is_empty() {
+                                entry.statement.push(' ');
+                            }
+                            entry.statement.push_str(trimmed);
+                        }
+                    }
+                    continue;
+                }
+                continue;
+            }
+            collector.flush_pending_slow_query();
+            collector.pending_statement_key = None;
+            collector.last_event_idx = None;
+
+            let parsed = collector.parse_line(line);
+            let Some(parsed) = parsed else {
+                collector.last_error_key = None;
+                continue;
+            };
+            collector.accumulate(parsed);
+        }
+
+        let entries = collector.drain_pending(&mut interner);
+        assert_eq!(entries.len(), 1, "should have exactly one error entry");
+        assert!(
+            entries[0].statement_hash != 0,
+            "statement_hash should be non-zero: multiline STATEMENT was not attached!"
+        );
+
+        let stmt = interner.resolve(entries[0].statement_hash).unwrap();
+        assert_eq!(
+            stmt,
+            "select * from bucket_65.posting_receiver where proxy_phone is not null"
+        );
     }
 
     #[test]
