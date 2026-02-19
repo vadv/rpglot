@@ -129,8 +129,6 @@ pub struct PostgresCollector {
     pub(crate) store_plans_client_idx: Option<usize>,
     pub(crate) store_plans_cache: Vec<PgStorePlansCacheEntry>,
     pub(crate) store_plans_cache_time: Option<Instant>,
-    pub(crate) pgp_prev: HashMap<i64, PgStorePlansInfo>,
-    pub(crate) pgp_first_collect: bool,
     pub(crate) pgp_filtered_cache: Vec<PgStorePlansInfo>,
 
     /// Previous full pg_stat_user_tables snapshot (by relid).
@@ -215,8 +213,6 @@ impl PostgresCollector {
             store_plans_client_idx: None,
             store_plans_cache: Vec::new(),
             store_plans_cache_time: None,
-            pgp_prev: HashMap::new(),
-            pgp_first_collect: true,
             pgp_filtered_cache: Vec::new(),
             pgt_prev: HashMap::new(),
             pgt_first_collect: true,
@@ -264,8 +260,6 @@ impl PostgresCollector {
             store_plans_client_idx: None,
             store_plans_cache: Vec::new(),
             store_plans_cache_time: None,
-            pgp_prev: HashMap::new(),
-            pgp_first_collect: true,
             pgp_filtered_cache: Vec::new(),
             pgt_prev: HashMap::new(),
             pgt_first_collect: true,
@@ -527,8 +521,6 @@ impl PostgresCollector {
         self.pgs_prev.clear();
         self.pgs_first_collect = true;
         self.pgs_filtered_cache.clear();
-        self.pgp_prev.clear();
-        self.pgp_first_collect = true;
         self.pgp_filtered_cache.clear();
         self.pgt_prev.clear();
         self.pgt_first_collect = true;

@@ -1,6 +1,5 @@
-//! pg_store_plans collection with caching and activity-only filtering.
+//! pg_store_plans collection with caching.
 
-use std::collections::HashMap;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tracing::debug;
@@ -103,14 +102,14 @@ impl PostgresCollector {
     pub fn collect_store_plans(&mut self, interner: &mut StringInterner) -> Vec<PgStorePlansInfo> {
         let now = Instant::now();
         if !store_plans_collect_due(self.store_plans_cache_time, now) {
-            return self.return_pgp_filtered_cached(interner);
+            return self.return_pgp_cached(interner);
         }
 
         self.store_plans_cache_time = Some(now);
 
         if let Err(e) = self.ensure_connected() {
             self.last_error = Some(e.to_string());
-            return self.return_pgp_filtered_cached(interner);
+            return self.return_pgp_cached(interner);
         }
 
         if !self.store_plans_extension_available() {
@@ -124,7 +123,7 @@ impl PostgresCollector {
                 self.store_plans_ext_version = None;
                 self.store_plans_last_check = None;
                 self.store_plans_fork = None;
-                return self.return_pgp_filtered_cached(interner);
+                return self.return_pgp_cached(interner);
             }
             true
         } else {
@@ -209,14 +208,9 @@ impl PostgresCollector {
                 }
 
                 self.store_plans_cache = entries;
+                self.pgp_filtered_cache = out.clone();
 
-                let filtered = filter_plans(&out, &self.pgp_prev, self.pgp_first_collect);
-
-                self.pgp_prev = out.iter().map(|info| (info.planid, info.clone())).collect();
-                self.pgp_first_collect = false;
-                self.pgp_filtered_cache = filtered.clone();
-
-                filtered
+                out
             }
             Err(e) => {
                 let msg = super::format_postgres_error(&e);
@@ -235,27 +229,20 @@ impl PostgresCollector {
                     self.store_plans_fork = None;
                 }
 
-                self.return_pgp_filtered_cached(interner)
+                self.return_pgp_cached(interner)
             }
         }
     }
 
-    fn return_pgp_filtered_cached(&self, interner: &mut StringInterner) -> Vec<PgStorePlansInfo> {
-        let cache_map: HashMap<i64, &PgStorePlansCacheEntry> = self
-            .store_plans_cache
+    fn return_pgp_cached(&self, interner: &mut StringInterner) -> Vec<PgStorePlansInfo> {
+        self.store_plans_cache
             .iter()
-            .map(|e| (e.info.planid, e))
-            .collect();
-
-        self.pgp_filtered_cache
-            .iter()
-            .filter_map(|info| {
-                let entry = cache_map.get(&info.planid)?;
-                let mut out = info.clone();
+            .map(|entry| {
+                let mut out = entry.info.clone();
                 out.plan_hash = interner.intern(&entry.plan_text);
                 out.datname_hash = interner.intern(&entry.datname);
                 out.usename_hash = interner.intern(&entry.usename);
-                Some(out)
+                out
             })
             .collect()
     }
@@ -270,39 +257,6 @@ fn detect_fork(client: &mut postgres::Client) -> StorePlansFork {
         Ok(Some(_)) => StorePlansFork::Vadv,
         _ => StorePlansFork::OsscDb,
     }
-}
-
-/// Filters plans to only include rows where any cumulative counter changed.
-fn filter_plans(
-    rows: &[PgStorePlansInfo],
-    prev: &HashMap<i64, PgStorePlansInfo>,
-    first_collect: bool,
-) -> Vec<PgStorePlansInfo> {
-    if first_collect {
-        return rows.to_vec();
-    }
-    rows.iter()
-        .filter(|row| match prev.get(&row.planid) {
-            Some(prev_row) => plan_changed(row, prev_row),
-            None => true,
-        })
-        .cloned()
-        .collect()
-}
-
-/// Returns true if any cumulative counter changed between two snapshots of the same planid.
-fn plan_changed(curr: &PgStorePlansInfo, prev: &PgStorePlansInfo) -> bool {
-    curr.calls != prev.calls
-        || curr.rows != prev.rows
-        || curr.total_time != prev.total_time
-        || curr.shared_blks_read != prev.shared_blks_read
-        || curr.shared_blks_hit != prev.shared_blks_hit
-        || curr.shared_blks_written != prev.shared_blks_written
-        || curr.shared_blks_dirtied != prev.shared_blks_dirtied
-        || curr.local_blks_read != prev.local_blks_read
-        || curr.local_blks_written != prev.local_blks_written
-        || curr.temp_blks_read != prev.temp_blks_read
-        || curr.temp_blks_written != prev.temp_blks_written
 }
 
 #[cfg(test)]
@@ -331,116 +285,5 @@ mod tests {
 
         let old = now - STORE_PLANS_COLLECT_INTERVAL;
         assert!(store_plans_collect_due(Some(old), now));
-    }
-
-    #[test]
-    fn filter_plans_first_collect_returns_all() {
-        let rows = vec![
-            PgStorePlansInfo {
-                planid: 1,
-                calls: 10,
-                ..Default::default()
-            },
-            PgStorePlansInfo {
-                planid: 2,
-                calls: 5,
-                ..Default::default()
-            },
-        ];
-        let prev = HashMap::new();
-        let filtered = filter_plans(&rows, &prev, true);
-        assert_eq!(filtered.len(), 2);
-    }
-
-    #[test]
-    fn filter_plans_removes_unchanged() {
-        let unchanged = PgStorePlansInfo {
-            planid: 1,
-            calls: 10,
-            rows: 100,
-            total_time: 50.0,
-            ..Default::default()
-        };
-        let changed = PgStorePlansInfo {
-            planid: 2,
-            calls: 6,
-            rows: 60,
-            ..Default::default()
-        };
-        let new_row = PgStorePlansInfo {
-            planid: 3,
-            calls: 1,
-            ..Default::default()
-        };
-
-        let rows = vec![unchanged.clone(), changed.clone(), new_row.clone()];
-
-        let mut prev = HashMap::new();
-        prev.insert(1, unchanged);
-        prev.insert(
-            2,
-            PgStorePlansInfo {
-                planid: 2,
-                calls: 5,
-                rows: 50,
-                ..Default::default()
-            },
-        );
-
-        let filtered = filter_plans(&rows, &prev, false);
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].planid, 2);
-        assert_eq!(filtered[1].planid, 3);
-    }
-
-    #[test]
-    fn plan_changed_detects_all_cumulative_fields() {
-        let base = PgStorePlansInfo::default();
-
-        assert!(!plan_changed(&base, &base));
-
-        let mut m = base.clone();
-        m.calls = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.rows = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.total_time = 1.0;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.shared_blks_read = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.shared_blks_hit = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.shared_blks_written = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.shared_blks_dirtied = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.local_blks_read = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.local_blks_written = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.temp_blks_read = 1;
-        assert!(plan_changed(&m, &base));
-
-        let mut m = base.clone();
-        m.temp_blks_written = 1;
-        assert!(plan_changed(&m, &base));
     }
 }
