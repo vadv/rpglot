@@ -253,9 +253,10 @@ impl Advisor for TableBloatAdvisor {
         let severity = worst_severity(&related);
 
         let mut desc = String::from(
-            "High dead tuple ratio detected, indicating table bloat. Run VACUUM FULL \
-             on affected tables during a maintenance window to reclaim space. For \
-             long-term prevention, adjust autovacuum settings: lower \
+            "High dead tuple ratio detected, indicating table bloat. \
+             Use pg_repack or pgcompacttable to reclaim space online without locking. \
+             Avoid VACUUM FULL — it takes AccessExclusiveLock and blocks all queries. \
+             For long-term prevention, adjust autovacuum settings: lower \
              autovacuum_vacuum_scale_factor (e.g. 0.05), increase \
              autovacuum_vacuum_cost_limit, and reduce autovacuum_vacuum_cost_delay.",
         );

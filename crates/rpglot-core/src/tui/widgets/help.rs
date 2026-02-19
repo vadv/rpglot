@@ -743,7 +743,7 @@ fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {
                 Style::default().fg(Color::Yellow),
             )));
             lines.extend([
-                Line::from("DEAD% > 20% = severe bloat, consider manual VACUUM FULL"),
+                Line::from("DEAD% > 20% = severe bloat, use pg_repack/pgcompacttable"),
                 Line::from("LAST_AVAC = - = table never autovacuumed, check config"),
                 Line::from("  check autovacuum_vacuum_threshold and scale_factor"),
                 Line::from("High VAC/s = frequent manual vacuuming, rely on autovacuum"),
