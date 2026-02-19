@@ -35,6 +35,8 @@ pub struct ApiSnapshot {
     pub pge: Vec<PgEventsRow>,
     /// pg_locks blocking tree (flat, with depth).
     pub pgl: Vec<PgLocksRow>,
+    /// pg_store_plans rows (with rates).
+    pub pgp: Vec<PgStorePlansRow>,
     /// pg_stat_progress_vacuum — currently running VACUUM operations.
     pub pgv: Vec<PgProgressVacuumRow>,
     /// Health score 0..100 (100 = fully healthy).
@@ -549,6 +551,49 @@ pub struct PgStatementsRow {
     pub wal_bytes: i64,
     /// Cumulative total execution time (ms).
     pub total_exec_time: f64,
+}
+
+/// pg_store_plans row with pre-computed rates.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PgStorePlansRow {
+    pub planid: i64,
+    pub stmt_queryid: i64,
+    pub database: String,
+    pub user: String,
+    pub query: String,
+    pub plan: String,
+    /// Cumulative call count.
+    pub calls: i64,
+    /// Cumulative total rows.
+    pub rows: i64,
+    /// Mean execution time (ms).
+    pub mean_time_ms: f64,
+    /// Min execution time (ms).
+    pub min_time_ms: f64,
+    /// Max execution time (ms).
+    pub max_time_ms: f64,
+    /// Total execution time (ms).
+    pub total_time_ms: f64,
+    /// First call epoch (0 = unknown).
+    pub first_call: i64,
+    /// Last call epoch (0 = unknown).
+    pub last_call: i64,
+    // --- rates (per second, computed from deltas) ---
+    pub calls_s: Option<f64>,
+    pub rows_s: Option<f64>,
+    /// Execution time rate (ms/s).
+    pub exec_time_ms_s: Option<f64>,
+    pub shared_blks_read_s: Option<f64>,
+    pub shared_blks_hit_s: Option<f64>,
+    pub shared_blks_dirtied_s: Option<f64>,
+    pub shared_blks_written_s: Option<f64>,
+    pub temp_blks_read_s: Option<f64>,
+    pub temp_blks_written_s: Option<f64>,
+    // --- computed fields ---
+    /// rows / calls.
+    pub rows_per_call: Option<f64>,
+    /// shared_blks_hit / (hit + read) * 100.
+    pub hit_pct: Option<f64>,
 }
 
 /// pg_stat_user_tables row with pre-computed rates.

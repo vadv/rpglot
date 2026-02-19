@@ -851,6 +851,12 @@ pub(super) fn render_help_line(width: usize, tab: Tab) -> Line<'static> {
             spans.push(Span::styled("t/c/i/e", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));
         }
+        Tab::PgStorePlans => {
+            spans.push(Span::styled("t/i/r", Styles::help_key()));
+            spans.push(Span::styled(":view ", Styles::help()));
+            spans.push(Span::styled(">", Styles::help_key()));
+            spans.push(Span::styled(":drill ", Styles::help()));
+        }
         Tab::PgTables => {
             spans.push(Span::styled("a/w/x/n/i", Styles::help_key()));
             spans.push(Span::styled(":view ", Styles::help()));

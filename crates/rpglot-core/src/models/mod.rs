@@ -165,6 +165,56 @@ impl PgIndexesViewMode {
     }
 }
 
+/// pg_store_plans view modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PgStorePlansViewMode {
+    /// Time view (timing-focused): CALLS/s, TIME/s, MEAN, MAX, ROWS/s, DB, QID, PLAN
+    #[default]
+    Time,
+    /// I/O view (buffer-focused): CALLS/s, BLK_RD/s, BLK_HIT/s, HIT%, BLK_WR/s, DB, PLAN
+    Io,
+    /// Regression view: plans with >1 planid per stmt_queryid, max/min mean ratio >2x
+    Regression,
+}
+
+impl PgStorePlansViewMode {
+    /// Default sort column index for this view mode.
+    pub fn default_sort_column(&self) -> usize {
+        match self {
+            Self::Time => 1,       // TIME/s
+            Self::Io => 1,         // BLK_RD/s
+            Self::Regression => 2, // MEAN (ratio)
+        }
+    }
+
+    /// Number of columns in this view mode.
+    pub fn column_count(&self) -> usize {
+        match self {
+            Self::Time => 8,       // CALLS/s TIME/s MEAN MAX ROWS/s DB QID PLAN
+            Self::Io => 7,         // CALLS/s BLK_RD/s BLK_HIT/s HIT% BLK_WR/s DB PLAN
+            Self::Regression => 7, // CALLS/s MEAN MAX MIN RATIO DB PLAN
+        }
+    }
+}
+
+/// Rate metrics for a single `pg_store_plans` entry.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PgStorePlansRates {
+    pub dt_secs: f64,
+    pub calls_s: Option<f64>,
+    pub rows_s: Option<f64>,
+    /// Execution time rate in `ms/s`.
+    pub exec_time_ms_s: Option<f64>,
+
+    pub shared_blks_read_s: Option<f64>,
+    pub shared_blks_hit_s: Option<f64>,
+    pub shared_blks_dirtied_s: Option<f64>,
+    pub shared_blks_written_s: Option<f64>,
+
+    pub temp_blks_read_s: Option<f64>,
+    pub temp_blks_written_s: Option<f64>,
+}
+
 /// Rate metrics for a single `pg_stat_user_tables` entry.
 ///
 /// Rates are computed from deltas between two snapshots using `snapshot.timestamp`.

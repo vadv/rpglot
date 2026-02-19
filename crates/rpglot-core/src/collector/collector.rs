@@ -45,6 +45,8 @@ pub struct CollectorTiming {
     pub pg_activity: Duration,
     /// Time to collect PostgreSQL statements.
     pub pg_statements: Duration,
+    /// Time to collect pg_store_plans.
+    pub pg_store_plans: Duration,
     /// Time to collect PostgreSQL database stats.
     pub pg_database: Duration,
     /// Time to collect PostgreSQL bgwriter stats.
@@ -334,6 +336,14 @@ impl<F: FileSystem + Clone> Collector<F> {
             timing.pg_statements = start.elapsed();
             if !statements.is_empty() {
                 blocks.push(DataBlock::PgStatStatements(statements));
+            }
+
+            let start = Instant::now();
+            let store_plans =
+                pg_collector.collect_store_plans(self.process_collector.interner_mut());
+            timing.pg_store_plans = start.elapsed();
+            if !store_plans.is_empty() {
+                blocks.push(DataBlock::PgStorePlans(store_plans));
             }
 
             let start = Instant::now();

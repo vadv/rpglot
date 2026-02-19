@@ -250,6 +250,68 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
     },
   },
 
+  pgp: {
+    label: "Plans",
+    source: "pg_store_plans",
+    description:
+      "Execution plan statistics from the pg_store_plans extension. Shows performance per plan structure, allowing detection of plan regressions when the optimizer switches to a worse plan for the same query.",
+    howToRead:
+      "Sort by Time/s to find plans consuming most resources. Compare plans for the same stmt_queryid to detect regressions \u2014 if a new plan appeared with higher mean_time, the optimizer chose a worse path. I/O view reveals plans doing excessive physical reads. Use drill-down to navigate to the parent statement in PGS.",
+    drillDown:
+      "Navigate to PGS to see aggregated statistics for the parent statement (matched by stmt_queryid).",
+    views: {
+      time: {
+        description: "Plans consuming the most execution time.",
+        metrics: [
+          { label: "Exec/s", description: "Total execution time per second" },
+          { label: "Calls/s", description: "Plan executions per second" },
+          { label: "Avg Time", description: "Average execution time (ms)" },
+          { label: "Max Time", description: "Maximum execution time (ms)" },
+          { label: "Min Time", description: "Minimum execution time (ms)" },
+          { label: "Plan", description: "Execution plan text" },
+        ],
+      },
+      io: {
+        description: "Plans doing the most physical I/O.",
+        metrics: [
+          {
+            label: "Sh Read/s",
+            description: "Shared blocks read from disk per second",
+          },
+          {
+            label: "Sh Hit/s",
+            description: "Shared blocks served from cache per second",
+          },
+          {
+            label: "HIT%",
+            description: "Buffer cache hit ratio",
+            thresholds: "\u226599% good \u00b7 90-99% warning \u00b7 <90% critical",
+          },
+          { label: "Dirty/s", description: "Blocks dirtied per second" },
+          { label: "Plan", description: "Execution plan text" },
+        ],
+      },
+      regression: {
+        description:
+          "Plan regression detection \u2014 compare plan performance over time.",
+        metrics: [
+          { label: "Avg Time", description: "Average execution time (ms)" },
+          { label: "Calls/s", description: "Plan executions per second" },
+          { label: "R/Call", description: "Average rows per execution" },
+          {
+            label: "First Call",
+            description: "When this plan was first seen",
+          },
+          {
+            label: "Last Call",
+            description: "When this plan was last executed",
+          },
+          { label: "Plan", description: "Execution plan text" },
+        ],
+      },
+    },
+  },
+
   pgt: {
     label: "Tables",
     source: "pg_stat_user_tables",

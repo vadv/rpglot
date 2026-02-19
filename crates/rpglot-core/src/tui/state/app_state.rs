@@ -7,8 +7,8 @@ use crate::storage::Snapshot;
 
 use super::{
     CachedWidths, InputMode, PgActivityTabState, PgErrorsTabState, PgIndexesTabState,
-    PgLocksTabState, PgStatementsTabState, PgTablesTabState, PopupState, ProcessRow,
-    ProcessViewMode, Tab, TabState, TableState,
+    PgLocksTabState, PgStatementsTabState, PgStorePlansTabState, PgTablesTabState, PopupState,
+    ProcessRow, ProcessViewMode, Tab, TabState, TableState,
 };
 
 /// Main application state.
@@ -78,6 +78,10 @@ pub struct AppState {
     /// pg_stat_statements (PGS) tab state.
     pub pgs: PgStatementsTabState,
 
+    // ===== pg_store_plans (PGP tab) =====
+    /// pg_store_plans (PGP) tab state.
+    pub pgp: PgStorePlansTabState,
+
     // ===== pg_stat_user_tables (PGT tab) =====
     /// pg_stat_user_tables (PGT) tab state.
     pub pgt: PgTablesTabState,
@@ -146,6 +150,7 @@ impl AppState {
             pga: PgActivityTabState::default(),
             drill_down_requested: false,
             pgs: PgStatementsTabState::default(),
+            pgp: PgStorePlansTabState::default(),
             pgt: PgTablesTabState::default(),
             pgi: PgIndexesTabState::default(),
             pge: PgErrorsTabState::default(),
@@ -179,6 +184,12 @@ impl AppState {
                 sort_column: self.pgs.sort_column,
                 sort_ascending: self.pgs.sort_ascending,
                 selected: self.pgs.selected,
+            },
+            Tab::PgStorePlans => TabState {
+                filter: self.pgp.filter.clone(),
+                sort_column: self.pgp.sort_column,
+                sort_ascending: self.pgp.sort_ascending,
+                selected: self.pgp.selected,
             },
             Tab::PgTables => TabState {
                 filter: self.pgt.filter.clone(),
@@ -233,6 +244,13 @@ impl AppState {
                     self.pgs.sort_ascending = state.sort_ascending;
                     self.pgs.selected = state.selected;
                 }
+                Tab::PgStorePlans => {
+                    self.pgp.filter = state.filter.clone();
+                    self.filter_input = state.filter.clone().unwrap_or_default();
+                    self.pgp.sort_column = state.sort_column;
+                    self.pgp.sort_ascending = state.sort_ascending;
+                    self.pgp.selected = state.selected;
+                }
                 Tab::PgTables => {
                     self.pgt.filter = state.filter.clone();
                     self.filter_input = state.filter.clone().unwrap_or_default();
@@ -277,6 +295,9 @@ impl AppState {
                 }
                 Tab::PgStatements => {
                     self.pgs.tracked_queryid = None;
+                }
+                Tab::PgStorePlans => {
+                    self.pgp.tracked_planid = None;
                 }
                 Tab::PgTables => {
                     self.pgt.tracked_relid = None;

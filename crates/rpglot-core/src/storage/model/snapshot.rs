@@ -10,7 +10,8 @@ use super::cgroup::CgroupInfo;
 use super::postgres::{
     PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventsInfo, PgSettingEntry,
     PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo, PgStatProgressVacuumInfo,
-    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, ReplicationStatus,
+    PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo, PgStorePlansInfo,
+    ReplicationStatus,
 };
 use super::process::ProcessInfo;
 use super::system::{
@@ -39,6 +40,10 @@ pub enum DataBlock {
     /// PostgreSQL query statistics.
     /// Source: `pg_stat_statements` extension
     PgStatStatements(Vec<PgStatStatementsInfo>),
+
+    /// PostgreSQL plan statistics.
+    /// Source: `pg_store_plans` extension
+    PgStorePlans(Vec<PgStorePlansInfo>),
 
     /// PostgreSQL database-level statistics.
     /// Source: `pg_stat_database` view

@@ -11,6 +11,8 @@ export function getTabData(
       return snapshot.pga as unknown as Record<string, unknown>[];
     case "pgs":
       return snapshot.pgs as unknown as Record<string, unknown>[];
+    case "pgp":
+      return snapshot.pgp as unknown as Record<string, unknown>[];
     case "pgt":
       return snapshot.pgt as unknown as Record<string, unknown>[];
     case "pgi":

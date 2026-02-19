@@ -488,6 +488,17 @@ const RULES: Record<string, Classifier> = {
   // --- PGE: extra_num3 (checkpoint estimate_kb, informational) ---
   extra_num3: rateInactive,
 
+  // --- PGP: Mean plan time ---
+  mean_time_ms: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n === 0) return "inactive";
+    if (n < 10) return undefined;
+    if (n < 100) return "warning";
+    return "critical";
+  },
+
   // Rates — zero = inactive
   calls_s: rateInactive,
   rows_s: rateInactive,

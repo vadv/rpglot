@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Lock,
   Trash2,
+  Network,
 } from "lucide-react";
 import { Tooltip } from "./Tooltip";
 import type { TabKey } from "../api/types";
@@ -15,6 +16,7 @@ const TAB_ORDER: TabKey[] = [
   "prc",
   "pga",
   "pgs",
+  "pgp",
   "pgt",
   "pgi",
   "pge",
@@ -43,6 +45,12 @@ const TAB_CONFIG: Record<
     icon: BarChart3,
     description:
       "Cumulative query statistics (pg_stat_statements).\nFind the heaviest queries by total time, calls/sec, or rows returned.\nSpot cache misses, temp file spills, and queries that suddenly got slower.",
+  },
+  pgp: {
+    label: "Plans",
+    icon: Network,
+    description:
+      "Plan statistics from pg_store_plans extension.\nSee execution plans grouped by plan structure, track timing and I/O per plan.\nDetect plan regressions when the optimizer picks a worse plan for the same query.",
   },
   pgt: {
     label: "Tables",

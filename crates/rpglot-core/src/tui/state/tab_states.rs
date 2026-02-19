@@ -3,7 +3,7 @@
 
 use crate::storage::model::{
     DataBlock, PgLogSeverity, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
-    Snapshot,
+    PgStorePlansInfo, Snapshot,
 };
 use ratatui::widgets::TableState as RatatuiTableState;
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::mem;
 
 use super::{
     PgActivityViewMode, PgIndexesRates, PgIndexesViewMode, PgStatementsRates, PgStatementsViewMode,
-    PgTablesRates, PgTablesViewMode,
+    PgStorePlansRates, PgStorePlansViewMode, PgTablesRates, PgTablesViewMode,
 };
 
 // ===========================================================================
@@ -559,6 +559,223 @@ impl PgStatementsTabState {
         self.prev_sample_ts = Some(now_ts);
         self.delta_base = mem::take(&mut self.prev_sample);
         self.prev_sample = current.iter().map(|s| (s.queryid, s.clone())).collect();
+        self.dt_secs = Some(dt);
+    }
+}
+
+// ===========================================================================
+// PGP (pg_store_plans) tab state
+// ===========================================================================
+
+/// State for the PostgreSQL Store Plans (PGP) tab.
+#[derive(Debug)]
+pub struct PgStorePlansTabState {
+    pub selected: usize,
+    pub filter: Option<String>,
+    pub sort_column: usize,
+    pub sort_ascending: bool,
+    pub view_mode: PgStorePlansViewMode,
+    pub tracked_planid: Option<i64>,
+    pub ratatui_state: RatatuiTableState,
+    // Rate computation state
+    pub rates: HashMap<i64, PgStorePlansRates>,
+    pub prev_sample_ts: Option<i64>,
+    pub prev_sample: HashMap<i64, PgStorePlansInfo>,
+    pub delta_base: HashMap<i64, PgStorePlansInfo>,
+    pub dt_secs: Option<f64>,
+    pub current_collected_at: Option<i64>,
+}
+
+impl Default for PgStorePlansTabState {
+    fn default() -> Self {
+        Self {
+            selected: 0,
+            filter: None,
+            sort_column: PgStorePlansViewMode::Time.default_sort_column(),
+            sort_ascending: false,
+            view_mode: PgStorePlansViewMode::Time,
+            tracked_planid: None,
+            ratatui_state: RatatuiTableState::default(),
+            rates: HashMap::new(),
+            prev_sample_ts: None,
+            prev_sample: HashMap::new(),
+            delta_base: HashMap::new(),
+            dt_secs: None,
+            current_collected_at: None,
+        }
+    }
+}
+
+impl PgStorePlansTabState {
+    pub fn next_sort_column(&mut self) {
+        let count = self.view_mode.column_count();
+        if count == 0 {
+            return;
+        }
+        self.sort_column = (self.sort_column + 1) % count;
+    }
+
+    pub fn toggle_sort_direction(&mut self) {
+        self.sort_ascending = !self.sort_ascending;
+    }
+
+    pub fn select_up(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+        self.tracked_planid = None;
+    }
+
+    pub fn select_down(&mut self) {
+        self.selected = self.selected.saturating_add(1);
+        self.tracked_planid = None;
+    }
+
+    pub fn page_up(&mut self, n: usize) {
+        self.selected = self.selected.saturating_sub(n);
+        self.tracked_planid = None;
+    }
+
+    pub fn page_down(&mut self, n: usize) {
+        self.selected = self.selected.saturating_add(n);
+        self.tracked_planid = None;
+    }
+
+    pub fn home(&mut self) {
+        self.selected = 0;
+        self.tracked_planid = None;
+    }
+
+    pub fn end(&mut self) {
+        self.selected = usize::MAX;
+        self.tracked_planid = None;
+    }
+
+    pub fn resolve_selection(&mut self, row_planids: &[i64]) {
+        if let Some(tracked) = self.tracked_planid {
+            if let Some(idx) = row_planids.iter().position(|&pid| pid == tracked) {
+                self.selected = idx;
+            } else {
+                self.tracked_planid = None;
+            }
+        }
+
+        if !row_planids.is_empty() {
+            self.selected = self.selected.min(row_planids.len() - 1);
+            self.tracked_planid = Some(row_planids[self.selected]);
+        } else {
+            self.selected = 0;
+            self.tracked_planid = None;
+        }
+
+        self.ratatui_state.select(Some(self.selected));
+    }
+
+    pub fn reset_rate_state(&mut self) {
+        self.rates.clear();
+        self.prev_sample_ts = None;
+        self.prev_sample.clear();
+        self.delta_base.clear();
+        self.dt_secs = None;
+        self.current_collected_at = None;
+    }
+
+    pub fn update_rates_from_snapshot(&mut self, snapshot: &Snapshot) {
+        let Some(current) = snapshot.blocks.iter().find_map(|b| {
+            if let DataBlock::PgStorePlans(v) = b {
+                Some(v)
+            } else {
+                None
+            }
+        }) else {
+            // No PgStorePlans block — extension not installed, keep existing rates if any
+            return;
+        };
+
+        if current.is_empty() {
+            self.reset_rate_state();
+            return;
+        }
+
+        let now_ts = current
+            .first()
+            .map(|s| s.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(snapshot.timestamp);
+
+        self.current_collected_at = Some(now_ts);
+
+        if let Some(prev_ts) = self.prev_sample_ts
+            && now_ts < prev_ts
+        {
+            self.rates.clear();
+            self.prev_sample_ts = Some(now_ts);
+            self.delta_base = mem::take(&mut self.prev_sample);
+            self.prev_sample = current.iter().map(|s| (s.planid, s.clone())).collect();
+            return;
+        }
+
+        let Some(prev_ts) = self.prev_sample_ts else {
+            self.prev_sample_ts = Some(now_ts);
+            self.delta_base = mem::take(&mut self.prev_sample);
+            self.prev_sample = current.iter().map(|s| (s.planid, s.clone())).collect();
+            self.rates.clear();
+            return;
+        };
+
+        if now_ts == prev_ts {
+            return;
+        }
+
+        let dt = now_ts.saturating_sub(prev_ts) as f64;
+        if dt <= 0.0 {
+            self.prev_sample_ts = Some(now_ts);
+            self.prev_sample = current.iter().map(|s| (s.planid, s.clone())).collect();
+            self.rates.clear();
+            return;
+        }
+
+        fn delta_i64(curr: i64, prev: i64) -> Option<i64> {
+            (curr >= prev).then_some(curr - prev)
+        }
+
+        fn delta_f64(curr: f64, prev: f64) -> Option<f64> {
+            (curr >= prev).then_some(curr - prev)
+        }
+
+        let mut rates = HashMap::with_capacity(current.len());
+        for s in current {
+            let prev = self.prev_sample.get(&s.planid);
+            let mut r = PgStorePlansRates {
+                dt_secs: dt,
+                ..PgStorePlansRates::default()
+            };
+
+            if let Some(prev) = prev {
+                r.calls_s = delta_i64(s.calls, prev.calls).map(|d| d as f64 / dt);
+                r.rows_s = delta_i64(s.rows, prev.rows).map(|d| d as f64 / dt);
+                r.exec_time_ms_s = delta_f64(s.total_time, prev.total_time).map(|d| d / dt);
+                r.shared_blks_read_s =
+                    delta_i64(s.shared_blks_read, prev.shared_blks_read).map(|d| d as f64 / dt);
+                r.shared_blks_hit_s =
+                    delta_i64(s.shared_blks_hit, prev.shared_blks_hit).map(|d| d as f64 / dt);
+                r.shared_blks_dirtied_s =
+                    delta_i64(s.shared_blks_dirtied, prev.shared_blks_dirtied)
+                        .map(|d| d as f64 / dt);
+                r.shared_blks_written_s =
+                    delta_i64(s.shared_blks_written, prev.shared_blks_written)
+                        .map(|d| d as f64 / dt);
+                r.temp_blks_read_s =
+                    delta_i64(s.temp_blks_read, prev.temp_blks_read).map(|d| d as f64 / dt);
+                r.temp_blks_written_s =
+                    delta_i64(s.temp_blks_written, prev.temp_blks_written).map(|d| d as f64 / dt);
+            }
+
+            rates.insert(s.planid, r);
+        }
+
+        self.rates = rates;
+        self.prev_sample_ts = Some(now_ts);
+        self.delta_base = mem::take(&mut self.prev_sample);
+        self.prev_sample = current.iter().map(|s| (s.planid, s.clone())).collect();
         self.dt_secs = Some(dt);
     }
 }

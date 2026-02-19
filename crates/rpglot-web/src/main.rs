@@ -64,7 +64,7 @@ use rpglot_core::collector::RealFs;
 #[cfg(not(target_os = "linux"))]
 use rpglot_core::collector::mock::MockFs;
 use rpglot_core::collector::{Collector, PostgresCollector};
-use rpglot_core::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
+use rpglot_core::models::{PgIndexesRates, PgStatementsRates, PgStorePlansRates, PgTablesRates};
 use rpglot_core::provider::{HistoryProvider, LiveProvider, SnapshotProvider};
 use rpglot_core::storage::model::{DataBlock, Snapshot};
 use rust_embed::Embed;
@@ -161,11 +161,15 @@ struct WebAppInner {
     prev_snapshot: Option<Snapshot>,
     // Rates
     pgs_rates: HashMap<i64, PgStatementsRates>,
+    pgp_rates: HashMap<i64, PgStorePlansRates>,
     pgt_rates: HashMap<u32, PgTablesRates>,
     pgi_rates: HashMap<u32, PgIndexesRates>,
     // PGS rate tracking
     pgs_prev_sample: HashMap<i64, rpglot_core::storage::model::PgStatStatementsInfo>,
     pgs_prev_ts: Option<i64>,
+    // PGP rate tracking
+    pgp_prev_sample: HashMap<i64, rpglot_core::storage::model::PgStorePlansInfo>,
+    pgp_prev_ts: Option<i64>,
     // PGT rate tracking
     pgt_prev_sample: HashMap<u32, rpglot_core::storage::model::PgStatUserTablesInfo>,
     pgt_prev_ts: Option<i64>,
@@ -266,10 +270,13 @@ async fn async_main(args: Args) {
         raw_snapshot: None,
         prev_snapshot: None,
         pgs_rates: HashMap::new(),
+        pgp_rates: HashMap::new(),
         pgt_rates: HashMap::new(),
         pgi_rates: HashMap::new(),
         pgs_prev_sample: HashMap::new(),
         pgs_prev_ts: None,
+        pgp_prev_sample: HashMap::new(),
+        pgp_prev_ts: None,
         pgt_prev_sample: HashMap::new(),
         pgt_prev_ts: None,
         pgi_prev_sample: HashMap::new(),
@@ -599,6 +606,7 @@ fn advance_and_convert(inner: &mut WebAppInner) {
 
     // Update rates (must happen before borrowing interner)
     update_pgs_rates(inner, &snapshot);
+    update_pgp_rates(inner, &snapshot);
     update_pgt_rates(inner, &snapshot);
     update_pgi_rates(inner, &snapshot);
 
@@ -620,6 +628,7 @@ fn advance_and_convert(inner: &mut WebAppInner) {
         prev_snapshot: inner.prev_snapshot.as_ref(),
         interner: inner.provider.interner(),
         pgs_rates: &inner.pgs_rates,
+        pgp_rates: &inner.pgp_rates,
         pgt_rates: &inner.pgt_rates,
         pgi_rates: &inner.pgi_rates,
     };
@@ -691,6 +700,16 @@ fn find_pgs_prev_snapshot(
     None
 }
 
+fn extract_pgp_collected_at(snapshot: &Snapshot) -> Option<i64> {
+    snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStorePlans(plans) = b {
+            plans.first().map(|p| p.collected_at).filter(|&t| t > 0)
+        } else {
+            None
+        }
+    })
+}
+
 fn extract_pgt_collected_at(snapshot: &Snapshot) -> Option<i64> {
     snapshot.blocks.iter().find_map(|b| {
         if let DataBlock::PgStatUserTables(tables) = b {
@@ -709,6 +728,24 @@ fn extract_pgi_collected_at(snapshot: &Snapshot) -> Option<i64> {
             None
         }
     })
+}
+
+fn find_pgp_prev_snapshot(
+    hp: &mut HistoryProvider,
+    pos: usize,
+    current_collected_at: i64,
+) -> Option<Snapshot> {
+    let max_lookback = 10;
+    let start = pos.saturating_sub(max_lookback);
+    for p in (start..pos).rev() {
+        if let Some(snap) = hp.snapshot_at(p)
+            && let Some(ts) = extract_pgp_collected_at(&snap)
+            && ts != current_collected_at
+        {
+            return Some(snap);
+        }
+    }
+    None
 }
 
 fn find_pgt_prev_snapshot(
@@ -779,10 +816,13 @@ fn reconvert_current(inner: &mut WebAppInner) {
 
     // Reset rate tracking state
     inner.pgs_rates.clear();
+    inner.pgp_rates.clear();
     inner.pgt_rates.clear();
     inner.pgi_rates.clear();
     inner.pgs_prev_sample.clear();
     inner.pgs_prev_ts = None;
+    inner.pgp_prev_sample.clear();
+    inner.pgp_prev_ts = None;
     inner.pgt_prev_sample.clear();
     inner.pgt_prev_ts = None;
     inner.pgi_prev_sample.clear();
@@ -827,6 +867,14 @@ fn reconvert_current(inner: &mut WebAppInner) {
         let pgs_prev = pgs_seed.as_ref().unwrap_or(prev);
         seed_pgs_prev(inner, pgs_prev);
         update_pgs_rates(inner, &snapshot);
+
+        // PGP
+        let pgp_seed = extract_pgp_collected_at(&snapshot).and_then(|curr_ts| {
+            hp_mut!(inner).and_then(|hp| find_pgp_prev_snapshot(hp, position, curr_ts))
+        });
+        let pgp_prev = pgp_seed.as_ref().unwrap_or(prev);
+        seed_pgp_prev(inner, pgp_prev);
+        update_pgp_rates(inner, &snapshot);
     }
 
     let interner = inner.provider.interner();
@@ -835,6 +883,7 @@ fn reconvert_current(inner: &mut WebAppInner) {
         prev_snapshot: prev_adjacent.as_ref(),
         interner,
         pgs_rates: &inner.pgs_rates,
+        pgp_rates: &inner.pgp_rates,
         pgt_rates: &inner.pgt_rates,
         pgi_rates: &inner.pgi_rates,
     };
@@ -901,6 +950,25 @@ fn seed_pgi_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             .unwrap_or(prev.timestamp);
         inner.pgi_prev_ts = Some(ts);
         inner.pgi_prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
+    }
+}
+
+/// Seed PGP prev_sample state from a snapshot (for rate computation after jump).
+fn seed_pgp_prev(inner: &mut WebAppInner, prev: &Snapshot) {
+    if let Some(plans) = prev.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStorePlans(v) = b {
+            Some(v)
+        } else {
+            None
+        }
+    }) {
+        let ts = plans
+            .first()
+            .map(|p| p.collected_at)
+            .filter(|&t| t > 0)
+            .unwrap_or(prev.timestamp);
+        inner.pgp_prev_ts = Some(ts);
+        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
     }
 }
 
@@ -989,6 +1057,79 @@ fn update_pgs_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
     inner.pgs_rates = rates;
     inner.pgs_prev_ts = Some(now_ts);
     inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
+}
+
+fn update_pgp_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
+    let Some(plans) = snapshot.blocks.iter().find_map(|b| {
+        if let DataBlock::PgStorePlans(v) = b {
+            Some(v)
+        } else {
+            None
+        }
+    }) else {
+        inner.pgp_rates.clear();
+        return;
+    };
+
+    if plans.is_empty() {
+        inner.pgp_rates.clear();
+        return;
+    }
+
+    let now_ts = plans
+        .first()
+        .map(|p| p.collected_at)
+        .filter(|&t| t > 0)
+        .unwrap_or(snapshot.timestamp);
+
+    let Some(prev_ts) = inner.pgp_prev_ts else {
+        inner.pgp_prev_ts = Some(now_ts);
+        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
+        inner.pgp_rates.clear();
+        return;
+    };
+
+    if now_ts == prev_ts {
+        return;
+    }
+
+    if now_ts < prev_ts {
+        inner.pgp_prev_ts = Some(now_ts);
+        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
+        inner.pgp_rates.clear();
+        return;
+    }
+
+    let dt = (now_ts - prev_ts) as f64;
+
+    let mut rates = HashMap::with_capacity(plans.len());
+    for p in plans {
+        let mut r = PgStorePlansRates {
+            dt_secs: dt,
+            ..Default::default()
+        };
+        if let Some(prev) = inner.pgp_prev_sample.get(&p.planid) {
+            r.calls_s = di64(p.calls, prev.calls).map(|d| d as f64 / dt);
+            r.rows_s = di64(p.rows, prev.rows).map(|d| d as f64 / dt);
+            r.exec_time_ms_s = df64(p.total_time, prev.total_time).map(|d| d / dt);
+            r.shared_blks_read_s =
+                di64(p.shared_blks_read, prev.shared_blks_read).map(|d| d as f64 / dt);
+            r.shared_blks_hit_s =
+                di64(p.shared_blks_hit, prev.shared_blks_hit).map(|d| d as f64 / dt);
+            r.shared_blks_dirtied_s =
+                di64(p.shared_blks_dirtied, prev.shared_blks_dirtied).map(|d| d as f64 / dt);
+            r.shared_blks_written_s =
+                di64(p.shared_blks_written, prev.shared_blks_written).map(|d| d as f64 / dt);
+            r.temp_blks_read_s = di64(p.temp_blks_read, prev.temp_blks_read).map(|d| d as f64 / dt);
+            r.temp_blks_written_s =
+                di64(p.temp_blks_written, prev.temp_blks_written).map(|d| d as f64 / dt);
+        }
+        rates.insert(p.planid, r);
+    }
+
+    inner.pgp_rates = rates;
+    inner.pgp_prev_ts = Some(now_ts);
+    inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
 }
 
 fn update_pgt_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
@@ -1894,6 +2035,7 @@ async fn basic_auth_middleware(
         rpglot_core::api::snapshot::PgStatementsRow,
         rpglot_core::api::snapshot::PgTablesRow,
         rpglot_core::api::snapshot::PgIndexesRow,
+        rpglot_core::api::snapshot::PgStorePlansRow,
         rpglot_core::api::snapshot::PgLocksRow,
         rpglot_core::api::snapshot::ReplicationInfo,
         rpglot_core::api::snapshot::ReplicaDetail,

@@ -7,6 +7,7 @@ export const TAB_ORDER: TabKey[] = [
   "prc",
   "pga",
   "pgs",
+  "pgp",
   "pgt",
   "pgi",
   "pge",

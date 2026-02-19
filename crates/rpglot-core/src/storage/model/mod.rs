@@ -24,7 +24,7 @@ pub use postgres::{
     ErrorCategory, PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventType, PgLogEventsInfo,
     PgLogSeverity, PgSettingEntry, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
     PgStatProgressVacuumInfo, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
-    ReplicaInfo, ReplicationStatus,
+    PgStorePlansInfo, ReplicaInfo, ReplicationStatus,
 };
 #[allow(unused_imports)]
 pub use process::{ProcessCpuInfo, ProcessDskInfo, ProcessInfo, ProcessMemInfo};

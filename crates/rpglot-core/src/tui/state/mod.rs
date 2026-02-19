@@ -16,6 +16,7 @@ pub enum Tab {
     Processes,
     PostgresActive,
     PgStatements,
+    PgStorePlans,
     PgTables,
     PgIndexes,
     PgErrors,
@@ -28,6 +29,7 @@ impl Tab {
             Tab::Processes,
             Tab::PostgresActive,
             Tab::PgStatements,
+            Tab::PgStorePlans,
             Tab::PgTables,
             Tab::PgIndexes,
             Tab::PgErrors,
@@ -56,6 +58,7 @@ impl Tab {
             Tab::Processes => "PRC",
             Tab::PostgresActive => "PGA",
             Tab::PgStatements => "PGS",
+            Tab::PgStorePlans => "PGP",
             Tab::PgTables => "PGT",
             Tab::PgIndexes => "PGI",
             Tab::PgErrors => "PGE",
@@ -68,7 +71,8 @@ impl Tab {
         match self {
             Tab::Processes => Tab::PostgresActive,
             Tab::PostgresActive => Tab::PgStatements,
-            Tab::PgStatements => Tab::PgTables,
+            Tab::PgStatements => Tab::PgStorePlans,
+            Tab::PgStorePlans => Tab::PgTables,
             Tab::PgTables => Tab::PgIndexes,
             Tab::PgIndexes => Tab::PgErrors,
             Tab::PgErrors => Tab::PgLocks,
@@ -82,7 +86,8 @@ impl Tab {
             Tab::Processes => Tab::PgLocks,
             Tab::PostgresActive => Tab::Processes,
             Tab::PgStatements => Tab::PostgresActive,
-            Tab::PgTables => Tab::PgStatements,
+            Tab::PgStorePlans => Tab::PgStatements,
+            Tab::PgTables => Tab::PgStorePlans,
             Tab::PgIndexes => Tab::PgTables,
             Tab::PgErrors => Tab::PgIndexes,
             Tab::PgLocks => Tab::PgErrors,
@@ -129,6 +134,12 @@ pub enum PopupState {
         scroll: usize,
         show_help: bool,
     },
+    /// pg_store_plans detail popup (PGP tab).
+    PgpDetail {
+        planid: i64,
+        scroll: usize,
+        show_help: bool,
+    },
     /// pg_stat_user_tables detail popup (PGT tab).
     PgtDetail {
         relid: u32,
@@ -161,13 +172,14 @@ impl PopupState {
         !matches!(self, Self::None)
     }
 
-    /// Returns true if a detail popup (ProcessDetail, PgDetail, PgsDetail, PgtDetail, PgiDetail) is open.
+    /// Returns true if a detail popup is open.
     pub fn is_detail_open(&self) -> bool {
         matches!(
             self,
             Self::ProcessDetail { .. }
                 | Self::PgDetail { .. }
                 | Self::PgsDetail { .. }
+                | Self::PgpDetail { .. }
                 | Self::PgtDetail { .. }
                 | Self::PgiDetail { .. }
                 | Self::PglDetail { .. }

@@ -326,6 +326,71 @@ pub(super) fn build_lock_tree_query() -> &'static str {
     "#
 }
 
+/// Fork of pg_store_plans extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StorePlansFork {
+    /// ossc-db fork (v1.9): `queryid` = pg_stat_statements.queryid
+    OsscDb,
+    /// vadv fork (v2.0): `queryid_stat_statements` = pg_stat_statements.queryid
+    Vadv,
+}
+
+/// Builds query for pg_store_plans (fork-aware).
+///
+/// ossc-db: `s.queryid` as stmt_queryid, I/O timing is sum of shared+local+temp
+/// vadv: `s.queryid_stat_statements` as stmt_queryid, direct `blk_read_time`/`blk_write_time`
+pub(super) fn build_store_plans_query(fork: StorePlansFork) -> String {
+    let (stmt_queryid_expr, blk_read_time_expr, blk_write_time_expr) = match fork {
+        StorePlansFork::OsscDb => (
+            "s.queryid",
+            "COALESCE(s.shared_blk_read_time, 0) + COALESCE(s.local_blk_read_time, 0) + COALESCE(s.temp_blk_read_time, 0)",
+            "COALESCE(s.shared_blk_write_time, 0) + COALESCE(s.local_blk_write_time, 0) + COALESCE(s.temp_blk_write_time, 0)",
+        ),
+        StorePlansFork::Vadv => (
+            "s.queryid_stat_statements",
+            "COALESCE(s.blk_read_time, 0)",
+            "COALESCE(s.blk_write_time, 0)",
+        ),
+    };
+
+    format!(
+        r#"
+            SELECT
+                {stmt_queryid_expr}::bigint AS stmt_queryid,
+                s.planid::bigint,
+                COALESCE(s.plan, '') AS plan,
+                s.userid,
+                s.dbid,
+                COALESCE(d.datname, '') AS datname,
+                COALESCE(r.rolname, '') AS usename,
+                s.calls,
+                s.total_time::double precision AS total_time,
+                s.mean_time::double precision AS mean_time,
+                s.min_time::double precision AS min_time,
+                s.max_time::double precision AS max_time,
+                s.stddev_time::double precision AS stddev_time,
+                s.rows,
+                COALESCE(s.shared_blks_hit, 0) AS shared_blks_hit,
+                COALESCE(s.shared_blks_read, 0) AS shared_blks_read,
+                COALESCE(s.shared_blks_dirtied, 0) AS shared_blks_dirtied,
+                COALESCE(s.shared_blks_written, 0) AS shared_blks_written,
+                COALESCE(s.local_blks_read, 0) AS local_blks_read,
+                COALESCE(s.local_blks_written, 0) AS local_blks_written,
+                COALESCE(s.temp_blks_read, 0) AS temp_blks_read,
+                COALESCE(s.temp_blks_written, 0) AS temp_blks_written,
+                ({blk_read_time_expr})::double precision AS blk_read_time,
+                ({blk_write_time_expr})::double precision AS blk_write_time,
+                COALESCE(EXTRACT(EPOCH FROM s.first_call)::bigint, 0) AS first_call,
+                COALESCE(EXTRACT(EPOCH FROM s.last_call)::bigint, 0) AS last_call
+            FROM pg_store_plans s
+            LEFT JOIN pg_database d ON d.oid = s.dbid
+            LEFT JOIN pg_roles r ON r.oid = s.userid
+            ORDER BY s.total_time DESC
+            LIMIT 500
+        "#
+    )
+}
+
 /// Builds version-aware query for pg_stat_bgwriter (+ pg_stat_checkpointer on PG 17+).
 ///
 /// PG < 17: all fields in pg_stat_bgwriter (single view).

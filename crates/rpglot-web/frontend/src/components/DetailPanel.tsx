@@ -293,6 +293,43 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
       ],
     },
   ],
+  pgp: [
+    {
+      title: "Plan Info",
+      fields: ["planid", "stmt_queryid", "database", "user"],
+    },
+    {
+      title: "Timing",
+      fields: [
+        "calls",
+        "rows",
+        "mean_time_ms",
+        "min_time_ms",
+        "max_time_ms",
+        "total_time_ms",
+        "first_call",
+        "last_call",
+      ],
+    },
+    {
+      title: "Rates",
+      fields: ["calls_s", "rows_s", "exec_time_ms_s", "rows_per_call"],
+    },
+    {
+      title: "I/O",
+      fields: [
+        "shared_blks_read_s",
+        "shared_blks_hit_s",
+        "shared_blks_dirtied_s",
+        "shared_blks_written_s",
+        "temp_blks_read_s",
+        "temp_blks_written_s",
+        "hit_pct",
+      ],
+    },
+    { title: "Query", fields: ["query"], type: "query" },
+    { title: "Plan", fields: ["plan"], type: "query" },
+  ],
   pge: [
     {
       title: "Event Info",
@@ -369,6 +406,7 @@ const TAB_NAMES: Record<TabKey, string> = {
   prc: "Process",
   pga: "Activity",
   pgs: "Statement",
+  pgp: "Plan",
   pgt: "Table",
   pgi: "Index",
   pge: "Event",

@@ -20,6 +20,7 @@ export interface ApiSnapshot {
   prc: ApiProcessRow[];
   pga: PgActivityRow[];
   pgs: PgStatementsRow[];
+  pgp: PgStorePlansRow[];
   pgt: PgTablesRow[];
   pgi: PgIndexesRow[];
   pge: PgEventsRow[];
@@ -284,6 +285,34 @@ export interface PgStatementsRow {
   total_exec_time: number;
 }
 
+export interface PgStorePlansRow {
+  planid: number;
+  stmt_queryid: number;
+  database: string;
+  user: string;
+  query: string;
+  plan: string;
+  calls: number;
+  rows: number;
+  mean_time_ms: number;
+  min_time_ms: number;
+  max_time_ms: number;
+  total_time_ms: number;
+  first_call: number;
+  last_call: number;
+  calls_s: number | null;
+  rows_s: number | null;
+  exec_time_ms_s: number | null;
+  shared_blks_read_s: number | null;
+  shared_blks_hit_s: number | null;
+  shared_blks_dirtied_s: number | null;
+  shared_blks_written_s: number | null;
+  temp_blks_read_s: number | null;
+  temp_blks_written_s: number | null;
+  rows_per_call: number | null;
+  hit_pct: number | null;
+}
+
 export interface PgTablesRow {
   relid: number;
   database: string;
@@ -481,6 +510,7 @@ export interface TabsSchema {
   prc: TabSchema;
   pga: TabSchema;
   pgs: TabSchema;
+  pgp: TabSchema;
   pgt: TabSchema;
   pgi: TabSchema;
   pge: TabSchema;
@@ -571,6 +601,7 @@ export type TabKey =
   | "prc"
   | "pga"
   | "pgs"
+  | "pgp"
   | "pgt"
   | "pgi"
   | "pge"

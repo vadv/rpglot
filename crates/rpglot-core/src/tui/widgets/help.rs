@@ -7,7 +7,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::tui::state::{
-    PgIndexesViewMode, PgStatementsViewMode, PgTablesViewMode, ProcessViewMode, Tab,
+    PgIndexesViewMode, PgStatementsViewMode, PgStorePlansViewMode, PgTablesViewMode,
+    ProcessViewMode, Tab,
 };
 
 /// Renders the help popup centered on screen with scroll support.
@@ -18,6 +19,7 @@ pub fn render_help(
     tab: Tab,
     view_mode: ProcessViewMode,
     pgs_view_mode: PgStatementsViewMode,
+    pgp_view_mode: PgStorePlansViewMode,
     pgt_view_mode: PgTablesViewMode,
     pgi_view_mode: PgIndexesViewMode,
     scroll: &mut usize,
@@ -35,8 +37,14 @@ pub fn render_help(
     frame.render_widget(Clear, popup_area);
 
     // Get help content based on tab
-    let (title, content) =
-        get_help_content(tab, view_mode, pgs_view_mode, pgt_view_mode, pgi_view_mode);
+    let (title, content) = get_help_content(
+        tab,
+        view_mode,
+        pgs_view_mode,
+        pgp_view_mode,
+        pgt_view_mode,
+        pgi_view_mode,
+    );
     let content_lines = content.len();
 
     let block = Block::default()
@@ -97,6 +105,7 @@ fn get_help_content(
     tab: Tab,
     view_mode: ProcessViewMode,
     pgs_view_mode: PgStatementsViewMode,
+    pgp_view_mode: PgStorePlansViewMode,
     pgt_view_mode: PgTablesViewMode,
     pgi_view_mode: PgIndexesViewMode,
 ) -> (&'static str, Vec<Line<'static>>) {
@@ -104,6 +113,7 @@ fn get_help_content(
         Tab::Processes => get_process_help(view_mode),
         Tab::PostgresActive => ("PostgreSQL Activity Help (PGA)", get_postgres_help()),
         Tab::PgStatements => get_pgs_help(pgs_view_mode),
+        Tab::PgStorePlans => get_pgp_help(pgp_view_mode),
         Tab::PgTables => get_pgt_help(pgt_view_mode),
         Tab::PgIndexes => get_pgi_help(pgi_view_mode),
         Tab::PgErrors => ("PostgreSQL Events Help (PGE)", get_pge_help()),
@@ -587,6 +597,121 @@ fn get_postgres_help() -> Vec<Line<'static>> {
         Line::from("- Statement Statistics (from pg_stat_statements, if available)"),
         Line::from("- Full query text"),
     ]
+}
+
+fn get_pgp_help(mode: PgStorePlansViewMode) -> (&'static str, Vec<Line<'static>>) {
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(Span::styled(
+        "View modes: t=Time, i=I/O, e=Regression",
+        Style::default().fg(Color::Cyan),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Data source: pg_store_plans extension (plan-level statistics)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Filtering: matches planid, queryid (prefix), DB or PLAN (substring)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Rates: per-second (/s) computed from cumulative counter deltas",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "-- means not enough data yet (first sample or after stats reset)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Sorting: s=next column, r=reverse direction",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+
+    match mode {
+        PgStorePlansViewMode::Time => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Time):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("CALLS/s - plan executions per second"),
+                Line::from("TIME/s  - execution time per second (ms/s)"),
+                Line::from("MEAN    - mean execution time per call (ms)"),
+                Line::from("MAX     - max execution time (ms)"),
+                Line::from("ROWS/s  - rows per second"),
+                Line::from("DB      - database name"),
+                Line::from("QID     - parent query id (from pg_stat_statements)"),
+                Line::from("PLAN    - plan text"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("Sort by TIME/s to find plans consuming most CPU time"),
+                Line::from("High MEAN = slow plan, compare with other plans for same QID"),
+                Line::from("Multiple plans per QID = plan regression, compare MEAN values"),
+            ]);
+            ("PostgreSQL Store Plans Help (PGP) - Time (t)", lines)
+        }
+        PgStorePlansViewMode::Io => {
+            lines.push(Line::from(Span::styled(
+                "Columns (I/O):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("CALLS/s   - plan executions per second"),
+                Line::from("BLK_RD/s  - shared blocks read per second"),
+                Line::from("BLK_HIT/s - shared blocks hit per second"),
+                Line::from("HIT%      - shared buffer cache hit ratio"),
+                Line::from("BLK_WR/s  - shared blocks written per second"),
+                Line::from("DB        - database name"),
+                Line::from("PLAN      - plan text"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("HIT% < 99% for OLTP = consider increasing shared_buffers"),
+                Line::from("High BLK_RD/s = plan reads from disk, check indexes"),
+                Line::from("Compare I/O across plans for same query to pick best plan"),
+            ]);
+            ("PostgreSQL Store Plans Help (PGP) - I/O (i)", lines)
+        }
+        PgStorePlansViewMode::Regression => {
+            lines.push(Line::from(Span::styled(
+                "Columns (Regression):",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("CALLS/s - plan executions per second"),
+                Line::from("MEAN    - mean execution time (ms)"),
+                Line::from("MAX     - max execution time (ms)"),
+                Line::from("MIN     - min execution time (ms)"),
+                Line::from("RATIO   - max_mean / min_mean across plans for same query"),
+                Line::from("          only queries with >1 plan and ratio > 2x shown"),
+                Line::from("DB      - database name"),
+                Line::from("PLAN    - plan text"),
+            ]);
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Troubleshooting Tips:",
+                Style::default().fg(Color::Yellow),
+            )));
+            lines.extend([
+                Line::from("High RATIO = plan regression detected"),
+                Line::from("  same query uses different plans with vastly different performance"),
+                Line::from("  check EXPLAIN for the slow plan, consider pg_hint_plan"),
+                Line::from("RATIO > 10x = critical regression, needs immediate attention"),
+            ]);
+            ("PostgreSQL Store Plans Help (PGP) - Regression (e)", lines)
+        }
+    }
 }
 
 fn get_pgt_help(mode: PgTablesViewMode) -> (&'static str, Vec<Line<'static>>) {

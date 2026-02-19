@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Lock,
   Trash2,
+  Network,
 } from "lucide-react";
 import type { TabKey } from "../api/types";
 import { TAB_HELP } from "../utils/helpContent";
@@ -20,6 +21,7 @@ const TAB_ICONS: Record<TabKey, typeof Monitor> = {
   prc: Monitor,
   pga: Activity,
   pgs: BarChart3,
+  pgp: Network,
   pgt: Table2,
   pgi: ListTree,
   pge: AlertTriangle,

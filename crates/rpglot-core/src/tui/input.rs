@@ -45,6 +45,7 @@ fn dispatch_navigation(state: &mut AppState, action: NavAction) {
         | PopupState::PgsDetail { scroll, .. }
         | PopupState::PgtDetail { scroll, .. }
         | PopupState::PgiDetail { scroll, .. }
+        | PopupState::PgpDetail { scroll, .. }
         | PopupState::PgeDetail { scroll, .. }
         | PopupState::PglDetail { scroll, .. } => match action {
             NavAction::Up => *scroll = scroll.saturating_sub(1),
@@ -83,6 +84,14 @@ fn dispatch_navigation(state: &mut AppState, action: NavAction) {
                 NavAction::PageDown(n) => state.pgs.page_down(n),
                 NavAction::Home => state.pgs.home(),
                 NavAction::End => state.pgs.end(),
+            },
+            Tab::PgStorePlans => match action {
+                NavAction::Up => state.pgp.select_up(),
+                NavAction::Down => state.pgp.select_down(),
+                NavAction::PageUp(n) => state.pgp.page_up(n),
+                NavAction::PageDown(n) => state.pgp.page_down(n),
+                NavAction::Home => state.pgp.home(),
+                NavAction::End => state.pgp.end(),
             },
             Tab::PgTables => match action {
                 NavAction::Up => state.pgt.select_up(),
@@ -170,6 +179,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
         | KeyCode::Char('5')
         | KeyCode::Char('6')
         | KeyCode::Char('7')
+        | KeyCode::Char('8')
             if state.any_popup_open() =>
         {
             state.status_message = Some("Close popup (Esc) before switching tabs".to_string());
@@ -196,18 +206,22 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
             KeyAction::None
         }
         KeyCode::Char('4') => {
-            state.switch_tab(Tab::PgTables);
+            state.switch_tab(Tab::PgStorePlans);
             KeyAction::None
         }
         KeyCode::Char('5') => {
-            state.switch_tab(Tab::PgIndexes);
+            state.switch_tab(Tab::PgTables);
             KeyAction::None
         }
         KeyCode::Char('6') => {
-            state.switch_tab(Tab::PgErrors);
+            state.switch_tab(Tab::PgIndexes);
             KeyAction::None
         }
         KeyCode::Char('7') => {
+            state.switch_tab(Tab::PgErrors);
+            KeyAction::None
+        }
+        KeyCode::Char('8') => {
             state.switch_tab(Tab::PgLocks);
             KeyAction::None
         }
@@ -244,6 +258,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 Tab::Processes => state.next_process_sort_column(),
                 Tab::PostgresActive => state.pga.next_sort_column(),
                 Tab::PgStatements => state.pgs.next_sort_column(),
+                Tab::PgStorePlans => state.pgp.next_sort_column(),
                 Tab::PgTables => state.pgt.next_sort_column(),
                 Tab::PgIndexes => state.pgi.next_sort_column(),
                 Tab::PgErrors => state.pge.next_sort_column(),
@@ -256,6 +271,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 Tab::Processes => state.toggle_process_sort_direction(),
                 Tab::PostgresActive => state.pga.toggle_sort_direction(),
                 Tab::PgStatements => state.pgs.toggle_sort_direction(),
+                Tab::PgStorePlans => state.pgp.toggle_sort_direction(),
                 Tab::PgTables => state.pgt.toggle_sort_direction(),
                 Tab::PgIndexes => state.pgi.toggle_sort_direction(),
                 Tab::PgErrors => state.pge.toggle_sort_direction(),
@@ -305,6 +321,13 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.pgs.sort_column =
                     super::state::PgStatementsViewMode::Time.default_sort_column();
                 state.pgs.sort_ascending = false;
+                KeyAction::None
+            } else if state.current_tab == Tab::PgStorePlans {
+                state.pgp.view_mode = super::state::PgStorePlansViewMode::Time;
+                state.pgp.selected = 0;
+                state.pgp.sort_column =
+                    super::state::PgStorePlansViewMode::Time.default_sort_column();
+                state.pgp.sort_ascending = false;
                 KeyAction::None
             } else if !state.is_live {
                 KeyAction::Advance
@@ -411,6 +434,12 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.pgs.sort_column =
                     super::state::PgStatementsViewMode::Io.default_sort_column();
                 state.pgs.sort_ascending = false;
+            } else if state.current_tab == Tab::PgStorePlans {
+                state.pgp.view_mode = super::state::PgStorePlansViewMode::Io;
+                state.pgp.selected = 0;
+                state.pgp.sort_column =
+                    super::state::PgStorePlansViewMode::Io.default_sort_column();
+                state.pgp.sort_ascending = false;
             } else if state.current_tab == Tab::PgTables {
                 state.pgt.view_mode = super::state::PgTablesViewMode::Io;
                 state.pgt.selected = 0;
@@ -433,6 +462,12 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 state.pgs.sort_column =
                     super::state::PgStatementsViewMode::Temp.default_sort_column();
                 state.pgs.sort_ascending = false;
+            } else if state.current_tab == Tab::PgStorePlans {
+                state.pgp.view_mode = super::state::PgStorePlansViewMode::Regression;
+                state.pgp.selected = 0;
+                state.pgp.sort_column =
+                    super::state::PgStorePlansViewMode::Regression.default_sort_column();
+                state.pgp.sort_ascending = false;
             }
             KeyAction::None
         }
@@ -505,6 +540,7 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 PopupState::ProcessDetail { show_help, .. }
                 | PopupState::PgDetail { show_help, .. }
                 | PopupState::PgsDetail { show_help, .. }
+                | PopupState::PgpDetail { show_help, .. }
                 | PopupState::PgtDetail { show_help, .. }
                 | PopupState::PgiDetail { show_help, .. }
                 | PopupState::PgeDetail { show_help, .. }
@@ -571,6 +607,21 @@ fn handle_normal_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                         if let Some(queryid) = state.pgs.tracked_queryid {
                             PopupState::PgsDetail {
                                 queryid,
+                                scroll: 0,
+                                show_help: false,
+                            }
+                        } else {
+                            PopupState::None
+                        }
+                    }
+                };
+            } else if state.current_tab == Tab::PgStorePlans {
+                state.popup = match state.popup {
+                    PopupState::PgpDetail { .. } => PopupState::None,
+                    _ => {
+                        if let Some(planid) = state.pgp.tracked_planid {
+                            PopupState::PgpDetail {
+                                planid,
                                 scroll: 0,
                                 show_help: false,
                             }
@@ -859,6 +910,7 @@ fn handle_filter_mode(state: &mut AppState, key: KeyEvent) -> KeyAction {
                 Tab::Processes => state.process_table.set_filter(None),
                 Tab::PostgresActive => state.pga.filter = None,
                 Tab::PgStatements => state.pgs.filter = None,
+                Tab::PgStorePlans => state.pgp.filter = None,
                 Tab::PgTables => state.pgt.filter = None,
                 Tab::PgIndexes => state.pgi.filter = None,
                 Tab::PgErrors => state.pge.filter = None,
@@ -899,6 +951,7 @@ fn apply_current_filter(state: &mut AppState) {
         Tab::Processes => state.process_table.set_filter(filter),
         Tab::PostgresActive => state.pga.filter = filter,
         Tab::PgStatements => state.pgs.filter = filter,
+        Tab::PgStorePlans => state.pgp.filter = filter,
         Tab::PgTables => state.pgt.filter = filter,
         Tab::PgIndexes => state.pgi.filter = filter,
         Tab::PgErrors => state.pge.filter = filter,

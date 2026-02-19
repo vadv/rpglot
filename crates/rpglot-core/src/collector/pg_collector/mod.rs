@@ -30,6 +30,7 @@ mod queries;
 mod replication;
 mod settings;
 mod statements;
+mod store_plans;
 mod tables;
 
 use postgres::{Client, NoTls};
@@ -41,10 +42,12 @@ use tracing::{debug, info, warn};
 use super::log_collector::LogCollector;
 use crate::storage::model::{
     PgSettingEntry, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
-    ReplicationStatus,
+    PgStorePlansInfo, ReplicationStatus,
 };
 use indexes::PgStatUserIndexesCacheEntry;
+use queries::StorePlansFork;
 use statements::{PgStatStatementsCacheEntry, STATEMENTS_COLLECT_INTERVAL};
+use store_plans::PgStorePlansCacheEntry;
 use tables::PgStatUserTablesCacheEntry;
 
 /// Interval between database pool refresh checks.
@@ -118,6 +121,17 @@ pub struct PostgresCollector {
     pub(crate) pgs_first_collect: bool,
     /// Cached filtered result for pg_stat_statements (returned when collector cache is fresh).
     pub(crate) pgs_filtered_cache: Vec<PgStatStatementsInfo>,
+
+    // --- pg_store_plans ---
+    pub(crate) store_plans_ext_version: Option<String>,
+    pub(crate) store_plans_last_check: Option<Instant>,
+    pub(crate) store_plans_fork: Option<StorePlansFork>,
+    pub(crate) store_plans_client_idx: Option<usize>,
+    pub(crate) store_plans_cache: Vec<PgStorePlansCacheEntry>,
+    pub(crate) store_plans_cache_time: Option<Instant>,
+    pub(crate) pgp_prev: HashMap<i64, PgStorePlansInfo>,
+    pub(crate) pgp_first_collect: bool,
+    pub(crate) pgp_filtered_cache: Vec<PgStorePlansInfo>,
 
     /// Previous full pg_stat_user_tables snapshot (by relid).
     pub(crate) pgt_prev: HashMap<u32, PgStatUserTablesInfo>,
@@ -195,6 +209,15 @@ impl PostgresCollector {
             pgs_prev: HashMap::new(),
             pgs_first_collect: true,
             pgs_filtered_cache: Vec::new(),
+            store_plans_ext_version: None,
+            store_plans_last_check: None,
+            store_plans_fork: None,
+            store_plans_client_idx: None,
+            store_plans_cache: Vec::new(),
+            store_plans_cache_time: None,
+            pgp_prev: HashMap::new(),
+            pgp_first_collect: true,
+            pgp_filtered_cache: Vec::new(),
             pgt_prev: HashMap::new(),
             pgt_first_collect: true,
             pgt_filtered_cache: Vec::new(),
@@ -235,6 +258,15 @@ impl PostgresCollector {
             pgs_prev: HashMap::new(),
             pgs_first_collect: true,
             pgs_filtered_cache: Vec::new(),
+            store_plans_ext_version: None,
+            store_plans_last_check: None,
+            store_plans_fork: None,
+            store_plans_client_idx: None,
+            store_plans_cache: Vec::new(),
+            store_plans_cache_time: None,
+            pgp_prev: HashMap::new(),
+            pgp_first_collect: true,
+            pgp_filtered_cache: Vec::new(),
             pgt_prev: HashMap::new(),
             pgt_first_collect: true,
             pgt_filtered_cache: Vec::new(),
@@ -457,6 +489,12 @@ impl PostgresCollector {
                 self.statements_ext_version = None;
                 self.statements_last_check = None;
             }
+            if self.store_plans_client_idx.is_some() {
+                self.store_plans_client_idx = None;
+                self.store_plans_ext_version = None;
+                self.store_plans_last_check = None;
+                self.store_plans_fork = None;
+            }
 
             let names: Vec<&str> = self.db_clients.iter().map(|c| c.datname.as_str()).collect();
             info!(
@@ -479,10 +517,19 @@ impl PostgresCollector {
         self.indexes_cache_time = None;
         self.settings_cache.clear();
         self.settings_cache_time = None;
+        self.store_plans_ext_version = None;
+        self.store_plans_last_check = None;
+        self.store_plans_fork = None;
+        self.store_plans_client_idx = None;
+        self.store_plans_cache.clear();
+        self.store_plans_cache_time = None;
         // Reset activity-only filtering state — next collect will write all rows.
         self.pgs_prev.clear();
         self.pgs_first_collect = true;
         self.pgs_filtered_cache.clear();
+        self.pgp_prev.clear();
+        self.pgp_first_collect = true;
+        self.pgp_filtered_cache.clear();
         self.pgt_prev.clear();
         self.pgt_first_collect = true;
         self.pgt_filtered_cache.clear();

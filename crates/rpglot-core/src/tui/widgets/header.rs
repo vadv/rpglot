@@ -110,6 +110,7 @@ pub fn render_header(frame: &mut Frame, area: Rect, state: &AppState) {
         Tab::PgStatements => state.pgs.filter.as_deref(),
         Tab::PgTables => state.pgt.filter.as_deref(),
         Tab::PgIndexes => state.pgi.filter.as_deref(),
+        Tab::PgStorePlans => state.pgp.filter.as_deref(),
         Tab::PgErrors => state.pge.filter.as_deref(),
         Tab::PgLocks => state.pgl.filter.as_deref(),
     };

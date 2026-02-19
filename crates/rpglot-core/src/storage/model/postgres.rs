@@ -205,6 +205,130 @@ pub struct PgStatStatementsInfo {
     pub collected_at: i64,
 }
 
+/// Plan statistics from pg_store_plans extension.
+///
+/// Source: `SELECT * FROM pg_store_plans`
+///
+/// This extension tracks execution plan statistics for SQL statements.
+/// One queryid (from pg_stat_statements) can have N different planids (plan regression).
+/// Two forks exist: ossc-db (v1.9) and vadv (v2.0) with different column names;
+/// the collector normalizes both into this struct.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Default)]
+pub struct PgStorePlansInfo {
+    /// queryid linking to pg_stat_statements.
+    /// Source: ossc-db `queryid`, vadv `queryid_stat_statements`
+    pub stmt_queryid: i64,
+
+    /// Internal hash code identifying the plan.
+    /// Source: `pg_store_plans.planid`
+    pub planid: i64,
+
+    /// Hash of execution plan text.
+    /// Source: `pg_store_plans.plan` — interned via StringInterner
+    pub plan_hash: u64,
+
+    /// OID of the user who executed the plan.
+    /// Source: `pg_store_plans.userid`
+    pub userid: u32,
+
+    /// OID of the database in which the plan was executed.
+    /// Source: `pg_store_plans.dbid`
+    pub dbid: u32,
+
+    /// Hash of database name.
+    /// Interned via StringInterner.
+    #[serde(default)]
+    pub datname_hash: u64,
+
+    /// Hash of user/role name.
+    /// Interned via StringInterner.
+    #[serde(default)]
+    pub usename_hash: u64,
+
+    /// Number of times the plan was executed.
+    /// Source: `pg_store_plans.calls`
+    pub calls: i64,
+
+    /// Total time spent executing the plan (milliseconds).
+    /// Source: `pg_store_plans.total_time`
+    pub total_time: f64,
+
+    /// Mean time per execution (milliseconds).
+    /// Source: `pg_store_plans.mean_time`
+    pub mean_time: f64,
+
+    /// Minimum execution time (milliseconds).
+    /// Source: `pg_store_plans.min_time`
+    pub min_time: f64,
+
+    /// Maximum execution time (milliseconds).
+    /// Source: `pg_store_plans.max_time`
+    pub max_time: f64,
+
+    /// Standard deviation of execution time (milliseconds).
+    /// Source: `pg_store_plans.stddev_time`
+    pub stddev_time: f64,
+
+    /// Total number of rows retrieved or affected.
+    /// Source: `pg_store_plans.rows`
+    pub rows: i64,
+
+    /// Shared blocks hit in buffer cache.
+    /// Source: `pg_store_plans.shared_blks_hit`
+    pub shared_blks_hit: i64,
+
+    /// Shared blocks read from disk.
+    /// Source: `pg_store_plans.shared_blks_read`
+    pub shared_blks_read: i64,
+
+    /// Shared blocks dirtied.
+    /// Source: `pg_store_plans.shared_blks_dirtied`
+    pub shared_blks_dirtied: i64,
+
+    /// Shared blocks written.
+    /// Source: `pg_store_plans.shared_blks_written`
+    pub shared_blks_written: i64,
+
+    /// Local blocks read.
+    /// Source: `pg_store_plans.local_blks_read`
+    pub local_blks_read: i64,
+
+    /// Local blocks written.
+    /// Source: `pg_store_plans.local_blks_written`
+    pub local_blks_written: i64,
+
+    /// Temp blocks read.
+    /// Source: `pg_store_plans.temp_blks_read`
+    pub temp_blks_read: i64,
+
+    /// Temp blocks written.
+    /// Source: `pg_store_plans.temp_blks_written`
+    pub temp_blks_written: i64,
+
+    /// Total block read time (milliseconds, aggregated).
+    /// Source: ossc-db: sum(shared+local+temp _blk_read_time), vadv: blk_read_time
+    pub blk_read_time: f64,
+
+    /// Total block write time (milliseconds, aggregated).
+    /// Source: ossc-db: sum(shared+local+temp _blk_write_time), vadv: blk_write_time
+    pub blk_write_time: f64,
+
+    /// First execution time (epoch seconds).
+    /// Source: `pg_store_plans.first_call`
+    #[serde(default)]
+    pub first_call: i64,
+
+    /// Last execution time (epoch seconds).
+    /// Source: `pg_store_plans.last_call`
+    #[serde(default)]
+    pub last_call: i64,
+
+    /// Unix timestamp (seconds since epoch) when this data was collected from PostgreSQL.
+    /// Used to calculate accurate rates when collector caches pg_store_plans.
+    #[serde(default)]
+    pub collected_at: i64,
+}
+
 /// Database-level statistics from pg_stat_database.
 ///
 /// Source: `SELECT * FROM pg_stat_database`

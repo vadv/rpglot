@@ -9,7 +9,7 @@ use crate::analysis::{
     PrevSample, compute_backend_io_hit, compute_health_score, is_container_snapshot,
     is_relevant_disk,
 };
-use crate::models::{PgIndexesRates, PgStatementsRates, PgTablesRates};
+use crate::models::{PgIndexesRates, PgStatementsRates, PgStorePlansRates, PgTablesRates};
 use crate::storage::StringInterner;
 use crate::storage::model::{
     CgroupCpuInfo, DataBlock, ErrorCategory, PgLogEventType, PgLogSeverity, PgStatBgwriterInfo,
@@ -35,6 +35,7 @@ pub struct ConvertContext<'a> {
     pub prev_snapshot: Option<&'a Snapshot>,
     pub interner: Option<&'a StringInterner>,
     pub pgs_rates: &'a HashMap<i64, PgStatementsRates>,
+    pub pgp_rates: &'a HashMap<i64, PgStorePlansRates>,
     pub pgt_rates: &'a HashMap<u32, PgTablesRates>,
     pub pgi_rates: &'a HashMap<u32, PgIndexesRates>,
 }
@@ -75,6 +76,7 @@ pub fn convert(ctx: &ConvertContext<'_>) -> ApiSnapshot {
         prc: extract_prc(snap, ctx.prev_snapshot, ctx.interner, delta_time),
         pga,
         pgs: extract_pgs(snap, ctx.interner, ctx.pgs_rates),
+        pgp: extract_pgp(snap, ctx.interner, ctx.pgs_rates, ctx.pgp_rates),
         pgt: extract_pgt(snap, ctx.interner, ctx.pgt_rates),
         pgi: extract_pgi(snap, ctx.interner, ctx.pgi_rates),
         pge: extract_pge(snap, ctx.interner),
@@ -1371,6 +1373,105 @@ fn extract_pgs(
                 wal_records: s.wal_records,
                 wal_bytes: s.wal_bytes,
                 total_exec_time: s.total_exec_time,
+            }
+        })
+        .collect()
+}
+
+// ============================================================
+// PGP (pg_store_plans)
+// ============================================================
+
+fn extract_pgp(
+    snap: &Snapshot,
+    interner: Option<&StringInterner>,
+    pgs_rates: &HashMap<i64, PgStatementsRates>,
+    pgp_rates: &HashMap<i64, PgStorePlansRates>,
+) -> Vec<PgStorePlansRow> {
+    // Suppress unused variable warning — pgs_rates is available for future stmt enrichment.
+    let _ = pgs_rates;
+
+    let Some(plans) = find_block(snap, |b| {
+        if let DataBlock::PgStorePlans(v) = b {
+            Some(v.as_slice())
+        } else {
+            None
+        }
+    }) else {
+        return Vec::new();
+    };
+
+    // Lookup parent query text from pg_stat_statements
+    let stmts_by_qid: HashMap<i64, u64> = find_block(snap, |b| {
+        if let DataBlock::PgStatStatements(v) = b {
+            Some(v.as_slice())
+        } else {
+            None
+        }
+    })
+    .map(|ss| ss.iter().map(|s| (s.queryid, s.query_hash)).collect())
+    .unwrap_or_default();
+
+    plans
+        .iter()
+        .map(|p| {
+            let r = pgp_rates.get(&p.planid);
+
+            let rows_per_call = if p.calls > 0 {
+                Some(p.rows as f64 / p.calls as f64)
+            } else {
+                None
+            };
+
+            // Prefer rate-based HIT% over cumulative
+            let hit_pct = {
+                let rate_hit = r.and_then(|r| r.shared_blks_hit_s);
+                let rate_read = r.and_then(|r| r.shared_blks_read_s);
+                match (rate_hit, rate_read) {
+                    (Some(h), Some(rd)) if h + rd > 0.0 => Some(h * 100.0 / (h + rd)),
+                    (Some(_), Some(_)) => None,
+                    _ => {
+                        let total_blks = p.shared_blks_hit + p.shared_blks_read;
+                        if total_blks > 0 {
+                            Some(p.shared_blks_hit as f64 * 100.0 / total_blks as f64)
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            let query = stmts_by_qid
+                .get(&p.stmt_queryid)
+                .map(|&h| resolve(interner, h))
+                .unwrap_or_default();
+
+            PgStorePlansRow {
+                planid: p.planid,
+                stmt_queryid: p.stmt_queryid,
+                database: resolve(interner, p.datname_hash),
+                user: resolve(interner, p.usename_hash),
+                query,
+                plan: resolve(interner, p.plan_hash),
+                calls: p.calls,
+                rows: p.rows,
+                mean_time_ms: p.mean_time,
+                min_time_ms: p.min_time,
+                max_time_ms: p.max_time,
+                total_time_ms: p.total_time,
+                first_call: p.first_call,
+                last_call: p.last_call,
+                calls_s: r.and_then(|r| r.calls_s),
+                rows_s: r.and_then(|r| r.rows_s),
+                exec_time_ms_s: r.and_then(|r| r.exec_time_ms_s),
+                shared_blks_read_s: r.and_then(|r| r.shared_blks_read_s),
+                shared_blks_hit_s: r.and_then(|r| r.shared_blks_hit_s),
+                shared_blks_dirtied_s: r.and_then(|r| r.shared_blks_dirtied_s),
+                shared_blks_written_s: r.and_then(|r| r.shared_blks_written_s),
+                temp_blks_read_s: r.and_then(|r| r.temp_blks_read_s),
+                temp_blks_written_s: r.and_then(|r| r.temp_blks_written_s),
+                rows_per_call,
+                hit_pct,
             }
         })
         .collect()

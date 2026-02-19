@@ -191,6 +191,9 @@ impl App {
         // Update pg_stat_statements rates cache (used by PGS tab).
         self.state.pgs.update_rates_from_snapshot(&snapshot);
 
+        // Update pg_store_plans rates cache (used by PGP tab).
+        self.state.pgp.update_rates_from_snapshot(&snapshot);
+
         // Update pg_stat_user_tables rates cache (used by PGT tab).
         self.state.pgt.update_rates_from_snapshot(&snapshot);
 
@@ -244,6 +247,16 @@ impl App {
                 !snapshot.blocks.iter().any(|b| {
                     if let DataBlock::PgStatStatements(stmts) = b {
                         stmts.iter().any(|s| s.queryid == qid)
+                    } else {
+                        false
+                    }
+                })
+            }
+            PopupState::PgpDetail { planid, .. } => {
+                let pid = *planid;
+                !snapshot.blocks.iter().any(|b| {
+                    if let DataBlock::PgStorePlans(plans) = b {
+                        plans.iter().any(|p| p.planid == pid)
                     } else {
                         false
                     }
@@ -505,6 +518,9 @@ impl App {
             }
             Tab::PgErrors => {
                 // No drill-down from PGE
+            }
+            Tab::PgStorePlans => {
+                // No further drill-down from PGP
             }
             Tab::PgLocks => {
                 // PGL -> PGA: Navigate to PostgreSQL session by selected lock's PID
