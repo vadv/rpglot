@@ -759,7 +759,9 @@ fn find_pgp_prev_snapshot(
     pos: usize,
     current_collected_at: i64,
 ) -> Option<Snapshot> {
-    let max_lookback = 10;
+    // pg_store_plans is collected every 5 min; with 10s snapshots that's ~30
+    // snapshots with the same collected_at.  Need to look back far enough.
+    let max_lookback = 40;
     let start = pos.saturating_sub(max_lookback);
     for p in (start..pos).rev() {
         if let Some(snap) = hp.snapshot_at(p)
