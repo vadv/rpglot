@@ -170,6 +170,7 @@ fn describe_snapshot(snapshot: &rpglot_core::storage::Snapshot) -> String {
             DataBlock::SystemNet(n) => parts.push(format!("{} interfaces", n.len())),
             DataBlock::PgStatActivity(a) => parts.push(format!("{} pg_sessions", a.len())),
             DataBlock::PgStatStatements(s) => parts.push(format!("{} pg_stat_statements", s.len())),
+            DataBlock::PgStorePlans(p) => parts.push(format!("{} pg_store_plans", p.len())),
             DataBlock::PgStatDatabase(d) => parts.push(format!("{} pg_databases", d.len())),
             DataBlock::PgStatUserTables(t) => parts.push(format!("{} pg_tables", t.len())),
             DataBlock::PgStatUserIndexes(i) => parts.push(format!("{} pg_indexes", i.len())),
