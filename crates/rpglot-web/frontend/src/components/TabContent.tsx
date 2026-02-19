@@ -16,8 +16,10 @@ import {
   PGI_DATABASE_COLUMNS,
   PGI_TABLESPACE_VIEW,
   PGI_TABLESPACE_COLUMNS,
+  PGP_REGRESSION_COLUMNS,
   aggregateTableRows,
   aggregateIndexRows,
+  computePgpRegression,
 } from "../utils/aggregation";
 import type { TabState } from "../hooks/useTabState";
 import type { ApiSnapshot, ApiSchema } from "../api/types";
@@ -57,6 +59,9 @@ export function TabContent({
     (activeView === "schema" ||
       activeView === "database" ||
       activeView === "tablespace");
+
+  const isRegressionView =
+    activeTab === "pgp" && activeView === "regression";
 
   // In aggregated view, clicking a row drills down into the default view with a column filter
   const handleAggregatedSelect = useCallback(
@@ -341,20 +346,31 @@ export function TabContent({
     return null;
   }, [isAggregatedView, activeView, activeTab, rawData]);
 
-  const effectiveData = isAggregatedView ? aggregatedData! : data;
-  const effectiveColumns = isAggregatedView
-    ? activeView === "database"
-      ? activeTab === "pgi"
-        ? PGI_DATABASE_COLUMNS
-        : DATABASE_COLUMNS
-      : activeView === "tablespace"
+  const regressionData = useMemo(() => {
+    if (!isRegressionView) return null;
+    return computePgpRegression(data);
+  }, [isRegressionView, data]);
+
+  const effectiveData = isRegressionView
+    ? regressionData!
+    : isAggregatedView
+      ? aggregatedData!
+      : data;
+  const effectiveColumns = isRegressionView
+    ? PGP_REGRESSION_COLUMNS
+    : isAggregatedView
+      ? activeView === "database"
         ? activeTab === "pgi"
-          ? PGI_TABLESPACE_COLUMNS
-          : TABLESPACE_COLUMNS
-        : activeTab === "pgi"
-          ? PGI_SCHEMA_COLUMNS
-          : SCHEMA_COLUMNS
-    : tabSchema.columns;
+          ? PGI_DATABASE_COLUMNS
+          : DATABASE_COLUMNS
+        : activeView === "tablespace"
+          ? activeTab === "pgi"
+            ? PGI_TABLESPACE_COLUMNS
+            : TABLESPACE_COLUMNS
+          : activeTab === "pgi"
+            ? PGI_SCHEMA_COLUMNS
+            : SCHEMA_COLUMNS
+      : tabSchema.columns;
   const effectiveEntityId = isAggregatedView
     ? activeView === "database"
       ? "database"

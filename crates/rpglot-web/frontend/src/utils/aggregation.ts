@@ -8,6 +8,119 @@ import type {
 } from "../api/types";
 
 // ============================================================
+// PGP Regression view — detect plan regressions per query
+// ============================================================
+
+export const PGP_REGRESSION_COLUMNS: ColumnSchema[] = [
+  {
+    key: "stmt_queryid",
+    label: "Query ID",
+    type: "string" as DataType,
+    sortable: true,
+    filterable: true,
+  },
+  {
+    key: "time_ratio",
+    label: "Ratio",
+    type: "number" as DataType,
+    sortable: true,
+  },
+  {
+    key: "mean_time_ms",
+    label: "Mean Time",
+    type: "number" as DataType,
+    unit: "ms" as Unit,
+    format: "duration" as Format,
+    sortable: true,
+  },
+  {
+    key: "calls_s",
+    label: "Calls/s",
+    type: "number" as DataType,
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+    sortable: true,
+  },
+  {
+    key: "first_call",
+    label: "First Call",
+    type: "string" as DataType,
+    sortable: true,
+  },
+  {
+    key: "last_call",
+    label: "Last Call",
+    type: "string" as DataType,
+    sortable: true,
+  },
+  {
+    key: "database",
+    label: "Database",
+    type: "string" as DataType,
+    sortable: true,
+    filterable: true,
+  },
+  {
+    key: "plan",
+    label: "Plan",
+    type: "string" as DataType,
+    sortable: false,
+  },
+];
+
+/**
+ * For each stmt_queryid with 2+ plans, compute time_ratio = mean_time_ms / min(mean_time_ms).
+ * Only include groups where max/min ratio >= 2 (actual regressions).
+ */
+export function computePgpRegression(
+  rows: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  // Group by stmt_queryid (skip 0 / null)
+  const groups = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const qid = row.stmt_queryid;
+    if (qid == null || qid === 0 || qid === "0") continue;
+    const key = String(qid);
+    let arr = groups.get(key);
+    if (!arr) {
+      arr = [];
+      groups.set(key, arr);
+    }
+    arr.push(row);
+  }
+
+  const result: Record<string, unknown>[] = [];
+
+  for (const plans of groups.values()) {
+    if (plans.length < 2) continue;
+
+    // Find min and max mean_time_ms among plans with mean_time_ms > 0
+    let minMean = Infinity;
+    let maxMean = 0;
+    for (const p of plans) {
+      const m = num(p.mean_time_ms);
+      if (m > 0) {
+        if (m < minMean) minMean = m;
+        if (m > maxMean) maxMean = m;
+      }
+    }
+
+    if (minMean === Infinity || minMean === 0) continue;
+    if (maxMean / minMean < 2) continue;
+
+    for (const p of plans) {
+      const m = num(p.mean_time_ms);
+      result.push({
+        ...p,
+        time_ratio: m > 0 ? m / minMean : null,
+      });
+    }
+  }
+
+  return result;
+}
+
+// ============================================================
 // PGT Schema view — client-side aggregation by schema
 // ============================================================
 

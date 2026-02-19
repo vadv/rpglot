@@ -1235,6 +1235,13 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   // =====================================================
   // PGP (pg_store_plans)
   // =====================================================
+  time_ratio: {
+    label: "Ratio",
+    description:
+      "Ratio of this plan's mean_time_ms to the fastest plan for the same query. 1.0 = fastest plan, 2.0 = 2x slower.",
+    thresholds: ">=10x critical · 2-10x warning · <2x normal",
+    tip: "High ratio means the optimizer picked a much slower plan. Check for stale statistics or parameter sensitivity",
+  },
   planid: {
     label: "Plan ID",
     description:
@@ -1448,6 +1455,6 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
     time: "Plans consuming the most execution time \u2014 optimize these first",
     io: "Plans doing the most physical I/O \u2014 low HIT% means cold data reads",
     regression:
-      "Compare plans for the same query \u2014 detect optimizer switches to worse plans",
+      "Plan regressions \u2014 queries with 2+ plans where slowest is >=2x faster plan. Ratio = mean_time / fastest_mean",
   },
 };

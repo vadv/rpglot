@@ -488,6 +488,16 @@ const RULES: Record<string, Classifier> = {
   // --- PGE: extra_num3 (checkpoint estimate_kb, informational) ---
   extra_num3: rateInactive,
 
+  // --- PGP: Time ratio (regression detection) ---
+  time_ratio: (v) => {
+    if (v == null) return undefined;
+    const n = Number(v);
+    if (isNaN(n)) return undefined;
+    if (n >= 10) return "critical";
+    if (n >= 2) return "warning";
+    return undefined;
+  },
+
   // --- PGP: Mean plan time ---
   mean_time_ms: (v) => {
     if (v == null) return undefined;

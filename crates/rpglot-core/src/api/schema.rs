@@ -2059,20 +2059,20 @@ fn generate_pgp_schema() -> TabSchema {
                 key: "regression".into(),
                 label: "Regression".into(),
                 columns: vec![
-                    "calls_s",
-                    "mean_time_ms",
-                    "min_time_ms",
-                    "max_time_ms",
-                    "rows_per_call",
-                    "database",
                     "stmt_queryid",
+                    "time_ratio",
+                    "mean_time_ms",
+                    "calls_s",
+                    "first_call",
+                    "last_call",
+                    "database",
                     "plan",
                 ]
                 .into_iter()
                 .map(String::from)
                 .collect(),
                 default: false,
-                default_sort: Some("mean_time_ms".into()),
+                default_sort: Some("time_ratio".into()),
                 default_sort_desc: true,
                 column_overrides: vec![],
             },
