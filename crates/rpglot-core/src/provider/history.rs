@@ -501,6 +501,14 @@ impl HistoryProvider {
 
     // ========== Public API ==========
 
+    /// Evict snapshot buffers and interner caches from memory.
+    /// Keeps timestamps and chunk metadata intact for navigation.
+    pub fn evict_buffers(&mut self) {
+        self.current_buffer = None;
+        self.current_interner = None;
+        self.interner_cache = None;
+    }
+
     /// Returns the total number of snapshots available.
     pub fn len(&self) -> usize {
         self.total_snapshots

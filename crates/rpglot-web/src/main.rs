@@ -33,7 +33,7 @@ use std::pin::Pin;
 use std::process;
 use std::ptr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -236,7 +236,7 @@ async fn async_main(args: Args) {
         Option<i64>,
     ) = if let Some(ref history_path) = args.history {
         info!(version = rpglot_core::VERSION, path = %history_path.display(), "starting in history mode");
-        let hp = match HistoryProvider::from_path(history_path) {
+        let mut hp = match HistoryProvider::from_path(history_path) {
             Ok(hp) => hp,
             Err(e) => {
                 error!(path = %history_path.display(), error = %e,
@@ -244,10 +244,12 @@ async fn async_main(args: Args) {
                 process::exit(1);
             }
         };
-        release_memory_to_os(); // free chunk decompression buffers from build_index
         let total = hp.len();
         let (start, end) = hp.timestamp_range();
         info!(snapshots = total, "loaded history data");
+        // Evict snapshot buffers loaded by from_path() — data will be loaded lazily on first request
+        hp.evict_buffers();
+        release_memory_to_os();
         (
             Box::new(hp),
             Mode::History,
@@ -299,11 +301,7 @@ async fn async_main(args: Args) {
             tick_loop(state_clone, tx_clone, interval).await;
         });
     } else {
-        // History: load first snapshot
-        {
-            let mut inner = state.lock().unwrap();
-            advance_and_convert(&mut inner);
-        }
+        // History: skip initial snapshot loading — data loads lazily on first client request
         // Start background refresh for history mode
         if let Some(ref history_path) = args.history {
             let state_clone = state.clone();
@@ -536,8 +534,10 @@ async fn tick_loop(
     }
 }
 
-/// Background loop: periodically refresh history snapshots from disk.
+/// Background loop: periodically refresh history snapshots from disk + idle eviction.
 async fn history_refresh_loop(state: SharedState, path: PathBuf) {
+    const IDLE_EVICT_SECS: i64 = 60;
+
     let mut tick = tokio::time::interval(Duration::from_secs(30));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -549,6 +549,19 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
         let t0 = Instant::now();
         let result = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
+
+            // Idle eviction: if no client activity for IDLE_EVICT_SECS, free cached data
+            let last_activity = LAST_CLIENT_ACTIVITY.load(Ordering::Relaxed);
+            let now = now_epoch();
+            if last_activity > 0
+                && (now - last_activity) > IDLE_EVICT_SECS
+                && inner.current_snapshot.is_some()
+            {
+                evict_caches(&mut inner);
+                release_memory_to_os();
+                info!("idle eviction: caches cleared");
+            }
+
             let hp = inner
                 .provider
                 .as_any_mut()
@@ -597,6 +610,44 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
             }
             _ => {}
         }
+    }
+}
+
+/// Evict all cached data from WebAppInner to free memory during idle periods.
+/// Keeps only lightweight metadata (total_snapshots, history_start/end, instance_info).
+fn evict_caches(inner: &mut WebAppInner) {
+    inner.current_snapshot = None;
+    inner.raw_snapshot = None;
+    inner.prev_snapshot = None;
+    inner.pgs_rates.clear();
+    inner.pgs_rates.shrink_to_fit();
+    inner.pgp_rates.clear();
+    inner.pgp_rates.shrink_to_fit();
+    inner.pgt_rates.clear();
+    inner.pgt_rates.shrink_to_fit();
+    inner.pgi_rates.clear();
+    inner.pgi_rates.shrink_to_fit();
+    inner.pgs_prev_sample.clear();
+    inner.pgs_prev_sample.shrink_to_fit();
+    inner.pgs_prev_ts = None;
+    inner.pgp_prev_sample.clear();
+    inner.pgp_prev_sample.shrink_to_fit();
+    inner.pgp_prev_ts = None;
+    inner.pgt_prev_sample.clear();
+    inner.pgt_prev_sample.shrink_to_fit();
+    inner.pgt_prev_ts = None;
+    inner.pgi_prev_sample.clear();
+    inner.pgi_prev_sample.shrink_to_fit();
+    inner.pgi_prev_ts = None;
+    inner.heatmap_cache.clear();
+    inner.heatmap_cache.shrink_to_fit();
+    // Clear HistoryProvider buffers
+    if let Some(hp) = inner
+        .provider
+        .as_any_mut()
+        .and_then(|a| a.downcast_mut::<HistoryProvider>())
+    {
+        hp.evict_buffers();
     }
 }
 
@@ -1372,6 +1423,7 @@ async fn handle_snapshot(
     State(state_tuple): AppState,
     axum::extract::Query(query): axum::extract::Query<SnapshotQuery>,
 ) -> Result<axum::response::Response, StatusCode> {
+    LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
     let state = state_tuple.0;
     // History navigation may call blocking provider methods — run in spawn_blocking
     let snap = tokio::task::spawn_blocking(move || {
@@ -1385,6 +1437,11 @@ async fn handle_snapshot(
             if !history_jump_to_timestamp(&mut inner, ts, use_ceil) {
                 return Err(StatusCode::BAD_REQUEST);
             }
+        }
+
+        // Lazy loading after idle eviction: reload current snapshot if needed
+        if inner.mode == Mode::History && inner.current_snapshot.is_none() {
+            reconvert_current(&mut inner);
         }
 
         inner
@@ -1413,6 +1470,7 @@ async fn handle_snapshot(
     )
 )]
 async fn handle_timeline(State(state_tuple): AppState) -> Result<Json<TimelineInfo>, StatusCode> {
+    LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
     let inner = state_tuple.0.lock().unwrap();
     if inner.mode != Mode::History {
         return Err(StatusCode::NOT_FOUND);
@@ -1442,6 +1500,7 @@ struct TimelineLatest {
 async fn handle_timeline_latest(
     State(state_tuple): AppState,
 ) -> Result<Json<TimelineLatest>, StatusCode> {
+    LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
     let inner = state_tuple.0.lock().unwrap();
     if inner.mode != Mode::History {
         return Err(StatusCode::NOT_FOUND);
@@ -1466,6 +1525,7 @@ async fn handle_analysis(
     State(state_tuple): AppState,
     axum::extract::Query(query): axum::extract::Query<AnalysisQuery>,
 ) -> Result<Json<rpglot_core::analysis::AnalysisReport>, StatusCode> {
+    LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
     if query.end <= query.start {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -1572,6 +1632,7 @@ async fn handle_heatmap(
     State(state_tuple): AppState,
     axum::extract::Query(query): axum::extract::Query<HeatmapQuery>,
 ) -> Result<Json<Vec<rpglot_core::storage::heatmap::HeatmapBucket>>, StatusCode> {
+    LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
     let num_buckets = query.buckets.unwrap_or(400).min(1000);
 
     if query.end <= query.start {
@@ -1628,6 +1689,15 @@ async fn handle_heatmap(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     Ok(Json(buckets))
+}
+
+static LAST_CLIENT_ACTIVITY: AtomicI64 = AtomicI64::new(0);
+
+fn now_epoch() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
 }
 
 static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
