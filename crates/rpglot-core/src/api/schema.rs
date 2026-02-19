@@ -1726,6 +1726,7 @@ fn generate_pgs_schema() -> TabSchema {
                 key: "time".into(),
                 label: "Time".into(),
                 columns: vec![
+                    "queryid",
                     "calls_s",
                     "exec_time_ms_s",
                     "mean_exec_time_ms",
@@ -1746,6 +1747,7 @@ fn generate_pgs_schema() -> TabSchema {
                 key: "calls".into(),
                 label: "Calls".into(),
                 columns: vec![
+                    "queryid",
                     "calls_s",
                     "rows_s",
                     "rows_per_call",
@@ -1766,6 +1768,7 @@ fn generate_pgs_schema() -> TabSchema {
                 key: "io".into(),
                 label: "I/O".into(),
                 columns: vec![
+                    "queryid",
                     "calls_s",
                     "shared_blks_read_s",
                     "shared_blks_hit_s",
@@ -1787,6 +1790,7 @@ fn generate_pgs_schema() -> TabSchema {
                 key: "temp".into(),
                 label: "Temp".into(),
                 columns: vec![
+                    "queryid",
                     "calls_s",
                     "temp_blks_read_s",
                     "temp_blks_written_s",
