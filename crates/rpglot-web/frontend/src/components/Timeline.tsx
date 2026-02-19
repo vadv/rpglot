@@ -773,7 +773,7 @@ function HeatmapTooltip({
         pointer-events-none"
       style={{
         left: tooltipX,
-        top: y - 6,
+        top: y - 16,
         transform: "translate(-50%, -100%)",
         boxShadow: "var(--shadow-md)",
       }}
