@@ -12,7 +12,7 @@ use super::PostgresCollector;
 use super::queries::{StorePlansFork, build_store_plans_query};
 
 pub(super) const STORE_PLANS_EXT_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
-pub(super) const STORE_PLANS_COLLECT_INTERVAL: Duration = Duration::from_secs(30);
+pub(super) const STORE_PLANS_COLLECT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 pub(super) const MAX_CACHED_STORE_PLANS: usize = 1000;
 
 pub(super) fn store_plans_collect_due(last_collect: Option<Instant>, now: Instant) -> bool {
