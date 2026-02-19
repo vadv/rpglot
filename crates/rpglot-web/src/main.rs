@@ -474,6 +474,7 @@ async fn tick_loop(
 ) {
     let mut tick = tokio::time::interval(interval);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut snapshot_count: u64 = 0;
 
     loop {
         tick.tick().await;
@@ -481,23 +482,46 @@ async fn tick_loop(
         // Run blocking provider.advance() off the async runtime
         let state_clone = state.clone();
         let t0 = Instant::now();
-        let snapshot = tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
             advance_and_convert(&mut inner);
             inner.current_snapshot.clone()
         })
-        .await
-        .ok()
-        .flatten();
+        .await;
 
         let elapsed = t0.elapsed();
+
+        let snapshot = match result {
+            Ok(snap) => snap,
+            Err(e) => {
+                error!(error = %e, "tick panicked in spawn_blocking");
+                continue;
+            }
+        };
+
         if let Some(ref snap) = snapshot {
-            debug!(
+            snapshot_count += 1;
+            if snapshot_count == 1 {
+                info!(
+                    duration_ms = elapsed.as_millis() as u64,
+                    timestamp = snap.timestamp,
+                    "first snapshot collected"
+                );
+            } else {
+                debug!(
+                    duration_ms = elapsed.as_millis() as u64,
+                    timestamp = snap.timestamp,
+                    snapshot_count,
+                    "tick completed"
+                );
+            }
+        } else {
+            warn!(
                 duration_ms = elapsed.as_millis() as u64,
-                timestamp = snap.timestamp,
-                "tick completed"
+                "tick produced no snapshot"
             );
         }
+
         if elapsed > interval / 2 {
             warn!(
                 duration_ms = elapsed.as_millis() as u64,
