@@ -114,9 +114,9 @@ pub struct TabSchema {
     pub columns: Vec<ColumnSchema>,
     /// Available view modes.
     pub views: Vec<ViewSchema>,
-    /// Drill-down navigation target.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub drill_down: Option<DrillDown>,
+    /// Drill-down navigation targets (evaluated in order; first matching condition wins).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drill_downs: Vec<DrillDown>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -167,6 +167,14 @@ pub struct ColumnOverride {
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DrillDownCondition {
+    /// Field in the source row to check.
+    pub field: String,
+    /// Required value for the drill-down to be active.
+    pub equals: String,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct DrillDown {
     /// Target tab key (e.g. "pgs", "pgi").
     pub target: String,
@@ -182,6 +190,9 @@ pub struct DrillDown {
     /// Column in the TARGET tab to apply the column filter on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filter_target: Option<String>,
+    /// Optional condition: drill-down only available when source row matches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<DrillDownCondition>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -1150,14 +1161,15 @@ fn generate_prc_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: Some(DrillDown {
+        drill_downs: vec![DrillDown {
             target: "pga".into(),
             via: "pid".into(),
             target_field: None,
             description: "Navigate to session details for this PID".into(),
             filter_via: None,
             filter_target: None,
-        }),
+            condition: None,
+        }],
     }
 }
 
@@ -1456,14 +1468,29 @@ fn generate_pga_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: Some(DrillDown {
-            target: "pgs".into(),
-            via: "query_id".into(),
-            target_field: Some("queryid".into()),
-            description: "Navigate to statement stats by query_id".into(),
-            filter_via: None,
-            filter_target: None,
-        }),
+        drill_downs: vec![
+            DrillDown {
+                target: "pgv".into(),
+                via: "pid".into(),
+                target_field: Some("pid".into()),
+                description: "View vacuum progress".into(),
+                condition: Some(DrillDownCondition {
+                    field: "backend_type".into(),
+                    equals: "autovacuum worker".into(),
+                }),
+                filter_via: None,
+                filter_target: None,
+            },
+            DrillDown {
+                target: "pgs".into(),
+                via: "query_id".into(),
+                target_field: Some("queryid".into()),
+                description: "Navigate to statement stats by query_id".into(),
+                condition: None,
+                filter_via: None,
+                filter_target: None,
+            },
+        ],
     }
 }
 
@@ -1778,7 +1805,7 @@ fn generate_pgs_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: None,
+        drill_downs: vec![],
     }
 }
 
@@ -2038,14 +2065,15 @@ fn generate_pgp_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: Some(DrillDown {
+        drill_downs: vec![DrillDown {
             target: "pgs".into(),
             via: "stmt_queryid".into(),
             target_field: Some("queryid".into()),
             description: "View parent statement in PGS".into(),
             filter_via: None,
             filter_target: None,
-        }),
+            condition: None,
+        }],
     }
 }
 
@@ -2499,14 +2527,15 @@ fn generate_pgt_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: Some(DrillDown {
+        drill_downs: vec![DrillDown {
             target: "pgi".into(),
             via: "relid".into(),
             target_field: Some("relid".into()),
             description: "Show indexes".into(),
             filter_via: Some("display_name".into()),
             filter_target: Some("display_table".into()),
-        }),
+            condition: None,
+        }],
     }
 }
 
@@ -2709,14 +2738,15 @@ fn generate_pgi_schema() -> TabSchema {
                 column_overrides: vec![],
             },
         ],
-        drill_down: Some(DrillDown {
+        drill_downs: vec![DrillDown {
             target: "pgt".into(),
             via: "relid".into(),
             target_field: None,
             description: "Go to table".into(),
             filter_via: Some("display_table".into()),
             filter_target: Some("display_name".into()),
-        }),
+            condition: None,
+        }],
     }
 }
 
@@ -3103,7 +3133,7 @@ fn generate_pge_schema() -> TabSchema {
                 ],
             },
         ],
-        drill_down: None,
+        drill_downs: vec![],
     }
 }
 
@@ -3247,14 +3277,15 @@ fn generate_pgl_schema() -> TabSchema {
             default_sort_desc: false,
             column_overrides: vec![],
         }],
-        drill_down: Some(DrillDown {
+        drill_downs: vec![DrillDown {
             target: "pga".into(),
             via: "pid".into(),
             target_field: None,
             description: "Navigate to session details for this PID".into(),
             filter_via: None,
             filter_target: None,
-        }),
+            condition: None,
+        }],
     }
 }
 
@@ -3408,7 +3439,15 @@ fn generate_pgv_schema() -> TabSchema {
             default_sort_desc: true,
             column_overrides: vec![],
         }],
-        drill_down: None,
+        drill_downs: vec![DrillDown {
+            target: "pga".into(),
+            via: "pid".into(),
+            target_field: Some("pid".into()),
+            description: "View session details".into(),
+            filter_via: None,
+            filter_target: None,
+            condition: None,
+        }],
     }
 }
 

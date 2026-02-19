@@ -222,7 +222,7 @@ function LiveApp({ schema }: { schema: ApiSchema }) {
         mode="live"
         detailOpen={tabState.detailOpen}
         hasSelection={tabState.selectedId != null}
-        hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
+        hasDrillDown={!!(schema.tabs[tabState.activeTab].drill_downs?.length)}
         paused={paused}
       />
       {tabState.helpOpen && (
@@ -559,7 +559,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
         mode="history"
         detailOpen={tabState.detailOpen}
         hasSelection={tabState.selectedId != null}
-        hasDrillDown={!!schema.tabs[tabState.activeTab].drill_down}
+        hasDrillDown={!!(schema.tabs[tabState.activeTab].drill_downs?.length)}
       />
       {tabState.helpOpen && (
         <HelpModal

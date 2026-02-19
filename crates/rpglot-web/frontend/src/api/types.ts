@@ -524,7 +524,7 @@ export interface TabSchema {
   entity_id: string;
   columns: ColumnSchema[];
   views: ViewSchema[];
-  drill_down?: DrillDown;
+  drill_downs?: DrillDown[];
 }
 
 export interface ColumnSchema {
@@ -554,6 +554,11 @@ export interface ColumnOverride {
   format?: Format;
 }
 
+export interface DrillDownCondition {
+  field: string;
+  equals: string;
+}
+
 export interface DrillDown {
   target: string;
   via: string;
@@ -561,6 +566,7 @@ export interface DrillDown {
   description: string;
   filter_via?: string;
   filter_target?: string;
+  condition?: DrillDownCondition;
 }
 
 export type DataType = "integer" | "number" | "string" | "boolean";

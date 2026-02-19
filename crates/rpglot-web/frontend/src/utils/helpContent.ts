@@ -119,7 +119,7 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
     howToRead:
       "Look for long query durations (>1s for OLTP). 'idle in transaction' sessions hold locks without working \u2014 dangerous for long periods. Wait events show what resources backends are stuck on. Use Stats view to correlate with historical pg_stat_statements data.",
     drillDown:
-      "Navigate to PGS to see aggregated statistics for the selected query pattern.",
+      "Autovacuum workers drill down to PGV (vacuum progress). Other sessions drill down to PGS (statement stats).",
     views: {
       generic: {
         description: "All active sessions with OS metrics and wait events.",
@@ -558,6 +558,7 @@ export const TAB_HELP: Record<TabKey, TabHelp> = {
       "Currently running VACUUM operations. Shows phase, scan progress, dead tuple collection, and index vacuum cycles in real time. Empty when no vacuums are running.",
     howToRead:
       "Watch 'phase' for stuck vacuums. 'scanning heap' is the main phase \u2014 progress_pct shows completion. 'vacuuming indexes' can be slow with many indexes. 'truncating heap' briefly takes AccessExclusive lock. High index_vacuum_count (>2) means maintenance_work_mem is too small.",
+    drillDown: "Navigate to PGA for full session details of the vacuum process.",
     views: {
       default: {
         description: "Live VACUUM progress \u2014 phase, scan %, dead tuples.",

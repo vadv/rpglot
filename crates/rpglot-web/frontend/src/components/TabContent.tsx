@@ -403,7 +403,14 @@ export function TabContent({
           columnOverrides={
             effectiveViews.find((v) => v.key === activeView)?.column_overrides
           }
-          drillDown={tabSchema.drill_down}
+          drillDown={
+            (tabSchema.drill_downs ?? []).find((dd) => {
+              if (!dd.condition) return true;
+              return (
+                String(selectedRow[dd.condition.field]) === dd.condition.equals
+              );
+            }) ?? undefined
+          }
           onClose={handleCloseDetail}
           onDrillDown={handleDrillDown}
           snapshotTimestamp={snapshot.timestamp}
