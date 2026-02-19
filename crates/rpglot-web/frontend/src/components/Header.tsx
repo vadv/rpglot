@@ -552,8 +552,11 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
                           : "var(--status-warning)",
                     }}
                   />
-                  <span className="text-[var(--text-secondary)] flex-1 truncate">
-                    {r.client_addr || "local"}
+                  <span
+                    className="text-[var(--text-secondary)] flex-1 truncate"
+                    title={r.client_addr || undefined}
+                  >
+                    {r.application_name || r.client_addr || "local"}
                   </span>
                   <span className="text-[var(--text-tertiary)]">
                     {r.sync_state}

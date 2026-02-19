@@ -853,6 +853,9 @@ pub struct ReplicationStatus {
 pub struct ReplicaInfo {
     /// Client address of the replica.
     pub client_addr: String,
+    /// Application name reported by the replica.
+    #[serde(default)]
+    pub application_name: String,
     /// Replication state (streaming, catchup, etc.).
     pub state: String,
     /// Sync state (async, sync, quorum, potential).

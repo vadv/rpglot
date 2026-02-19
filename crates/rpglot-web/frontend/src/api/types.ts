@@ -422,6 +422,7 @@ export interface InstanceInfo {
 
 export interface ReplicaDetail {
   client_addr: string;
+  application_name: string;
   state: string;
   sync_state: string;
   replay_lag_bytes?: number;

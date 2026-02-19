@@ -1856,6 +1856,7 @@ fn extract_replication(snap: &Snapshot) -> Option<ReplicationInfo> {
                     .iter()
                     .map(|ri| ReplicaDetail {
                         client_addr: ri.client_addr.clone(),
+                        application_name: ri.application_name.clone(),
                         state: ri.state.clone(),
                         sync_state: ri.sync_state.clone(),
                         replay_lag_bytes: ri.replay_lag_bytes,

@@ -53,6 +53,7 @@ impl PostgresCollector {
                 .query(
                     "SELECT \
                          coalesce(client_addr::text, '') as client_addr, \
+                         coalesce(application_name, '') as application_name, \
                          coalesce(state, '') as state, \
                          coalesce(sync_state, '') as sync_state, \
                          pg_wal_lsn_diff(sent_lsn, replay_lsn)::bigint as replay_lag_bytes \
@@ -64,9 +65,10 @@ impl PostgresCollector {
                     rows.iter()
                         .map(|row| ReplicaInfo {
                             client_addr: row.get(0),
-                            state: row.get(1),
-                            sync_state: row.get(2),
-                            replay_lag_bytes: row.try_get::<_, i64>(3).ok(),
+                            application_name: row.get(1),
+                            state: row.get(2),
+                            sync_state: row.get(3),
+                            replay_lag_bytes: row.try_get::<_, i64>(4).ok(),
                         })
                         .collect::<Vec<_>>()
                 })
