@@ -259,7 +259,7 @@ impl HistoryProvider {
         self.wal = wal;
         self.total_snapshots = total;
         self.timestamps = timestamps;
-        self.cursor = 0;
+        self.cursor = total.saturating_sub(1);
         self.initialized = true;
         Ok(())
     }
