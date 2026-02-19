@@ -99,9 +99,11 @@ export function useTabState(
     [urlSync],
   );
 
-  // Validate selection: close detail if entity disappeared
+  // Validate selection: close detail if entity disappeared.
+  // Skip validation while flashRowId is active — we're waiting for a new snapshot
+  // to load after an analysis jump / drill-down navigation.
   useEffect(() => {
-    if (!snapshot || selectedId == null) return;
+    if (!snapshot || selectedId == null || flashRowId != null) return;
     const data = getTabData(snapshot, activeTab);
     const entityId = schema.tabs[activeTab].entity_id;
     const exists = data.some((row) => row[entityId] === selectedId);
@@ -109,7 +111,7 @@ export function useTabState(
       setSelectedId(null);
       setDetailOpen(false);
     }
-  }, [snapshot, selectedId, activeTab, schema]);
+  }, [snapshot, selectedId, activeTab, schema, flashRowId]);
 
   // Drill-down: after tab switch, apply column filter and/or find and select target row
   useEffect(() => {
