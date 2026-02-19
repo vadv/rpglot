@@ -42,7 +42,6 @@ impl AnalysisRule for PlanRegressionRule {
         if cur_collected == prev_collected || cur_collected == 0 || prev_collected == 0 {
             return Vec::new();
         }
-        let collection_dt = (cur_collected - prev_collected).max(1) as f64;
 
         let prev_calls: HashMap<(i64, i64), i64> = prev_plans
             .iter()
@@ -57,7 +56,6 @@ impl AnalysisRule for PlanRegressionRule {
                 continue;
             }
             // Plan must exist in both snapshots to determine activity.
-            // New/evicted plans get unknown delta — skip them.
             let Some(&prev) = prev_calls.get(&(p.stmt_queryid, p.planid)) else {
                 continue;
             };
@@ -69,12 +67,12 @@ impl AnalysisRule for PlanRegressionRule {
             ));
         }
 
-        // Minimum call rate for the slow plan to be considered "actively regressing".
-        // 0.05 calls/s ≈ 3 calls/min. Below this the impact is negligible.
-        const MIN_SLOW_RATE: f64 = 0.05;
+        // Minimum mean_time (ms) for the slow plan to be worth alerting about.
+        // A 10x ratio on a 1ms query is noise — both plans are fast.
+        const MIN_SLOW_MEAN_MS: f64 = 5.0;
 
         // Find the group with the worst ratio, but only flag regression
-        // if the SLOW plan is actively being used at a meaningful rate.
+        // if the SLOW plan is actively being used and is actually slow.
         let mut worst_ratio = 0.0_f64;
         let mut worst_qid: i64 = 0;
         let mut worst_plan_count: usize = 0;
@@ -95,11 +93,14 @@ impl AnalysisRule for PlanRegressionRule {
                 .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap();
 
-            // Skip if the slow plan is not actively being used.
-            // Check rate (not just delta) to filter plans with a few stray calls
-            // over long collection intervals (pg_store_plans caches for 5 min).
-            let slow_rate = slow_delta as f64 / collection_dt;
-            if slow_rate < MIN_SLOW_RATE {
+            // Skip if slow plan is not actively being used.
+            if slow_delta <= 0 {
+                continue;
+            }
+
+            // Skip micro-regressions: if the slow plan is under 5ms,
+            // the absolute impact is negligible regardless of ratio.
+            if max_mean < MIN_SLOW_MEAN_MS {
                 continue;
             }
 
@@ -358,16 +359,16 @@ mod tests {
     }
 
     #[test]
-    fn plan_regression_ignores_low_rate_slow_plan() {
-        // Slow plan gets 2 calls in 300s → rate = 0.007 < MIN_SLOW_RATE (0.05).
-        // This is negligible — don't flag.
+    fn plan_regression_ignores_micro_regression() {
+        // Both plans are sub-millisecond: 0.5ms vs 4.0ms → 8x ratio.
+        // But max_mean (4.0) < MIN_SLOW_MEAN_MS (5.0) — absolute impact negligible.
         let prev = make_snapshot(vec![
-            make_plan_at(100, 1, 10.0, 500, T0),
-            make_plan_at(100, 2, 100.0, 20, T0),
+            make_plan_at(100, 1, 0.5, 500, T0),
+            make_plan_at(100, 2, 4.0, 100, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan_at(100, 1, 10.0, 600, T1), // +100
-            make_plan_at(100, 2, 100.0, 22, T1), // +2, rate=0.007
+            make_plan_at(100, 1, 0.5, 600, T1),
+            make_plan_at(100, 2, 4.0, 120, T1),
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -376,27 +377,28 @@ mod tests {
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert!(
             anomalies.is_empty(),
-            "slow plan rate too low to be impactful"
+            "both plans under 5ms — micro-regression, skip"
         );
     }
 
     #[test]
-    fn plan_regression_detects_meaningful_slow_plan() {
-        // Slow plan gets 20 calls in 300s → rate = 0.067 >= MIN_SLOW_RATE.
+    fn plan_regression_detects_slow_plan_above_threshold() {
+        // Slow plan has mean_time 100ms >= MIN_SLOW_MEAN_MS (5ms).
+        // Even with few calls, the absolute impact is significant.
         let prev = make_snapshot(vec![
             make_plan_at(100, 1, 10.0, 500, T0),
             make_plan_at(100, 2, 100.0, 100, T0),
         ]);
         let snap = make_snapshot(vec![
             make_plan_at(100, 1, 10.0, 600, T1),
-            make_plan_at(100, 2, 100.0, 120, T1), // +20, rate=0.067
+            make_plan_at(100, 2, 100.0, 102, T1), // +2 calls, but mean 100ms
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
         let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
-        assert_eq!(anomalies.len(), 1, "slow plan rate above threshold");
+        assert_eq!(anomalies.len(), 1, "slow plan above 5ms threshold");
     }
 
     #[test]

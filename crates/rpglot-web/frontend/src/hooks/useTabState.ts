@@ -78,11 +78,25 @@ export function useTabState(
 
   const triggerFlash = useCallback((id: string | number) => {
     setFlashRowId(id);
-    // Scroll the target row into view (center of viewport)
+    // Scroll the target row into view within the table's scroll container.
+    // We can't use scrollIntoView({ block: "center" }) because nested
+    // overflow containers cause incorrect positioning.
     requestAnimationFrame(() => {
-      document
-        .getElementById(`row-${id}`)
-        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      const rowEl = document.getElementById(`row-${id}`);
+      if (!rowEl) return;
+      // Find the closest scrollable ancestor (the overflow-auto div)
+      const container = rowEl.closest(".overflow-auto") as HTMLElement | null;
+      if (container) {
+        const rowTop = rowEl.offsetTop;
+        const rowHeight = rowEl.offsetHeight;
+        const containerHeight = container.clientHeight;
+        container.scrollTo({
+          top: rowTop - containerHeight / 2 + rowHeight / 2,
+          behavior: "smooth",
+        });
+      } else {
+        rowEl.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
     });
     setTimeout(() => setFlashRowId(null), 5500);
   }, []);
