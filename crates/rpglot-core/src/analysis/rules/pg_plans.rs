@@ -23,23 +23,22 @@ impl AnalysisRule for PlanRegressionRule {
             return Vec::new();
         };
 
-        // Build prev calls map: (stmt_queryid, planid) → calls
-        // Used to compute delta calls and determine if a plan is currently active.
-        let prev_calls: HashMap<(i64, i64), i64> = ctx
-            .prev_snapshot
-            .and_then(|ps| {
-                find_block(ps, |b| match b {
-                    DataBlock::PgStorePlans(v) => Some(v.as_slice()),
-                    _ => None,
-                })
-            })
-            .map(|prev_plans| {
-                prev_plans
-                    .iter()
-                    .map(|p| ((p.stmt_queryid, p.planid), p.calls))
-                    .collect()
-            })
-            .unwrap_or_default();
+        // Need prev snapshot to compute call deltas and determine plan activity.
+        // Without it we can't distinguish active from inactive plans.
+        let prev_snapshot = match ctx.prev_snapshot {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let Some(prev_plans) = find_block(prev_snapshot, |b| match b {
+            DataBlock::PgStorePlans(v) => Some(v.as_slice()),
+            _ => None,
+        }) else {
+            return Vec::new();
+        };
+        let prev_calls: HashMap<(i64, i64), i64> = prev_plans
+            .iter()
+            .map(|p| ((p.stmt_queryid, p.planid), p.calls))
+            .collect();
 
         // Group plans by stmt_queryid, skip queryid == 0.
         // Track (mean_time, calls_delta, plan_hash) per plan.
@@ -203,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_regression_detects_multiple_plans() {
+    fn plan_regression_skips_without_prev_snapshot() {
         let snap = make_snapshot(vec![
             make_plan(100, 1, 10.0, 50),
             make_plan(100, 2, 100.0, 20),
@@ -211,6 +210,28 @@ mod tests {
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
         let ctx = make_ctx(&snap, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert!(
+            anomalies.is_empty(),
+            "no prev_snapshot → cannot determine plan activity"
+        );
+    }
+
+    #[test]
+    fn plan_regression_detects_multiple_plans() {
+        // Both plans gained new calls relative to prev → both active.
+        let prev = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 30),
+            make_plan(100, 2, 100.0, 10),
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 50),  // +20
+            make_plan(100, 2, 100.0, 20), // +10
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert_eq!(anomalies.len(), 1);
@@ -222,10 +243,11 @@ mod tests {
 
     #[test]
     fn plan_regression_ignores_single_plan() {
+        let prev = make_snapshot(vec![make_plan(100, 1, 50.0, 80)]);
         let snap = make_snapshot(vec![make_plan(100, 1, 50.0, 100)]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
-        let ctx = make_ctx(&snap, &interner, &ewma);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert!(anomalies.is_empty());
@@ -233,13 +255,17 @@ mod tests {
 
     #[test]
     fn plan_regression_ignores_similar_plans() {
+        let prev = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 40),
+            make_plan(100, 2, 15.0, 20),
+        ]);
         let snap = make_snapshot(vec![
             make_plan(100, 1, 10.0, 50),
             make_plan(100, 2, 15.0, 30),
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
-        let ctx = make_ctx(&snap, &interner, &ewma);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert!(anomalies.is_empty(), "ratio 1.5x < 2.0 threshold");
@@ -247,17 +273,23 @@ mod tests {
 
     #[test]
     fn plan_regression_picks_worst_group() {
+        let prev = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 40),
+            make_plan(100, 2, 50.0, 10),
+            make_plan(200, 3, 5.0, 80),
+            make_plan(200, 4, 100.0, 5),
+        ]);
         let snap = make_snapshot(vec![
-            // Group A: ratio = 5x
+            // Group A: ratio = 5x, both active
             make_plan(100, 1, 10.0, 50),
             make_plan(100, 2, 50.0, 20),
-            // Group B: ratio = 20x (worst)
+            // Group B: ratio = 20x (worst), both active
             make_plan(200, 3, 5.0, 100),
             make_plan(200, 4, 100.0, 10),
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
-        let ctx = make_ctx(&snap, &interner, &ewma);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert_eq!(anomalies.len(), 1);
