@@ -35,6 +35,15 @@ impl AnalysisRule for PlanRegressionRule {
         }) else {
             return Vec::new();
         };
+        // Skip when data hasn't changed (within collector cache window).
+        // collected_at is set at actual PG query time, identical for cached returns.
+        let cur_collected = plans.iter().map(|p| p.collected_at).max().unwrap_or(0);
+        let prev_collected = prev_plans.iter().map(|p| p.collected_at).max().unwrap_or(0);
+        if cur_collected == prev_collected || cur_collected == 0 || prev_collected == 0 {
+            return Vec::new();
+        }
+        let collection_dt = (cur_collected - prev_collected).max(1) as f64;
+
         let prev_calls: HashMap<(i64, i64), i64> = prev_plans
             .iter()
             .map(|p| ((p.stmt_queryid, p.planid), p.calls))
@@ -60,8 +69,12 @@ impl AnalysisRule for PlanRegressionRule {
             ));
         }
 
+        // Minimum call rate for the slow plan to be considered "actively regressing".
+        // 0.05 calls/s ≈ 3 calls/min. Below this the impact is negligible.
+        const MIN_SLOW_RATE: f64 = 0.05;
+
         // Find the group with the worst ratio, but only flag regression
-        // if the SLOW plan is currently active (calls_delta > 0).
+        // if the SLOW plan is actively being used at a meaningful rate.
         let mut worst_ratio = 0.0_f64;
         let mut worst_qid: i64 = 0;
         let mut worst_plan_count: usize = 0;
@@ -82,9 +95,11 @@ impl AnalysisRule for PlanRegressionRule {
                 .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap();
 
-            // Only flag regression if the slow plan is actively being used.
-            // If slow_delta == 0, PostgreSQL already recovered to a faster plan.
-            if slow_delta <= 0 {
+            // Skip if the slow plan is not actively being used.
+            // Check rate (not just delta) to filter plans with a few stray calls
+            // over long collection intervals (pg_store_plans caches for 5 min).
+            let slow_rate = slow_delta as f64 / collection_dt;
+            if slow_rate < MIN_SLOW_RATE {
                 continue;
             }
 
@@ -150,12 +165,19 @@ mod tests {
     use crate::storage::StringInterner;
     use crate::storage::model::{PgStorePlansInfo, Snapshot};
 
-    fn make_plan(stmt_queryid: i64, planid: i64, mean_time: f64, calls: i64) -> PgStorePlansInfo {
+    fn make_plan_at(
+        stmt_queryid: i64,
+        planid: i64,
+        mean_time: f64,
+        calls: i64,
+        collected_at: i64,
+    ) -> PgStorePlansInfo {
         PgStorePlansInfo {
             stmt_queryid,
             planid,
             mean_time,
             calls,
+            collected_at,
             ..Default::default()
         }
     }
@@ -166,6 +188,10 @@ mod tests {
             blocks: vec![DataBlock::PgStorePlans(plans)],
         }
     }
+
+    // Collection timestamps: 5-minute intervals
+    const T0: i64 = 1000;
+    const T1: i64 = 1300; // +300s
 
     fn make_ctx<'a>(
         snapshot: &'a Snapshot,
@@ -205,30 +231,47 @@ mod tests {
     #[test]
     fn plan_regression_skips_without_prev_snapshot() {
         let snap = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 50),
-            make_plan(100, 2, 100.0, 20),
+            make_plan_at(100, 1, 10.0, 50, T1),
+            make_plan_at(100, 2, 100.0, 20, T1),
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
         let ctx = make_ctx(&snap, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
-        assert!(
-            anomalies.is_empty(),
-            "no prev_snapshot → cannot determine plan activity"
-        );
+        assert!(anomalies.is_empty(), "no prev_snapshot");
+    }
+
+    #[test]
+    fn plan_regression_skips_same_collected_at() {
+        // Both snapshots have same collected_at → cached data, skip.
+        let prev = make_snapshot(vec![
+            make_plan_at(100, 1, 10.0, 30, T0),
+            make_plan_at(100, 2, 100.0, 10, T0),
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan_at(100, 1, 10.0, 30, T0),
+            make_plan_at(100, 2, 100.0, 10, T0),
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert!(anomalies.is_empty(), "same collected_at → skip");
     }
 
     #[test]
     fn plan_regression_detects_multiple_plans() {
-        // Both plans gained new calls relative to prev → both active.
+        // Both plans gained calls at meaningful rate → both active.
+        // 300s interval, +20 and +30 calls → rates 0.067 and 0.1
         let prev = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 30),
-            make_plan(100, 2, 100.0, 10),
+            make_plan_at(100, 1, 10.0, 30, T0),
+            make_plan_at(100, 2, 100.0, 10, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 50),  // +20
-            make_plan(100, 2, 100.0, 20), // +10
+            make_plan_at(100, 1, 10.0, 50, T1),  // +20, rate=0.067
+            make_plan_at(100, 2, 100.0, 40, T1), // +30, rate=0.1
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -244,8 +287,8 @@ mod tests {
 
     #[test]
     fn plan_regression_ignores_single_plan() {
-        let prev = make_snapshot(vec![make_plan(100, 1, 50.0, 80)]);
-        let snap = make_snapshot(vec![make_plan(100, 1, 50.0, 100)]);
+        let prev = make_snapshot(vec![make_plan_at(100, 1, 50.0, 80, T0)]);
+        let snap = make_snapshot(vec![make_plan_at(100, 1, 50.0, 100, T1)]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
         let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
@@ -257,12 +300,12 @@ mod tests {
     #[test]
     fn plan_regression_ignores_similar_plans() {
         let prev = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 40),
-            make_plan(100, 2, 15.0, 20),
+            make_plan_at(100, 1, 10.0, 40, T0),
+            make_plan_at(100, 2, 15.0, 20, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 50),
-            make_plan(100, 2, 15.0, 30),
+            make_plan_at(100, 1, 10.0, 60, T1),
+            make_plan_at(100, 2, 15.0, 40, T1),
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -275,18 +318,16 @@ mod tests {
     #[test]
     fn plan_regression_picks_worst_group() {
         let prev = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 40),
-            make_plan(100, 2, 50.0, 10),
-            make_plan(200, 3, 5.0, 80),
-            make_plan(200, 4, 100.0, 5),
+            make_plan_at(100, 1, 10.0, 40, T0),
+            make_plan_at(100, 2, 50.0, 10, T0),
+            make_plan_at(200, 3, 5.0, 80, T0),
+            make_plan_at(200, 4, 100.0, 5, T0),
         ]);
         let snap = make_snapshot(vec![
-            // Group A: ratio = 5x, both active
-            make_plan(100, 1, 10.0, 50),
-            make_plan(100, 2, 50.0, 20),
-            // Group B: ratio = 20x (worst), both active
-            make_plan(200, 3, 5.0, 100),
-            make_plan(200, 4, 100.0, 10),
+            make_plan_at(100, 1, 10.0, 60, T1),
+            make_plan_at(100, 2, 50.0, 30, T1),
+            make_plan_at(200, 3, 5.0, 100, T1),
+            make_plan_at(200, 4, 100.0, 25, T1), // +20, rate=0.067
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -300,16 +341,33 @@ mod tests {
 
     #[test]
     fn plan_regression_ignores_inactive_slow_plan() {
-        // Slow plan (planid=2, mean_time=100) has same calls in both snapshots → delta=0.
-        // Fast plan (planid=1, mean_time=10) gained new calls → active.
-        // Regression is resolved — slow plan not being used anymore.
         let prev = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 40),
-            make_plan(100, 2, 100.0, 20),
+            make_plan_at(100, 1, 10.0, 40, T0),
+            make_plan_at(100, 2, 100.0, 20, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 55),  // +15 calls → active
-            make_plan(100, 2, 100.0, 20), // +0 calls → inactive
+            make_plan_at(100, 1, 10.0, 55, T1),
+            make_plan_at(100, 2, 100.0, 20, T1), // +0 → inactive
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert!(anomalies.is_empty(), "slow plan inactive");
+    }
+
+    #[test]
+    fn plan_regression_ignores_low_rate_slow_plan() {
+        // Slow plan gets 2 calls in 300s → rate = 0.007 < MIN_SLOW_RATE (0.05).
+        // This is negligible — don't flag.
+        let prev = make_snapshot(vec![
+            make_plan_at(100, 1, 10.0, 500, T0),
+            make_plan_at(100, 2, 100.0, 20, T0),
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan_at(100, 1, 10.0, 600, T1), // +100
+            make_plan_at(100, 2, 100.0, 22, T1), // +2, rate=0.007
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -318,49 +376,41 @@ mod tests {
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert!(
             anomalies.is_empty(),
-            "slow plan is inactive (calls_delta=0), regression resolved"
+            "slow plan rate too low to be impactful"
         );
     }
 
     #[test]
-    fn plan_regression_detects_active_slow_plan() {
-        // Slow plan (planid=2) gained new calls → actively being used → regression.
+    fn plan_regression_detects_meaningful_slow_plan() {
+        // Slow plan gets 20 calls in 300s → rate = 0.067 >= MIN_SLOW_RATE.
         let prev = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 50),
-            make_plan(100, 2, 100.0, 15),
+            make_plan_at(100, 1, 10.0, 500, T0),
+            make_plan_at(100, 2, 100.0, 100, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 52),  // +2 calls
-            make_plan(100, 2, 100.0, 20), // +5 calls → active slow plan
+            make_plan_at(100, 1, 10.0, 600, T1),
+            make_plan_at(100, 2, 100.0, 120, T1), // +20, rate=0.067
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
         let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
-        assert_eq!(anomalies.len(), 1, "slow plan is active → regression");
-        assert!((anomalies[0].value - 10.0).abs() < 0.01);
+        assert_eq!(anomalies.len(), 1, "slow plan rate above threshold");
     }
 
     #[test]
     fn plan_regression_skips_plan_not_in_prev() {
-        // Slow plan (planid=2) appears only in current snapshot (e.g. after cache rotation).
-        // Without prev data for this plan, we can't determine activity → skip it.
-        let prev = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 40), // only fast plan in prev
-        ]);
+        let prev = make_snapshot(vec![make_plan_at(100, 1, 10.0, 40, T0)]);
         let snap = make_snapshot(vec![
-            make_plan(100, 1, 10.0, 55),  // +15 calls
-            make_plan(100, 2, 100.0, 20), // NOT in prev → skipped
+            make_plan_at(100, 1, 10.0, 55, T1),
+            make_plan_at(100, 2, 100.0, 20, T1), // NOT in prev
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
         let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
 
         let anomalies = PlanRegressionRule.evaluate(&ctx);
-        assert!(
-            anomalies.is_empty(),
-            "plan not in prev → unknown activity → no regression"
-        );
+        assert!(anomalies.is_empty(), "plan not in prev");
     }
 }
