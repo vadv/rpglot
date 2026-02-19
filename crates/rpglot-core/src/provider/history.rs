@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::warn;
 
-use crate::storage::chunk::ChunkReader;
+use crate::storage::chunk::{ChunkReader, read_chunk_metadata};
 use crate::storage::heatmap::{self, HeatmapEntry};
 use crate::storage::model::Snapshot;
 use crate::storage::{StorageManager, StringInterner};
@@ -42,6 +42,10 @@ struct ChunkMeta {
     global_offset: usize,
     /// false if the file was deleted from disk (rotation).
     available: bool,
+    /// Per-snapshot timestamps from the index table.
+    /// Loaded once via `read_chunk_metadata()` (~10 KB I/O) and kept in memory
+    /// to avoid re-reading chunk files on refresh/heatmap.
+    timestamps: Vec<i64>,
 }
 
 // ============================================================
@@ -297,28 +301,32 @@ impl HistoryProvider {
         let mut all_timestamps: Vec<i64> = Vec::new();
         let mut global_offset: usize = 0;
 
-        // Scan each chunk file: read header + index (no decompression needed)
+        // Scan each chunk file: read only header + index (~10 KB per chunk).
+        // Does NOT load dictionary, snapshot data, or interner.
         for path in chunk_paths {
-            let reader = ChunkReader::open(&path).map_err(|e| {
-                ProviderError::Io(format!("Failed to open chunk {}: {}", path.display(), e))
+            let meta = read_chunk_metadata(&path).map_err(|e| {
+                ProviderError::Io(format!(
+                    "Failed to read chunk metadata {}: {}",
+                    path.display(),
+                    e
+                ))
             })?;
-            let snapshot_count = reader.snapshot_count();
-            let chunk_timestamps = reader.timestamps();
 
-            if snapshot_count == 0 {
+            if meta.snapshot_count == 0 {
                 continue;
             }
 
-            all_timestamps.extend_from_slice(&chunk_timestamps);
+            all_timestamps.extend_from_slice(&meta.timestamps);
 
             chunks.push(ChunkMeta {
                 path,
-                snapshot_count,
+                snapshot_count: meta.snapshot_count,
                 global_offset,
                 available: true,
+                timestamps: meta.timestamps,
             });
 
-            global_offset += snapshot_count;
+            global_offset += meta.snapshot_count;
         }
 
         // Scan WAL metadata lazily — snapshots and interners are NOT kept in memory
@@ -671,31 +679,30 @@ impl HistoryProvider {
                 continue;
             }
 
-            // New chunk file discovered — read header + index (no decompression)
-            let reader = match ChunkReader::open(path) {
-                Ok(r) => r,
+            // New chunk file discovered — read only header + index (~10 KB)
+            let meta = match read_chunk_metadata(path) {
+                Ok(m) => m,
                 Err(e) => {
-                    warn!(path = %path.display(), error = %e, "failed to open new chunk");
+                    warn!(path = %path.display(), error = %e, "failed to read new chunk metadata");
                     continue;
                 }
             };
-            let snapshot_count = reader.snapshot_count();
-            let chunk_timestamps = reader.timestamps();
 
-            if snapshot_count == 0 {
+            if meta.snapshot_count == 0 {
                 continue;
             }
 
-            new_timestamps.extend_from_slice(&chunk_timestamps);
+            new_timestamps.extend_from_slice(&meta.timestamps);
 
             self.chunks.push(ChunkMeta {
                 path: path.clone(),
-                snapshot_count,
+                snapshot_count: meta.snapshot_count,
                 global_offset,
                 available: true,
+                timestamps: meta.timestamps,
             });
 
-            global_offset += snapshot_count;
+            global_offset += meta.snapshot_count;
         }
 
         // Also check for deleted chunks — mark as unavailable
@@ -739,16 +746,15 @@ impl HistoryProvider {
 
         self.total_snapshots = global_offset;
 
-        // Rebuild timestamps from scratch — WAL is fully rescanned each refresh,
-        // so incremental extend would duplicate WAL timestamps.
+        // Rebuild timestamps from stored per-chunk timestamps + WAL.
+        // No disk I/O needed — chunk timestamps are cached in ChunkMeta.
         let mut all_timestamps: Vec<i64> = Vec::new();
         for chunk in &self.chunks {
-            if chunk.available
-                && let Ok(reader) = ChunkReader::open(&chunk.path)
-            {
-                all_timestamps.extend_from_slice(&reader.timestamps());
+            if chunk.available {
+                all_timestamps.extend_from_slice(&chunk.timestamps);
             }
         }
+        // WAL timestamps were already collected in new_timestamps above
         all_timestamps.extend(new_timestamps);
         all_timestamps.sort();
         self.timestamps = all_timestamps;
@@ -806,34 +812,33 @@ impl HistoryProvider {
     pub fn load_heatmap_range(&mut self, start_ts: i64, end_ts: i64) -> Vec<(i64, HeatmapEntry)> {
         let mut result = Vec::new();
 
-        // 1. Chunks overlapping the range
+        // 1. Chunks overlapping the range.
+        // Uses stored per-chunk timestamps (no disk I/O for range checks).
+        // Only opens ChunkReader for heatmap fallback (old chunks without .heatmap sidecar).
         for chunk_idx in 0..self.chunks.len() {
-            if !self.chunks[chunk_idx].available {
+            let chunk = &self.chunks[chunk_idx];
+            if !chunk.available || chunk.timestamps.is_empty() {
                 continue;
             }
 
-            let reader = match ChunkReader::open(&self.chunks[chunk_idx].path) {
-                Ok(r) => r,
-                Err(_) => continue,
-            };
-            let chunk_timestamps = reader.timestamps();
-            if chunk_timestamps.is_empty() {
-                continue;
-            }
-            let chunk_start = chunk_timestamps[0];
-            let chunk_end = *chunk_timestamps.last().unwrap();
+            let chunk_start = chunk.timestamps[0];
+            let chunk_end = *chunk.timestamps.last().unwrap();
 
             // Skip chunks entirely outside the range
             if chunk_end < start_ts || chunk_start > end_ts {
                 continue;
             }
 
-            // Try .heatmap sidecar file (fast path — no decompression)
-            let hpath = heatmap::heatmap_path(&self.chunks[chunk_idx].path);
+            // Try .heatmap sidecar file (fast path — no decompression, no ChunkReader)
+            let hpath = heatmap::heatmap_path(&chunk.path);
             let entries = if let Ok(entries) = heatmap::read_heatmap(&hpath) {
                 entries
             } else {
-                // Fallback: decompress all snapshots in chunk, build heatmap, cache to disk
+                // Fallback: need full ChunkReader to decompress all snapshots
+                let reader = match ChunkReader::open(&chunk.path) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
                 let fallback = Self::build_heatmap_fallback(&reader);
                 if let Some(ref e) = fallback {
                     let _ = heatmap::write_heatmap(&hpath, e);
@@ -841,8 +846,8 @@ impl HistoryProvider {
                 fallback.unwrap_or_default()
             };
 
-            // Pair with timestamps, filter to range
-            for (i, &ts) in chunk_timestamps.iter().enumerate() {
+            // Pair with stored timestamps, filter to range
+            for (i, &ts) in chunk.timestamps.iter().enumerate() {
                 if ts >= start_ts
                     && ts <= end_ts
                     && let Some(entry) = entries.get(i)

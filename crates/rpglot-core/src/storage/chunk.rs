@@ -41,7 +41,7 @@
 use crate::storage::interner::StringInterner;
 use crate::storage::model::Snapshot;
 use std::fs;
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read as _, Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::warn;
 
@@ -50,6 +50,63 @@ const VERSION: u16 = 3;
 const HEADER_SIZE: usize = 48;
 const INDEX_ENTRY_SIZE: usize = 28; // offset: u64 + compressed_len: u64 + timestamp: i64 + uncompressed_len: u32
 const DICT_MAX_SIZE: usize = 112 * 1024; // 112 KB
+
+/// Lightweight metadata from a chunk's header + index table.
+/// Reading this requires only ~10 KB of I/O (48-byte header + N × 28-byte index),
+/// compared to 10–50 MB for the full `ChunkReader::open()`.
+pub struct ChunkMetadata {
+    pub snapshot_count: usize,
+    pub timestamps: Vec<i64>,
+}
+
+/// Read only the chunk header + index table from disk.
+///
+/// Returns snapshot count and per-snapshot timestamps without loading the
+/// dictionary, snapshot data, or interner. This is ~1000× cheaper than
+/// `ChunkReader::open()` which reads the entire file via `fs::read()`.
+pub fn read_chunk_metadata(path: &Path) -> io::Result<ChunkMetadata> {
+    let mut file = fs::File::open(path)?;
+
+    // Read header (48 bytes)
+    let mut header = [0u8; HEADER_SIZE];
+    file.read_exact(&mut header)?;
+
+    let magic = &header[0..4];
+    if magic != MAGIC {
+        return Err(io::Error::other(format!(
+            "invalid magic: expected RPG3, got {:?}",
+            magic
+        )));
+    }
+
+    let version = u16::from_le_bytes([header[4], header[5]]);
+    if version != VERSION {
+        return Err(io::Error::other(format!(
+            "unsupported version: {}",
+            version
+        )));
+    }
+
+    let snapshot_count = u16::from_le_bytes([header[6], header[7]]) as usize;
+
+    // Read index table (snapshot_count × 28 bytes)
+    let index_size = snapshot_count * INDEX_ENTRY_SIZE;
+    let mut index_buf = vec![0u8; index_size];
+    file.read_exact(&mut index_buf)?;
+
+    // Extract only timestamps from the index entries
+    let mut timestamps = Vec::with_capacity(snapshot_count);
+    for i in 0..snapshot_count {
+        let base = i * INDEX_ENTRY_SIZE;
+        let timestamp = i64::from_le_bytes(index_buf[base + 16..base + 24].try_into().unwrap());
+        timestamps.push(timestamp);
+    }
+
+    Ok(ChunkMetadata {
+        snapshot_count,
+        timestamps,
+    })
+}
 
 /// Reader for chunk files with per-snapshot random access and dictionary decompression.
 pub struct ChunkReader {
