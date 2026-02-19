@@ -47,10 +47,11 @@ impl AnalysisRule for PlanRegressionRule {
             if p.stmt_queryid == 0 || p.calls <= 0 || p.mean_time <= 0.0 {
                 continue;
             }
-            let prev = prev_calls
-                .get(&(p.stmt_queryid, p.planid))
-                .copied()
-                .unwrap_or(0);
+            // Plan must exist in both snapshots to determine activity.
+            // New/evicted plans get unknown delta — skip them.
+            let Some(&prev) = prev_calls.get(&(p.stmt_queryid, p.planid)) else {
+                continue;
+            };
             let calls_delta = p.calls - prev;
             by_queryid.entry(p.stmt_queryid).or_default().push((
                 p.mean_time,
@@ -339,5 +340,27 @@ mod tests {
         let anomalies = PlanRegressionRule.evaluate(&ctx);
         assert_eq!(anomalies.len(), 1, "slow plan is active → regression");
         assert!((anomalies[0].value - 10.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn plan_regression_skips_plan_not_in_prev() {
+        // Slow plan (planid=2) appears only in current snapshot (e.g. after cache rotation).
+        // Without prev data for this plan, we can't determine activity → skip it.
+        let prev = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 40), // only fast plan in prev
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 55),  // +15 calls
+            make_plan(100, 2, 100.0, 20), // NOT in prev → skipped
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert!(
+            anomalies.is_empty(),
+            "plan not in prev → unknown activity → no regression"
+        );
     }
 }
