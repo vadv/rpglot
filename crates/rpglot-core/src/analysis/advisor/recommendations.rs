@@ -62,16 +62,22 @@ impl Advisor for ReplicationLagAdvisor {
 
         let mut related = vec![sync];
         let mut desc = String::from(
-            "Synchronous replication waits detected. Check pg_stat_replication for replica \
-             lag and verify synchronous_standby_names configuration. Consider switching to \
-             asynchronous replication if latency is acceptable.",
+            "The primary is blocked waiting for synchronous replica acknowledgement.\n\
+             \n\
+             Diagnose:\n\
+             \u{2022} Check replica health: replay lag, disk I/O, network latency to standby\n\
+             \u{2022} Look at pg_stat_replication: sent_lsn vs replay_lsn gap\n\
+             \n\
+             If the replica is consistently slow and downtime is acceptable:\n\
+             \u{2022} Temporarily switch to async: SET synchronous_standby_names = ''\n\
+             \u{2022} Fix the root cause on the replica, then re-enable sync mode",
         );
 
         if let Some(cpu) = find_incident(ctx.incidents, "cpu_high") {
             related.push(cpu);
             desc.push_str(
-                " High CPU usage on the primary may indicate the replica is overloaded \
-                 and cannot keep up with WAL replay.",
+                "\n\nHigh CPU on the primary is also present — this compounds the issue \
+                 by slowing WAL generation.",
             );
         }
 
@@ -80,7 +86,7 @@ impl Advisor for ReplicationLagAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Investigate replication lag".to_string(),
+            title: "Synchronous replication waits".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -106,16 +112,23 @@ impl Advisor for LockContentionAdvisor {
 
         let mut related = vec![blocked];
         let mut desc = String::from(
-            "Blocked sessions detected due to lock contention. Identify blocking queries \
-             using pg_locks and pg_stat_activity. Review transaction isolation levels and \
-             consider adding lock_timeout to prevent indefinite waits.",
+            "Sessions are waiting on locks held by other transactions.\n\
+             \n\
+             Immediate action:\n\
+             \u{2022} Find the root blocker: PGL tab \u{2192} look at the tree root\n\
+             \u{2022} Check if it's idle in transaction (forgot COMMIT?) or a long query\n\
+             \u{2022} Terminate if safe: SELECT pg_terminate_backend(<pid>)\n\
+             \n\
+             Prevention:\n\
+             \u{2022} SET lock_timeout = '5s' (or per-session) to bound wait time\n\
+             \u{2022} Keep transactions as short as possible — do heavy computation outside the TX",
         );
 
         if let Some(long_q) = find_incident(ctx.incidents, "long_query") {
             related.push(long_q);
             desc.push_str(
-                " Long-running queries are also present, which may be holding locks \
-                 for extended periods. Consider optimizing or breaking up these queries.",
+                "\n\nLong-running queries detected — likely holding the blocking locks. \
+                 Target the longest-held transaction first.",
             );
         }
 
@@ -124,7 +137,7 @@ impl Advisor for LockContentionAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Resolve lock contention".to_string(),
+            title: "Lock contention — sessions blocked".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -150,17 +163,26 @@ impl Advisor for HighCpuAdvisor {
 
         let mut related = vec![cpu];
         let mut desc = String::from(
-            "High CPU utilization detected. Check top queries in pg_stat_statements \
-             ordered by total_exec_time. Look for missing indexes causing sequential scans \
-             and consider query optimization.",
+            "High CPU utilization.\n\
+             \n\
+             Find the culprit:\n\
+             \u{2022} PGS tab: sort by total_exec_time and mean_exec_time\n\
+             \u{2022} Run EXPLAIN (ANALYZE, BUFFERS) on the top queries\n\
+             \u{2022} Look for: seq scans on large tables, nested loops with high row counts, \
+             hash joins spilling to disk\n\
+             \n\
+             Common fixes:\n\
+             \u{2022} Add missing indexes for filtered/joined columns\n\
+             \u{2022} Rewrite queries to reduce rows early (push filters down)\n\
+             \u{2022} If many connections compete for CPU — use a connection pooler to limit concurrency",
         );
 
         if let Some(iow) = find_incident(ctx.incidents, "iowait_high") {
             related.push(iow);
             desc.push_str(
-                " High I/O wait is also present, indicating the workload may be I/O bound. \
-                 Verify storage performance and consider increasing shared_buffers or \
-                 effective_cache_size.",
+                "\n\nI/O wait is also high — the workload is both CPU- and I/O-bound. \
+                 Focus on reducing pages read per query (better indexes, query rewrites) \
+                 rather than just adding CPU.",
             );
         }
 
@@ -169,7 +191,7 @@ impl Advisor for HighCpuAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Investigate high CPU usage".to_string(),
+            title: "High CPU usage".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -195,28 +217,38 @@ impl Advisor for MemoryPressureAdvisor {
 
         let mut related = vec![mem];
         let mut desc = String::from(
-            "Low available memory detected. Consider increasing system RAM or tuning \
-             PostgreSQL memory settings: reduce shared_buffers if over-provisioned, \
-             lower work_mem for high-concurrency workloads, and review \
-             maintenance_work_mem.",
+            "Low available memory.\n\
+             \n\
+             Check PostgreSQL memory allocation:\n\
+             \u{2022} shared_buffers should be ~25% of RAM (not more — the OS needs the rest for page cache)\n\
+             \u{2022} work_mem \u{00d7} max_connections = worst-case sort/hash memory — can balloon fast\n\
+             \u{2022} maintenance_work_mem affects VACUUM, CREATE INDEX (one-off, but large)\n\
+             \n\
+             If settings are reasonable, the system needs more RAM or fewer concurrent connections.",
         );
 
         if let Some(ref s) = ctx.settings
             && let (Some(sb), Some(wm)) = (s.get_bytes("shared_buffers"), s.get_bytes("work_mem"))
         {
             desc.push_str(&format!(
-                " Current settings: shared_buffers={}, work_mem={}.",
+                "\n\nCurrent: shared_buffers={}, work_mem={}.",
                 format_bytes(sb),
                 format_bytes(wm)
             ));
+            if let Some(mc) = s.get_i64("max_connections") {
+                desc.push_str(&format!(
+                    " Worst-case work_mem total: {} (work_mem \u{00d7} {mc}).",
+                    format_bytes(wm * mc)
+                ));
+            }
         }
 
         if let Some(swap) = find_incident(ctx.incidents, "swap_usage") {
             related.push(swap);
             desc.push_str(
-                " Swap usage is also detected, which severely degrades database \
-                 performance. This is urgent: either increase RAM or reduce PostgreSQL \
-                 memory consumption to eliminate swap usage.",
+                "\n\n\u{26a0} Swap usage detected — PostgreSQL performance degrades \
+                 catastrophically under swap. Urgent: free memory now (reduce connections, \
+                 lower work_mem) or add RAM.",
             );
         }
 
@@ -225,7 +257,7 @@ impl Advisor for MemoryPressureAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Address memory pressure".to_string(),
+            title: "Memory pressure".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -253,24 +285,35 @@ impl Advisor for TableBloatAdvisor {
         let severity = worst_severity(&related);
 
         let mut desc = String::from(
-            "High dead tuple ratio detected, indicating table bloat. \
-             Use pg_repack or pgcompacttable to reclaim space online without locking. \
-             Avoid VACUUM FULL — it takes AccessExclusiveLock and blocks all queries. \
-             For long-term prevention, adjust autovacuum settings: lower \
-             autovacuum_vacuum_scale_factor (e.g. 0.05), increase \
-             autovacuum_vacuum_cost_limit, and reduce autovacuum_vacuum_cost_delay.",
+            "High dead tuple ratio — tables are bloated.\n\
+             \n\
+             Reclaim space (online, no locks):\n\
+             \u{2022} pg_repack — rewrites the table in the background, needs free disk space ~1\u{00d7} table size\n\
+             \u{2022} pgcompacttable — moves tuples in-place, slower but needs no extra space\n\
+             \u{2022} Do NOT use VACUUM FULL — it takes AccessExclusiveLock and blocks all queries\n\
+             \n\
+             Prevent future bloat — tune autovacuum:\n\
+             \u{2022} autovacuum_vacuum_scale_factor = 0.02\u{2013}0.05 (default 0.2 is too lazy for large tables)\n\
+             \u{2022} autovacuum_vacuum_cost_limit = 1000\u{2013}2000 (default 200 is very slow)\n\
+             \u{2022} autovacuum_vacuum_cost_delay = 2ms (PG 12+, default 20ms is conservative)\n\
+             \u{2022} For large tables: set per-table thresholds via ALTER TABLE ... SET (autovacuum_vacuum_threshold = ...)",
         );
 
         if let Some(ref s) = ctx.settings
             && let Some(sf) = s.get_f64("autovacuum_vacuum_scale_factor")
         {
-            desc.push_str(&format!(" Current autovacuum_vacuum_scale_factor={sf}."));
+            desc.push_str(&format!(
+                "\n\nCurrent autovacuum_vacuum_scale_factor = {sf}."
+            ));
+            if sf >= 0.1 {
+                desc.push_str(" This is high for large tables — lower it.");
+            }
         }
 
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Reduce table bloat".to_string(),
+            title: "Table bloat — dead tuples accumulating".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -296,9 +339,12 @@ impl Advisor for CheckpointStormAdvisor {
 
         let mut related = vec![cp];
         let mut desc = String::from(
-            "Checkpoint activity spike detected. Consider increasing checkpoint_timeout \
-             (e.g. 15min) and max_wal_size (e.g. 4GB+) to spread checkpoint I/O over \
-             longer intervals and reduce write amplification.",
+            "Checkpoint activity spike — forced checkpoints are generating heavy disk I/O.\n\
+             \n\
+             Spread checkpoint I/O over longer intervals:\n\
+             \u{2022} max_wal_size = 4\u{2013}8 GB (reduces forced checkpoint frequency)\n\
+             \u{2022} checkpoint_timeout = 15\u{2013}30 min (default 5 min is too frequent for write-heavy loads)\n\
+             \u{2022} checkpoint_completion_target = 0.9 (spread writes across the interval)",
         );
 
         if let Some(ref s) = ctx.settings
@@ -306,7 +352,7 @@ impl Advisor for CheckpointStormAdvisor {
                 (s.get_bytes("max_wal_size"), s.get_ms("checkpoint_timeout"))
         {
             desc.push_str(&format!(
-                " Current settings: max_wal_size={}, checkpoint_timeout={}s.",
+                "\n\nCurrent: max_wal_size={}, checkpoint_timeout={}s.",
                 format_bytes(mws),
                 ct / 1000
             ));
@@ -315,9 +361,10 @@ impl Advisor for CheckpointStormAdvisor {
         if let Some(backend) = find_incident(ctx.incidents, "backend_buffers_high") {
             related.push(backend);
             desc.push_str(
-                " High backend buffer writes indicate the background writer cannot keep up. \
-                 Tune bgwriter_lru_maxpages and bgwriter_delay to write dirty buffers \
-                 more aggressively before checkpoints.",
+                "\n\nBackend processes are also writing dirty buffers directly (bypassing \
+                 bgwriter) — this means bgwriter can't keep up. Tune:\n\
+                 \u{2022} bgwriter_lru_maxpages = 1000 (default 100)\n\
+                 \u{2022} bgwriter_delay = 20ms (default 200ms)",
             );
         }
 
@@ -326,7 +373,7 @@ impl Advisor for CheckpointStormAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Mitigate checkpoint storms".to_string(),
+            title: "Checkpoint storm — forced checkpoints".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -355,36 +402,39 @@ impl Advisor for IoBottleneckAdvisor {
         let mut related: Vec<&Incident> = Vec::new();
         let mut desc = String::new();
 
-        if let Some(util) = disk_util {
-            related.push(util);
-            desc.push_str(
-                "High disk utilization detected. Check the storage subsystem for \
-                 performance bottlenecks.",
-            );
-        }
-
-        if let Some(latency) = disk_latency {
-            related.push(latency);
-            if !desc.is_empty() {
-                desc.push(' ');
+        if disk_util.is_some() && disk_latency.is_some() {
+            desc.push_str("Disk I/O saturated: high utilization + high latency (r_await/w_await).");
+            if let Some(u) = disk_util {
+                related.push(u);
             }
+            if let Some(l) = disk_latency {
+                related.push(l);
+            }
+        } else if let Some(util) = disk_util {
+            related.push(util);
+            desc.push_str("High disk utilization detected.");
+        } else if let Some(latency) = disk_latency {
+            related.push(latency);
             desc.push_str(
-                "High disk latency (r_await/w_await) confirms the storage subsystem \
-                 is struggling to keep up with I/O demands.",
+                "High disk latency (r_await/w_await) — storage is struggling with I/O demands.",
             );
         }
 
         desc.push_str(
-            " Consider upgrading to faster storage (NVMe), distributing I/O \
-             across multiple disks, or reducing write-heavy operations during peak hours.",
+            "\n\n\
+             Check PG-level causes first:\n\
+             \u{2022} Is shared_buffers too small, causing excessive physical reads? (check PGT HIT%)\n\
+             \u{2022} Are seq scans on large tables generating unnecessary I/O? (check PGT SEQ%)\n\
+             \u{2022} Is autovacuum or a checkpoint storm generating extra I/O?\n\
+             \n\
+             If I/O is at hardware limits:\n\
+             \u{2022} Migrate to faster storage (NVMe)\n\
+             \u{2022} Offload read queries to a replica\n\
+             \u{2022} Add RAM — larger page cache = fewer physical reads",
         );
 
         if let Some(iow) = find_incident(ctx.incidents, "iowait_high") {
             related.push(iow);
-            desc.push_str(
-                " High I/O wait correlates with disk saturation. Prioritize storage \
-                 improvements.",
-            );
         }
 
         let severity = worst_severity(&related);
@@ -392,7 +442,7 @@ impl Advisor for IoBottleneckAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Resolve I/O bottleneck".to_string(),
+            title: "I/O bottleneck".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -430,23 +480,33 @@ impl Advisor for ErrorStormAdvisor {
 
         let desc = if fatal.is_some() {
             String::from(
-                "PostgreSQL FATAL or PANIC errors detected. This is urgent: check \
-                 PostgreSQL server logs immediately for crash details, connection \
-                 exhaustion, or data corruption. Also check for ERROR-level messages \
-                 that may indicate the root cause.",
+                "FATAL/PANIC errors in PostgreSQL logs — this is urgent.\n\
+                 \n\
+                 \u{2022} Check PostgreSQL server logs immediately\n\
+                 \u{2022} Common causes: connection exhaustion (max_connections reached), \
+                 shared memory issues, data corruption, out of disk space\n\
+                 \u{2022} PANIC = PostgreSQL crashed and restarted — check for hardware issues",
             )
         } else {
             String::from(
-                "Elevated PostgreSQL error rate detected. Check PostgreSQL server logs \
-                 for recurring error patterns. Common causes include connection limits, \
-                 permission issues, query syntax errors, and constraint violations.",
+                "Elevated PostgreSQL error rate.\n\
+                 \n\
+                 Check PGE tab for error patterns:\n\
+                 \u{2022} Connection errors \u{2192} connection pooler misconfiguration or max_connections too low\n\
+                 \u{2022} Permission errors \u{2192} recent GRANT/REVOKE changes\n\
+                 \u{2022} Constraint violations \u{2192} application logic issue (usually harmless)\n\
+                 \u{2022} Lock/serialization errors \u{2192} high contention, may need retry logic in the app",
             )
         };
 
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Investigate PostgreSQL errors".to_string(),
+            title: if fatal.is_some() {
+                "FATAL/PANIC errors — check logs immediately".to_string()
+            } else {
+                "Elevated error rate".to_string()
+            },
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -472,17 +532,21 @@ impl Advisor for CgroupThrottleAdvisor {
 
         let mut related = vec![throttle];
         let mut desc = String::from(
-            "Container CPU throttling detected. The container is hitting its CPU quota \
-             limit. Increase the CPU limit (cpu.max quota) in the container resource \
-             configuration to allow more CPU time.",
+            "Container is being CPU-throttled by cgroup limits.\n\
+             \n\
+             Two approaches:\n\
+             1. Reduce CPU demand: check PGS tab for expensive queries, add indexes, \
+             optimize query plans\n\
+             2. Increase the container CPU quota (cpu.max / cpu.cfs_quota_us) if the \
+             workload legitimately needs more CPU",
         );
 
         if let Some(cpu) = find_incident(ctx.incidents, "cpu_high") {
             related.push(cpu);
             desc.push_str(
-                " High CPU usage combined with throttling confirms the container needs \
-                 more CPU resources. Consider both increasing the CPU limit and \
-                 optimizing CPU-intensive queries.",
+                "\n\nHigh CPU + throttling confirms the container genuinely needs more \
+                 CPU or the workload needs optimization. Start with the queries — \
+                 increasing quota without fixing bad queries just delays the problem.",
             );
         }
 
@@ -491,7 +555,7 @@ impl Advisor for CgroupThrottleAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Increase container CPU limit".to_string(),
+            title: "Container CPU throttling".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -521,9 +585,13 @@ impl Advisor for VacuumBlockedAdvisor {
 
         let mut related = vec![dead, idle_tx];
         let mut desc = String::from(
-            "Dead tuples are accumulating while idle-in-transaction sessions are active. \
-             Idle transactions hold the xmin horizon, preventing VACUUM from reclaiming \
-             dead rows — this is the most common cause of unbounded table bloat.",
+            "Dead tuples accumulating while idle-in-transaction sessions hold the xmin horizon, \
+             preventing VACUUM from reclaiming dead rows. This is the #1 cause of unbounded table bloat.\n\
+             \n\
+             Fix:\n\
+             \u{2022} Find and fix the idle transactions: PGA tab \u{2192} filter idle in transaction\n\
+             \u{2022} Set idle_in_transaction_session_timeout = 30s\u{2013}5min to auto-terminate them\n\
+             \u{2022} Fix the application: ensure every BEGIN has a matching COMMIT/ROLLBACK",
         );
 
         if let Some(ref s) = ctx.settings
@@ -531,12 +599,12 @@ impl Advisor for VacuumBlockedAdvisor {
         {
             if timeout_ms == 0 {
                 desc.push_str(
-                    " CRITICAL: idle_in_transaction_session_timeout is disabled (0). \
-                     Set it to 30s-5min to auto-terminate idle transactions.",
+                    "\n\n\u{26a0} idle_in_transaction_session_timeout = 0 (disabled). \
+                     This is dangerous — set it to at least 60s.",
                 );
             } else {
                 desc.push_str(&format!(
-                    " Current idle_in_transaction_session_timeout={}s.",
+                    "\n\nCurrent idle_in_transaction_session_timeout = {}s.",
                     timeout_ms / 1000
                 ));
             }
@@ -545,8 +613,8 @@ impl Advisor for VacuumBlockedAdvisor {
         if let Some(lq) = find_incident(ctx.incidents, "long_query") {
             related.push(lq);
             desc.push_str(
-                " Long-running queries also hold the xmin horizon. Review and optimize \
-                 long transactions.",
+                "\n\nLong-running queries also hold the xmin horizon. \
+                 Check if they can use a read replica instead.",
             );
         }
 
@@ -585,10 +653,17 @@ impl Advisor for LockCascadeAdvisor {
 
         let mut related = vec![blocked, active];
         let mut desc = String::from(
-            "Lock contention is causing a cascade: blocked sessions pile up and appear \
-             as active, creating a session storm. A single blocking transaction is likely \
-             holding locks that queue multiple waiters. Find and terminate the blocking \
-             query using pg_locks. Use CONCURRENTLY variants for DDL operations.",
+            "Lock contention is cascading: blocked sessions pile up, appear as \"active\", \
+             and create a session storm. One blocker can queue dozens of waiters.\n\
+             \n\
+             Immediate action:\n\
+             \u{2022} PGL tab: find the root of the lock tree, check its query and duration\n\
+             \u{2022} Terminate the blocker: SELECT pg_terminate_backend(<pid>)\n\
+             \n\
+             Prevention:\n\
+             \u{2022} SET lock_timeout = '5s'\u{2013}'30s' to prevent unbounded waits\n\
+             \u{2022} Use CREATE INDEX CONCURRENTLY instead of CREATE INDEX\n\
+             \u{2022} Use pg_repack instead of VACUUM FULL for table maintenance",
         );
 
         if let Some(ref s) = ctx.settings
@@ -596,8 +671,8 @@ impl Advisor for LockCascadeAdvisor {
             && lt_ms == 0
         {
             desc.push_str(
-                " lock_timeout is disabled — queries wait for locks indefinitely. \
-                 Set lock_timeout (e.g. 5s-30s) to prevent unbounded waits.",
+                "\n\n\u{26a0} lock_timeout = 0 (disabled) — queries wait for locks \
+                 indefinitely. Set it to prevent cascading waits.",
             );
         }
 
@@ -610,7 +685,7 @@ impl Advisor for LockCascadeAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Lock cascade causing session storm".to_string(),
+            title: "Lock cascade — session storm".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -647,16 +722,22 @@ impl Advisor for ConnectionStormAdvisor {
 
         let mut related = vec![active, pressure];
         let mut desc = String::from(
-            "High active session count combined with resource pressure indicates \
-             connection overload. Too many concurrent queries cause CPU context switching \
-             overhead and lock contention. Deploy a connection pooler (PgBouncer in \
-             transaction mode) to limit active backends.",
+            "Too many concurrent active queries are saturating resources.\n\
+             \n\
+             Immediate:\n\
+             \u{2022} Check PGA tab: are all sessions running real queries, or is something stuck?\n\
+             \u{2022} If the app is opening too many connections: limit at the app/pooler level\n\
+             \n\
+             Prevention:\n\
+             \u{2022} Use a connection pooler (PgBouncer in transaction mode) to limit active backends\n\
+             \u{2022} If already using a pooler: lower its pool_size / max_client_conn\n\
+             \u{2022} Rule of thumb: active backends \u{2264} 2\u{2013}3\u{00d7} CPU cores",
         );
 
         if let Some(ref s) = ctx.settings
             && let Some(mc) = s.get_i64("max_connections")
         {
-            desc.push_str(&format!(" Current max_connections={mc}."));
+            desc.push_str(&format!("\n\nCurrent max_connections = {mc}."));
         }
 
         // Add any additional correlated incidents.
@@ -671,7 +752,7 @@ impl Advisor for ConnectionStormAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Connection storm detected".to_string(),
+            title: "Connection storm — too many active sessions".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -708,12 +789,18 @@ impl Advisor for WriteAmplificationAdvisor {
 
         let mut related = vec![cp, backend, disk];
         let mut desc = String::from(
-            "Write amplification detected: forced checkpoints + backends writing dirty \
-             buffers directly + disk saturation. The write pipeline is overwhelmed. \
-             Increase max_wal_size (e.g. 4-8 GB) to reduce forced checkpoint frequency. \
-             Tune bgwriter (bgwriter_lru_maxpages, bgwriter_delay) to write dirty pages \
-             proactively. Review whether unused indexes on write-heavy tables can be dropped \
-             to reduce WAL volume.",
+            "Write amplification: forced checkpoints + backends writing dirty buffers + \
+             disk saturation. The entire write pipeline is overwhelmed.\n\
+             \n\
+             Tune the write path:\n\
+             \u{2022} max_wal_size = 4\u{2013}8 GB (reduces forced checkpoint frequency)\n\
+             \u{2022} bgwriter_lru_maxpages = 1000 (proactively flush dirty pages)\n\
+             \u{2022} bgwriter_delay = 20ms\n\
+             \n\
+             Reduce WAL volume:\n\
+             \u{2022} Drop unused indexes on write-heavy tables (each index = extra WAL per write)\n\
+             \u{2022} Use COPY instead of INSERT for bulk loads\n\
+             \u{2022} Consider wal_compression = on (PG 15+: lz4)",
         );
 
         if let Some(ref s) = ctx.settings {
@@ -728,7 +815,7 @@ impl Advisor for WriteAmplificationAdvisor {
                 settings_info.push(format!("bgwriter_delay={v}ms"));
             }
             if !settings_info.is_empty() {
-                desc.push_str(&format!(" Current settings: {}.", settings_info.join(", ")));
+                desc.push_str(&format!("\n\nCurrent: {}.", settings_info.join(", ")));
             }
         }
 
@@ -781,10 +868,15 @@ impl Advisor for CacheMissAdvisor {
 
         let mut related = vec![cache, io];
         let mut desc = String::from(
-            "Low cache hit ratio is causing excessive physical disk reads, resulting in \
-             I/O saturation. The working set likely exceeds shared_buffers. Increase \
-             shared_buffers to 25% of available RAM. Verify effective_cache_size reflects \
-             total available memory (RAM minus OS overhead).",
+            "Low buffer cache hit ratio is causing excessive physical disk reads.\n\
+             \n\
+             The working set likely exceeds shared_buffers:\n\
+             \u{2022} shared_buffers should be ~25% of RAM\n\
+             \u{2022} Check PGT Reads view: which tables have low HIT%?\n\
+             \u{2022} Tables with HIT% < 90% and high Disk Read/s are the problem\n\
+             \n\
+             Note: effective_cache_size is only a planner hint (not a memory allocation) \
+             — set it to ~75% of total RAM so the planner knows about OS page cache.",
         );
 
         if let Some(ref s) = ctx.settings {
@@ -796,7 +888,7 @@ impl Advisor for CacheMissAdvisor {
                 info.push(format!("effective_cache_size={}", format_bytes(v)));
             }
             if !info.is_empty() {
-                desc.push_str(&format!(" Current settings: {}.", info.join(", ")));
+                desc.push_str(&format!("\n\nCurrent: {}.", info.join(", ")));
             }
         }
 
@@ -821,7 +913,7 @@ impl Advisor for CacheMissAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Cache misses causing I/O pressure".to_string(),
+            title: "Cache misses \u{2192} disk I/O pressure".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -854,10 +946,13 @@ impl Advisor for SeqScanCpuAdvisor {
 
         let mut related = vec![seq, pressure];
         let mut desc = String::from(
-            "Sequential scans on large tables are causing resource pressure. Missing \
-             indexes force PostgreSQL to read entire tables. Run EXPLAIN ANALYZE on top \
-             queries from pg_stat_statements to identify missing indexes. Create targeted \
-             B-tree indexes on frequently filtered columns.",
+            "Sequential scans on large tables are wasting CPU and I/O.\n\
+             \n\
+             Find and fix:\n\
+             \u{2022} PGT Scans view: tables with high SEQ% and large row count need indexes\n\
+             \u{2022} PGS tab: find queries with high total_exec_time, run EXPLAIN (ANALYZE, BUFFERS)\n\
+             \u{2022} Create B-tree indexes on columns used in WHERE and JOIN clauses\n\
+             \u{2022} For partial scans: consider partial indexes (WHERE condition)",
         );
 
         if let Some(ref s) = ctx.settings
@@ -865,8 +960,8 @@ impl Advisor for SeqScanCpuAdvisor {
             && rpc >= 4.0
         {
             desc.push_str(&format!(
-                " random_page_cost={rpc} (default for HDD). If using SSD, set \
-                 it to 1.1 to help the planner prefer index scans."
+                "\n\nrandom_page_cost = {rpc} (HDD default). If using SSD, set to 1.1 \
+                 — this alone can make the planner prefer index scans.",
             ));
         }
 
@@ -914,10 +1009,15 @@ impl Advisor for AutovacuumPressureAdvisor {
 
         let mut related = vec![av, io];
         let mut desc = String::from(
-            "Autovacuum I/O is saturating the storage subsystem, competing with the \
-             normal workload for disk bandwidth. Tune autovacuum_vacuum_cost_limit \
-             (lower it) and increase autovacuum_vacuum_cost_delay to throttle vacuum I/O. \
-             Consider scheduling manual VACUUM on large tables during off-peak hours.",
+            "Autovacuum I/O is competing with the normal workload for disk bandwidth.\n\
+             \n\
+             Throttle autovacuum:\n\
+             \u{2022} autovacuum_vacuum_cost_delay = 10\u{2013}20ms (slow down each worker)\n\
+             \u{2022} autovacuum_vacuum_cost_limit: lower it to reduce burst I/O per worker\n\
+             \u{2022} autovacuum_max_workers: if multiple workers run simultaneously, reduce to 1\u{2013}2\n\
+             \n\
+             For very large tables: set per-table cost_delay via ALTER TABLE to throttle \
+             independently from other tables.",
         );
 
         if let Some(ref s) = ctx.settings {
@@ -932,7 +1032,7 @@ impl Advisor for AutovacuumPressureAdvisor {
                 info.push(format!("autovacuum_max_workers={v}"));
             }
             if !info.is_empty() {
-                desc.push_str(&format!(" Current settings: {}.", info.join(", ")));
+                desc.push_str(&format!("\n\nCurrent: {}.", info.join(", ")));
             }
         }
 
@@ -947,7 +1047,7 @@ impl Advisor for AutovacuumPressureAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Autovacuum causing I/O pressure".to_string(),
+            title: "Autovacuum saturating disk I/O".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -983,17 +1083,28 @@ impl Advisor for OomRiskAdvisor {
                 related.push(oom);
             }
             String::from(
-                "OOM kills have occurred alongside memory pressure and swap usage. \
-                 URGENT: reduce PostgreSQL memory footprint immediately — lower \
-                 shared_buffers, work_mem, and maintenance_work_mem. Reduce \
-                 max_connections. Consider adding RAM or increasing container memory limits.",
+                "OOM kills have occurred. PostgreSQL processes are being killed by the OS.\n\
+                 \n\
+                 Urgent — reduce memory footprint:\n\
+                 \u{2022} Lower work_mem (each sort/hash uses this much per operation per connection)\n\
+                 \u{2022} Lower shared_buffers if over-allocated\n\
+                 \u{2022} Reduce max_connections (or use a pooler)\n\
+                 \u{2022} Check maintenance_work_mem — a single CREATE INDEX can use this much\n\
+                 \n\
+                 If settings are already minimal: add RAM or increase container memory limit.",
             )
         } else {
             String::from(
-                "Memory exhaustion trajectory: low available memory combined with active \
-                 swap usage. PostgreSQL performance degrades severely under swap pressure. \
-                 Reduce shared_buffers or work_mem if over-allocated. If PostgreSQL \
-                 settings are appropriate, add physical RAM.",
+                "Approaching OOM: low memory + active swap usage. PostgreSQL under swap \
+                 pressure = severe performance degradation.\n\
+                 \n\
+                 Reduce memory:\n\
+                 \u{2022} Lower work_mem — worst case = work_mem \u{00d7} max_connections \u{00d7} \
+                 operations_per_query\n\
+                 \u{2022} Check shared_buffers: should be ~25% of RAM, not more\n\
+                 \u{2022} Reduce connections if possible\n\
+                 \n\
+                 If settings are reasonable: add RAM.",
             )
         };
 
@@ -1016,7 +1127,7 @@ impl Advisor for OomRiskAdvisor {
                 }
             }
             if !info.is_empty() {
-                desc.push_str(&format!(" Current settings: {}.", info.join(", ")));
+                desc.push_str(&format!("\n\nCurrent: {}.", info.join(", ")));
             }
         }
 
@@ -1030,9 +1141,9 @@ impl Advisor for OomRiskAdvisor {
             id: self.id().to_string(),
             severity,
             title: if has_oom {
-                "OOM kills detected — memory exhaustion".to_string()
+                "OOM kills — memory exhausted".to_string()
             } else {
-                "Memory exhaustion risk — approaching OOM".to_string()
+                "Approaching OOM — swap pressure".to_string()
             },
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
@@ -1077,19 +1188,25 @@ impl Advisor for QueryRegressionAdvisor {
                 related.push(extra);
             }
             String::from(
-                "Persistent query slowdown detected alongside resource pressure. The \
-                 slow query may be both a symptom (degraded by resource contention) and \
-                 a cause (consuming resources). Identify the specific query via \
-                 pg_stat_statements (highest mean_exec_time). Run EXPLAIN ANALYZE and \
-                 optimize the query plan.",
+                "Query slowdown + resource pressure. The slow query may be both a symptom \
+                 (degraded by contention) and a cause (consuming resources).\n\
+                 \n\
+                 Diagnose:\n\
+                 \u{2022} PGS tab: find the query with highest mean_exec_time spike\n\
+                 \u{2022} Run EXPLAIN (ANALYZE, BUFFERS) — compare with the expected plan\n\
+                 \u{2022} Look for: plan flip (seq scan instead of index scan), buffer bloat, \
+                 lock waits in the plan",
             )
         } else {
             String::from(
-                "Persistent query slowdown detected without corresponding resource \
-                 saturation. This pattern indicates a query plan regression — often \
-                 caused by stale statistics after bulk data changes, schema modifications, \
-                 or PostgreSQL upgrades. Run ANALYZE on affected tables. Compare EXPLAIN \
-                 plans for the slow query.",
+                "Query slowdown without resource saturation — likely a plan regression.\n\
+                 \n\
+                 Common causes:\n\
+                 \u{2022} Stale statistics after bulk INSERT/UPDATE/DELETE \u{2192} run ANALYZE on affected tables\n\
+                 \u{2022} Table grew past a planner threshold \u{2192} plan flipped from index scan to seq scan\n\
+                 \u{2022} Schema change (dropped index, new column) \u{2192} check recent DDL\n\
+                 \n\
+                 Diagnose: EXPLAIN (ANALYZE, BUFFERS) on the slow query, compare with previous plan.",
             )
         };
 
@@ -1098,8 +1215,8 @@ impl Advisor for QueryRegressionAdvisor {
             && rpc >= 4.0
         {
             desc.push_str(&format!(
-                " random_page_cost={rpc} (HDD default). For SSD storage, set \
-                 to 1.1 to improve index scan preference."
+                "\n\nrandom_page_cost = {rpc} (HDD default). For SSD, set to 1.1 \
+                 — may fix the plan regression.",
             ));
         }
 
@@ -1108,7 +1225,7 @@ impl Advisor for QueryRegressionAdvisor {
         vec![Recommendation {
             id: self.id().to_string(),
             severity,
-            title: "Query plan regression detected".to_string(),
+            title: "Query plan regression".to_string(),
             description: desc,
             related_incidents: related.iter().map(|i| i.rule_id.clone()).collect(),
         }]
@@ -1199,34 +1316,37 @@ impl Advisor for TempFileSpillAdvisor {
             let bytes_written = delta_written * 8192;
             let bytes_read = delta_read * 8192;
             format!(
-                "Confirmed temp file spill: {} written, {} read between last two snapshots. \
-                 PostgreSQL is spilling sort/hash operations to disk due to insufficient work_mem.",
+                "Confirmed: PostgreSQL is spilling sort/hash operations to temp files on disk.\n\
+                 Temp written: {}, temp read: {} (between snapshots).\n\
+                 \n\
+                 work_mem is too small for the current queries.",
                 format_bytes(bytes_written),
                 format_bytes(bytes_read),
             )
         } else {
             String::from(
-                "Possible temp file spill: query slowdown coincides with disk I/O spikes. \
-                 When work_mem is too small, PostgreSQL spills sort and hash operations to \
-                 temporary files on disk, dramatically increasing query time.",
+                "Likely temp file spill: query slowdown coincides with disk I/O spikes.\n\
+                 When work_mem is too small, sorts and hash joins spill to disk.",
             )
         };
 
+        desc.push_str(
+            "\n\n\
+             Fix:\n\
+             \u{2022} Increase work_mem — but carefully: work_mem \u{00d7} connections \u{00d7} sorts_per_query = total\n\
+             \u{2022} Start with SET work_mem = '64MB' per session for the problem query\n\
+             \u{2022} Don't blindly set it globally to 256MB+ — that can cause OOM under load\n\
+             \u{2022} Better fix: optimize the query to reduce the sort/hash size",
+        );
+
         if let Some(ref s) = ctx.settings {
             if let Some(wm) = s.get_bytes("work_mem") {
-                desc.push_str(&format!(
-                    " Current work_mem={}. Consider increasing to 64-256 MiB depending \
-                     on concurrency.",
-                    format_bytes(wm)
-                ));
+                desc.push_str(&format!("\n\nCurrent work_mem = {}.", format_bytes(wm)));
             }
             if let Some(ltf) = s.get_i64("log_temp_files")
                 && ltf < 0
             {
-                desc.push_str(
-                    " log_temp_files is disabled. Enable it (set to 0) to confirm \
-                     temp file usage in PostgreSQL logs.",
-                );
+                desc.push_str(" log_temp_files is disabled — set to 0 to log all temp file usage.");
             }
         }
 
@@ -1238,9 +1358,9 @@ impl Advisor for TempFileSpillAdvisor {
         };
 
         let title = if confirmed {
-            "Temp file spill detected — increase work_mem"
+            "Temp file spill confirmed — increase work_mem"
         } else {
-            "Possible temp file spill — increase work_mem"
+            "Likely temp file spill — check work_mem"
         };
 
         vec![Recommendation {
@@ -1413,7 +1533,7 @@ mod tests {
         };
         let recs = VacuumBlockedAdvisor.evaluate(&ctx);
         assert_eq!(recs.len(), 1);
-        assert!(recs[0].description.contains("CRITICAL"));
+        assert!(recs[0].description.contains("disabled"));
     }
 
     #[test]
@@ -1641,7 +1761,7 @@ mod tests {
         let recs = TempFileSpillAdvisor.evaluate(&ctx);
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].id, "temp_file_spill");
-        assert!(recs[0].title.contains("detected"));
+        assert!(recs[0].title.contains("confirmed"));
         assert!(recs[0].description.contains("Confirmed"));
     }
 
