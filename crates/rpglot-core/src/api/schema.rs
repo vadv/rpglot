@@ -1507,7 +1507,7 @@ fn generate_pgs_schema() -> TabSchema {
                 None,
                 None,
                 true,
-                false,
+                true,
             ),
             col(
                 "database",
