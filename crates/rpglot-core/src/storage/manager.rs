@@ -84,7 +84,7 @@ impl StorageManager {
 
         let mut manager = Self {
             base_path,
-            chunk_size_limit: 360, // ~1 hour at 10-second intervals
+            chunk_size_limit: 60, // ~10 minutes at 10-second intervals
             wal_file,
             wal_entries_count: 0,
             current_hour: None,
@@ -418,32 +418,77 @@ impl StorageManager {
         self.flush_chunk_with_time(date, hour)
     }
 
-    /// Flushes WAL to a compressed chunk file in the new per-snapshot zstd frame format.
-    /// Each snapshot is stored as an independent zstd frame for O(1) random access.
-    /// File naming format: rpglot_YYYY-MM-DD_HH.zst
+    /// Flushes WAL to a compressed chunk file using a streaming two-pass approach.
+    ///
+    /// Pass 1: scan WAL entries one at a time — merge interners, collect used hashes,
+    /// and sample ~20 snapshots for zstd dictionary training. Only one entry is held
+    /// in memory at a time (plus the samples).
+    ///
+    /// Pass 2: re-read each WAL entry by stored offset, compress with the trained
+    /// dictionary, and write to the chunk file streaming via `write_chunk_with_trained_dict`.
+    ///
+    /// Peak memory: WAL raw bytes + dict samples (~10 MB) + one snapshot at a time,
+    /// instead of all snapshots deserialized in memory.
     fn flush_chunk_with_time(&mut self, date: NaiveDate, hour: u32) -> io::Result<()> {
         if self.wal_entries_count == 0 {
             return Err(io::Error::other("Empty WAL"));
         }
 
-        // Read all snapshots from WAL
-        let (snapshots, interner) = self.load_wal_snapshots_with_interner()?;
-        if snapshots.is_empty() {
-            return Err(io::Error::other("No snapshots in WAL"));
+        let wal_path = self.base_path.join("wal.log");
+        let wal_data = fs::read(&wal_path)?;
+        if wal_data.is_empty() {
+            return Err(io::Error::other("Empty WAL file"));
         }
 
-        // Build optimized interner with only hashes used across all snapshots
+        // ---- Pass 1: scan WAL entries one at a time ----
+        let mut frame_offsets: Vec<usize> = Vec::new();
+        let mut merged_interner = StringInterner::new();
         let mut used_hashes = HashSet::new();
-        for snapshot in &snapshots {
-            let h = Self::collect_snapshot_hashes(snapshot);
-            used_hashes.extend(h);
-        }
-        let filtered_interner = interner.filter(&used_hashes);
+        let mut dict_samples: Vec<Vec<u8>> = Vec::new();
+        let sample_interval = (self.wal_entries_count / 20).max(1);
 
+        let mut pos = 0usize;
+        let mut scan_idx = 0usize;
+        while let Some((entry, next_pos)) = Self::read_wal_frame(&wal_data, pos) {
+            frame_offsets.push(pos);
+            merged_interner.merge(&entry.interner);
+            used_hashes.extend(Self::collect_snapshot_hashes(&entry.snapshot));
+
+            // Keep ~20 evenly-spaced samples for dictionary training
+            if scan_idx.is_multiple_of(sample_interval)
+                && dict_samples.len() < 20
+                && let Ok(raw) = postcard::to_allocvec(&entry.snapshot)
+            {
+                dict_samples.push(raw);
+            }
+
+            scan_idx += 1;
+            pos = next_pos;
+            // entry dropped here — only one in memory at a time
+        }
+
+        let entry_count = frame_offsets.len();
+        if entry_count == 0 {
+            return Err(io::Error::other("No valid entries in WAL"));
+        }
+
+        // Build filtered interner (only used hashes)
+        let filtered_interner = merged_interner.filter(&used_hashes);
+        drop(merged_interner);
+        drop(used_hashes);
+
+        // Train zstd dictionary on sampled snapshots
+        let dictionary = if !dict_samples.is_empty() {
+            zstd::dict::from_samples(&dict_samples, crate::storage::chunk::DICT_MAX_SIZE)
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        drop(dict_samples);
+
+        // ---- Resolve output path ----
         let filename = format!("rpglot_{}_{:02}.zst", date.format("%Y-%m-%d"), hour);
         let final_path = self.base_path.join(&filename);
-
-        // If file already exists, append timestamp to make it unique
         let final_path = if final_path.exists() {
             let filename = format!(
                 "rpglot_{}_{:02}_{}.zst",
@@ -456,21 +501,42 @@ impl StorageManager {
             final_path
         };
 
-        // Write chunk in new format (atomic via .tmp rename)
-        crate::storage::chunk::write_chunk(&final_path, &snapshots, &filtered_interner)?;
+        // ---- Pass 2: write chunk streaming ----
+        crate::storage::chunk::write_chunk_with_trained_dict(
+            &final_path,
+            entry_count,
+            &dictionary,
+            |idx| {
+                Self::read_wal_frame(&wal_data, frame_offsets[idx])
+                    .map(|(entry, _)| entry.snapshot)
+                    .ok_or_else(|| io::Error::other("WAL frame re-read failed"))
+            },
+            &filtered_interner,
+        )?;
 
-        // Write .heatmap sidecar for timeline heatmap
-        let heatmap = crate::storage::heatmap::build_heatmap_from_snapshots(&snapshots);
+        // Release WAL data before opening chunk for heatmap
+        drop(wal_data);
+        drop(frame_offsets);
+        drop(dictionary);
+
+        // ---- Build heatmap sidecar (streaming: one snapshot at a time) ----
         let hpath = crate::storage::heatmap::heatmap_path(&final_path);
-        if let Err(e) = crate::storage::heatmap::write_heatmap(&hpath, &heatmap) {
-            tracing::warn!(error = %e, "failed to write chunk heatmap");
+        match crate::storage::chunk::ChunkReader::open(&final_path) {
+            Ok(reader) => {
+                let heatmap =
+                    crate::storage::heatmap::build_heatmap_streaming(&reader).unwrap_or_default();
+                if let Err(e) = crate::storage::heatmap::write_heatmap(&hpath, &heatmap) {
+                    warn!(error = %e, "failed to write chunk heatmap");
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to open chunk for heatmap generation");
+            }
         }
 
         // Truncate WAL
         self.wal_file.set_len(0)?;
         self.wal_file.sync_all()?;
-
-        // Reset WAL entry count
         self.wal_entries_count = 0;
 
         Ok(())

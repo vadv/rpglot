@@ -49,7 +49,7 @@ const MAGIC: [u8; 4] = *b"RPG3";
 const VERSION: u16 = 3;
 const HEADER_SIZE: usize = 48;
 const INDEX_ENTRY_SIZE: usize = 28; // offset: u64 + compressed_len: u64 + timestamp: i64 + uncompressed_len: u32
-const DICT_MAX_SIZE: usize = 112 * 1024; // 112 KB
+pub(crate) const DICT_MAX_SIZE: usize = 112 * 1024; // 112 KB
 
 /// Lightweight metadata from a chunk's header + index table.
 /// Reading this requires only ~10 KB of I/O (48-byte header + N × 28-byte index),
@@ -342,6 +342,104 @@ pub fn write_chunk(
     header[24..32].copy_from_slice(&dict_offset.to_le_bytes());
     header[32..40].copy_from_slice(&dict_len.to_le_bytes());
     // bytes 40..44 = reserved (zeros)
+    file.write_all(&header)?;
+
+    // Write real index
+    for (offset, compressed_len, timestamp, uncompressed_len) in &index_entries {
+        file.write_all(&offset.to_le_bytes())?;
+        file.write_all(&compressed_len.to_le_bytes())?;
+        file.write_all(&timestamp.to_le_bytes())?;
+        file.write_all(&uncompressed_len.to_le_bytes())?;
+    }
+
+    file.sync_all()?;
+    drop(file);
+
+    // Atomic rename
+    fs::rename(tmp_path, path)?;
+
+    Ok(())
+}
+
+/// Writes a chunk file using a pre-trained dictionary and a callback that loads
+/// snapshots one at a time. This avoids holding all snapshots in memory simultaneously.
+///
+/// The `load_snapshot` callback receives the snapshot index (0-based) and must return
+/// the snapshot at that position. Snapshots are serialized, compressed with the provided
+/// dictionary, and written sequentially. The file is written atomically via a `.tmp`
+/// intermediate file.
+pub fn write_chunk_with_trained_dict<F>(
+    path: &Path,
+    snapshot_count: usize,
+    dictionary: &[u8],
+    mut load_snapshot: F,
+    interner: &StringInterner,
+) -> io::Result<()>
+where
+    F: FnMut(usize) -> io::Result<Snapshot>,
+{
+    if snapshot_count == 0 {
+        return Err(io::Error::other("cannot write empty chunk"));
+    }
+    if snapshot_count > u16::MAX as usize {
+        return Err(io::Error::other("too many snapshots for chunk format"));
+    }
+
+    let tmp_path = path.with_extension("tmp");
+    let mut file = fs::File::create(&tmp_path)?;
+
+    let count = snapshot_count as u16;
+
+    // Write placeholder header (will be updated later)
+    file.write_all(&[0u8; HEADER_SIZE])?;
+
+    // Write placeholder index (will be updated later)
+    let index_placeholder = vec![0u8; snapshot_count * INDEX_ENTRY_SIZE];
+    file.write_all(&index_placeholder)?;
+
+    // Write dictionary (raw bytes, not zstd compressed)
+    let dict_offset = file.stream_position()?;
+    let dict_len = dictionary.len() as u64;
+    file.write_all(dictionary)?;
+
+    // Compress and write each snapshot WITH dictionary, one at a time.
+    // Peak memory per snapshot: ~2× serialized size.
+    let mut compressor = zstd::bulk::Compressor::with_dictionary(3, dictionary)?;
+    let mut index_entries: Vec<(u64, u64, i64, u32)> = Vec::with_capacity(snapshot_count);
+
+    for i in 0..snapshot_count {
+        let snapshot = load_snapshot(i)?;
+        let raw = postcard::to_allocvec(&snapshot).map_err(io::Error::other)?;
+        let offset = file.stream_position()?;
+        let compressed = compressor.compress(&raw)?;
+        file.write_all(&compressed)?;
+        index_entries.push((
+            offset,
+            compressed.len() as u64,
+            snapshot.timestamp,
+            raw.len() as u32,
+        ));
+        // snapshot + raw + compressed all dropped here
+    }
+
+    // Write interner frame (without dictionary)
+    let interner_offset = file.stream_position()?;
+    let raw_interner = postcard::to_allocvec(interner).map_err(io::Error::other)?;
+    let compressed_interner = zstd::encode_all(&raw_interner[..], 3)?;
+    let interner_compressed_len = compressed_interner.len() as u64;
+    file.write_all(&compressed_interner)?;
+
+    // Seek back and write real header
+    file.seek(SeekFrom::Start(0))?;
+
+    let mut header = [0u8; HEADER_SIZE];
+    header[0..4].copy_from_slice(&MAGIC);
+    header[4..6].copy_from_slice(&VERSION.to_le_bytes());
+    header[6..8].copy_from_slice(&count.to_le_bytes());
+    header[8..16].copy_from_slice(&interner_offset.to_le_bytes());
+    header[16..24].copy_from_slice(&interner_compressed_len.to_le_bytes());
+    header[24..32].copy_from_slice(&dict_offset.to_le_bytes());
+    header[32..40].copy_from_slice(&dict_len.to_le_bytes());
     file.write_all(&header)?;
 
     // Write real index

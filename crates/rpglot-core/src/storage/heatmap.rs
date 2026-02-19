@@ -453,6 +453,78 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
     entries
 }
 
+/// Build heatmap entries by reading snapshots one at a time from a ChunkReader.
+///
+/// Unlike `build_heatmap_from_snapshots` which needs all snapshots in memory,
+/// this reads and decompresses one snapshot at a time, keeping only the minimal
+/// prev_cpu/cgroup state for delta computation. Peak memory: one snapshot (~500 KB).
+pub fn build_heatmap_streaming(reader: &super::chunk::ChunkReader) -> Option<Vec<HeatmapEntry>> {
+    let count = reader.snapshot_count();
+    let mut entries = Vec::with_capacity(count);
+    let mut prev_cpu: Option<SystemCpuInfo> = None;
+    let mut prev_cgroup_cpu: Option<CgroupCpuInfo> = None;
+    let mut prev_timestamp: Option<i64> = None;
+
+    for i in 0..count {
+        let snap = match reader.read_snapshot(i) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    snapshot_idx = i,
+                    total = count,
+                    error = %e,
+                    "heatmap streaming: failed to read snapshot"
+                );
+                return None;
+            }
+        };
+
+        let active = count_active_sessions(&snap);
+
+        let cpu = match (prev_cpu.as_ref(), extract_system_cpu(&snap)) {
+            (Some(prev), Some(curr)) => compute_cpu_pct(prev, curr),
+            _ => 0,
+        };
+
+        let delta_time = prev_timestamp
+            .map(|pt| (snap.timestamp - pt) as f64)
+            .unwrap_or(0.0);
+        let cgroup_cpu = match (prev_cgroup_cpu.as_ref(), extract_cgroup_cpu(&snap)) {
+            (Some(prev), Some(curr)) => compute_cgroup_cpu_pct(prev, curr, delta_time),
+            _ => 0,
+        };
+
+        let cgroup_mem = extract_cgroup_memory(&snap)
+            .map(compute_cgroup_mem_pct)
+            .unwrap_or(0);
+
+        let (errors_critical, errors_warning, errors_info) = count_error_entries_by_severity(&snap);
+        let checkpoints = count_checkpoint_events(&snap);
+        let autovacuums = count_autovacuum_events(&snap);
+        let slow_queries = count_slow_query_events(&snap);
+
+        entries.push(HeatmapEntry {
+            active_sessions: active,
+            cpu_pct_x10: cpu,
+            cgroup_cpu_pct_x10: cgroup_cpu,
+            cgroup_mem_pct_x10: cgroup_mem,
+            errors_critical,
+            errors_warning,
+            errors_info,
+            checkpoint_count: checkpoints,
+            autovacuum_count: autovacuums,
+            slow_query_count: slow_queries,
+        });
+
+        // Keep only small prev state — snapshot is dropped
+        prev_cpu = extract_system_cpu(&snap).cloned();
+        prev_cgroup_cpu = extract_cgroup_cpu(&snap).cloned();
+        prev_timestamp = Some(snap.timestamp);
+    }
+
+    Some(entries)
+}
+
 // ---------------------------------------------------------------------------
 // Bucketing for frontend display
 // ---------------------------------------------------------------------------
