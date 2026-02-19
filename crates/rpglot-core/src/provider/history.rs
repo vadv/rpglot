@@ -118,6 +118,10 @@ impl WalIndex {
 /// Snapshot data is loaded on demand via ChunkReader (per-snapshot zstd frames).
 /// Per-chunk interners (~50 KB) are cached one at a time.
 pub struct HistoryProvider {
+    /// Path to the storage directory (kept for lazy init and re-initialization).
+    storage_path: PathBuf,
+    /// Whether the chunk index has been built (false = fully lazy, no disk scanning done).
+    initialized: bool,
     /// Metadata for each chunk file, sorted by timestamp.
     chunks: Vec<ChunkMeta>,
     /// WAL (unflushed) snapshots — lazy loaded from file.
@@ -140,34 +144,42 @@ pub struct HistoryProvider {
 }
 
 impl HistoryProvider {
-    /// Creates a new history provider by scanning chunk files at the given path.
+    /// Creates a lazy history provider that only validates the directory exists.
     ///
-    /// Only metadata (timestamps, chunk paths) is loaded into RAM.
-    /// Snapshot data and interners are loaded lazily on demand.
-    pub fn from_path(storage_path: impl AsRef<Path>) -> Result<Self, ProviderError> {
-        let (chunks, wal, total, timestamps) = Self::build_index(storage_path.as_ref())?;
-
-        if total == 0 {
-            return Err(ProviderError::Io(
-                "No snapshots found in storage".to_string(),
-            ));
+    /// No disk scanning or snapshot loading is performed. Call `ensure_initialized()`
+    /// (or any data-accessing method) to trigger index building on first use.
+    /// This keeps startup RSS at ~3-4 MB regardless of data volume.
+    pub fn from_path_lazy(storage_path: impl AsRef<Path>) -> Result<Self, ProviderError> {
+        let path = storage_path.as_ref().to_path_buf();
+        if !path.is_dir() {
+            return Err(ProviderError::Io(format!(
+                "History path does not exist or is not a directory: {}",
+                path.display()
+            )));
         }
-
-        let mut provider = Self {
-            chunks,
-            wal,
+        Ok(Self {
+            storage_path: path,
+            initialized: false,
+            chunks: Vec::new(),
+            wal: None,
             cursor: 0,
-            total_snapshots: total,
-            timestamps,
+            total_snapshots: 0,
+            timestamps: Vec::new(),
             current_buffer: None,
             current_interner: None,
             interner_cache: None,
             last_error: None,
-        };
+        })
+    }
 
-        // Load first snapshot into buffer
+    /// Creates a new history provider by scanning chunk files at the given path.
+    ///
+    /// Eagerly builds the index and loads the first snapshot into buffer.
+    /// For minimal startup footprint, prefer `from_path_lazy()`.
+    pub fn from_path(storage_path: impl AsRef<Path>) -> Result<Self, ProviderError> {
+        let mut provider = Self::from_path_lazy(storage_path)?;
+        provider.ensure_initialized()?;
         provider.load_into_buffer(0);
-
         Ok(provider)
     }
 
@@ -176,7 +188,8 @@ impl HistoryProvider {
         storage_path: impl AsRef<Path>,
         since_timestamp: i64,
     ) -> Result<Self, ProviderError> {
-        let mut provider = Self::from_path(storage_path)?;
+        let mut provider = Self::from_path_lazy(storage_path)?;
+        provider.ensure_initialized()?;
 
         // Find the first snapshot with timestamp >= since_timestamp
         let start_idx = provider
@@ -211,6 +224,8 @@ impl HistoryProvider {
         };
 
         Ok(Self {
+            storage_path: PathBuf::new(),
+            initialized: true,
             chunks: Vec::new(),
             wal: Some(wal),
             cursor: 0,
@@ -221,6 +236,33 @@ impl HistoryProvider {
             interner_cache: None,
             last_error: None,
         })
+    }
+
+    /// Build chunk index from disk if not yet initialized.
+    ///
+    /// Safe to call multiple times — no-op if already initialized.
+    pub fn ensure_initialized(&mut self) -> Result<(), ProviderError> {
+        if self.initialized {
+            return Ok(());
+        }
+        let (chunks, wal, total, timestamps) = Self::build_index(&self.storage_path)?;
+        if total == 0 {
+            return Err(ProviderError::Io(
+                "No snapshots found in storage".to_string(),
+            ));
+        }
+        self.chunks = chunks;
+        self.wal = wal;
+        self.total_snapshots = total;
+        self.timestamps = timestamps;
+        self.cursor = 0;
+        self.initialized = true;
+        Ok(())
+    }
+
+    /// Returns whether the chunk index has been built.
+    pub fn is_initialized(&self) -> bool {
+        self.initialized
     }
 
     /// Build the chunk index by scanning .zst files and WAL.
@@ -507,6 +549,23 @@ impl HistoryProvider {
         self.current_buffer = None;
         self.current_interner = None;
         self.interner_cache = None;
+    }
+
+    /// Full eviction: drop ALL in-memory data (chunks, timestamps, buffers).
+    /// Resets to uninitialized state — next access triggers `ensure_initialized()`.
+    /// storage_path is preserved for re-initialization.
+    pub fn evict_all(&mut self) {
+        self.current_buffer = None;
+        self.current_interner = None;
+        self.interner_cache = None;
+        self.chunks.clear();
+        self.chunks.shrink_to_fit();
+        self.wal = None;
+        self.timestamps.clear();
+        self.timestamps.shrink_to_fit();
+        self.total_snapshots = 0;
+        self.cursor = 0;
+        self.initialized = false;
     }
 
     /// Returns the total number of snapshots available.

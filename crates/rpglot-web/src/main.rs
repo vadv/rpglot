@@ -10,8 +10,10 @@ static GLOBAL: Jemalloc = Jemalloc;
 #[cfg(not(target_env = "msvc"))]
 fn release_memory_to_os() {
     unsafe {
+        // MALLCTL_ARENAS_ALL = 4096: purge dirty pages from ALL jemalloc arenas.
+        // Using arena.0 only purges one arena, missing allocations from tokio worker threads.
         tikv_jemalloc_sys::mallctl(
-            c"arena.0.purge".as_ptr().cast(),
+            c"arena.4096.purge".as_ptr().cast(),
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),
@@ -236,7 +238,7 @@ async fn async_main(args: Args) {
         Option<i64>,
     ) = if let Some(ref history_path) = args.history {
         info!(version = rpglot_core::VERSION, path = %history_path.display(), "starting in history mode");
-        let mut hp = match HistoryProvider::from_path(history_path) {
+        let hp = match HistoryProvider::from_path_lazy(history_path) {
             Ok(hp) => hp,
             Err(e) => {
                 error!(path = %history_path.display(), error = %e,
@@ -244,19 +246,9 @@ async fn async_main(args: Args) {
                 process::exit(1);
             }
         };
-        let total = hp.len();
-        let (start, end) = hp.timestamp_range();
-        info!(snapshots = total, "loaded history data");
-        // Evict snapshot buffers loaded by from_path() — data will be loaded lazily on first request
-        hp.evict_buffers();
-        release_memory_to_os();
-        (
-            Box::new(hp),
-            Mode::History,
-            Some(total),
-            Some(start),
-            Some(end),
-        )
+        // Fully lazy: no disk scanning at startup. Index builds on first client request.
+        info!("history mode ready (lazy init on first request)");
+        (Box::new(hp), Mode::History, None, None, None)
     } else {
         info!(version = rpglot_core::VERSION, "starting in live mode");
         let provider = create_live_provider(&args);
@@ -534,7 +526,10 @@ async fn tick_loop(
     }
 }
 
-/// Background loop: periodically refresh history snapshots from disk + idle eviction.
+/// Background loop: idle eviction + refresh history snapshots from disk.
+///
+/// Does NO work until a client has connected at least once. After client leaves,
+/// evicts all data after IDLE_EVICT_SECS. Only refreshes during active use.
 async fn history_refresh_loop(state: SharedState, path: PathBuf) {
     const IDLE_EVICT_SECS: i64 = 60;
 
@@ -544,24 +539,38 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
     loop {
         tick.tick().await;
 
+        // Quick check outside lock: no client ever connected → skip entirely
+        let last_activity = LAST_CLIENT_ACTIVITY.load(Ordering::Relaxed);
+        if last_activity == 0 {
+            continue;
+        }
+
+        let now = now_epoch();
+        let is_idle = (now - last_activity) > IDLE_EVICT_SECS;
+
         let state_clone = state.clone();
         let path_clone = path.clone();
         let t0 = Instant::now();
         let result = tokio::task::spawn_blocking(move || {
             let mut inner = state_clone.lock().unwrap();
 
-            // Idle eviction: if no client activity for IDLE_EVICT_SECS, free cached data
-            let last_activity = LAST_CLIENT_ACTIVITY.load(Ordering::Relaxed);
-            let now = now_epoch();
-            if last_activity > 0
-                && (now - last_activity) > IDLE_EVICT_SECS
-                && inner.current_snapshot.is_some()
-            {
-                evict_caches(&mut inner);
-                release_memory_to_os();
-                info!("idle eviction: caches cleared");
+            // Idle eviction: free ALL cached data (including chunk index)
+            if is_idle {
+                let has_data = inner.current_snapshot.is_some();
+                let hp_initialized = inner
+                    .provider
+                    .as_any()
+                    .and_then(|a| a.downcast_ref::<HistoryProvider>())
+                    .is_some_and(|hp| hp.is_initialized());
+                if has_data || hp_initialized {
+                    evict_caches(&mut inner);
+                    release_memory_to_os();
+                    info!("idle eviction: all caches cleared");
+                }
+                return Ok::<(usize, usize), rpglot_core::provider::ProviderError>((0, 0));
             }
 
+            // Active client — refresh from disk (only if initialized)
             let hp = inner
                 .provider
                 .as_any_mut()
@@ -569,6 +578,9 @@ async fn history_refresh_loop(state: SharedState, path: PathBuf) {
             let Some(hp) = hp else {
                 return Ok((0usize, 0usize));
             };
+            if !hp.is_initialized() {
+                return Ok((0, 0));
+            }
             let added = hp.refresh(&path_clone)?;
             let total = hp.len();
             if added > 0 {
@@ -641,14 +653,46 @@ fn evict_caches(inner: &mut WebAppInner) {
     inner.pgi_prev_ts = None;
     inner.heatmap_cache.clear();
     inner.heatmap_cache.shrink_to_fit();
-    // Clear HistoryProvider buffers
+    // Full eviction: drop chunk index, timestamps, WAL — back to uninitialized
     if let Some(hp) = inner
         .provider
         .as_any_mut()
         .and_then(|a| a.downcast_mut::<HistoryProvider>())
     {
-        hp.evict_buffers();
+        hp.evict_all();
     }
+}
+
+/// Ensure HistoryProvider is initialized (build chunk index from disk if needed).
+/// Updates cached metadata in WebAppInner on first init.
+/// Returns false on error (provider could not be initialized).
+fn ensure_history_ready(inner: &mut WebAppInner) -> bool {
+    let hp = inner
+        .provider
+        .as_any_mut()
+        .and_then(|a| a.downcast_mut::<HistoryProvider>());
+    let Some(hp) = hp else { return false };
+
+    if hp.is_initialized() {
+        return true;
+    }
+
+    if let Err(e) = hp.ensure_initialized() {
+        warn!(error = %e, "failed to initialize history provider");
+        return false;
+    }
+
+    let total = hp.len();
+    let (start, end) = hp.timestamp_range();
+    inner.total_snapshots = Some(total);
+    inner.history_start = Some(start);
+    inner.history_end = Some(end);
+
+    info!(
+        snapshots = total,
+        "history provider initialized on first request"
+    );
+    true
 }
 
 /// Advance provider, compute rates, convert to ApiSnapshot.
@@ -1374,7 +1418,12 @@ async fn handle_health() -> &'static str {
     )
 )]
 async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
-    let inner = state_tuple.0.lock().unwrap();
+    LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
+    let mut inner = state_tuple.0.lock().unwrap();
+    // Lazy init: build chunk index on first schema request (frontend's first call)
+    if inner.mode == Mode::History {
+        ensure_history_ready(&mut inner);
+    }
     let mode = match inner.mode {
         Mode::Live => ApiMode::Live,
         Mode::History => ApiMode::History,
@@ -1429,6 +1478,11 @@ async fn handle_snapshot(
     let snap = tokio::task::spawn_blocking(move || {
         let mut inner = state.lock().unwrap();
 
+        // Lazy init: build chunk index if needed (after idle eviction or first request)
+        if inner.mode == Mode::History {
+            ensure_history_ready(&mut inner);
+        }
+
         // History navigation via query params
         if inner.mode == Mode::History
             && let Some(ts) = query.timestamp
@@ -1471,10 +1525,11 @@ async fn handle_snapshot(
 )]
 async fn handle_timeline(State(state_tuple): AppState) -> Result<Json<TimelineInfo>, StatusCode> {
     LAST_CLIENT_ACTIVITY.store(now_epoch(), Ordering::Relaxed);
-    let inner = state_tuple.0.lock().unwrap();
+    let mut inner = state_tuple.0.lock().unwrap();
     if inner.mode != Mode::History {
         return Err(StatusCode::NOT_FOUND);
     }
+    ensure_history_ready(&mut inner);
     let dates = {
         let provider = inner
             .provider
@@ -1537,6 +1592,7 @@ async fn handle_analysis(
         if inner.mode != Mode::History {
             return Err(StatusCode::NOT_FOUND);
         }
+        ensure_history_ready(&mut inner);
 
         let provider = inner
             .provider
@@ -1646,10 +1702,11 @@ async fn handle_heatmap(
 
     // Check cache first
     {
-        let inner = state_tuple.0.lock().unwrap();
+        let mut inner = state_tuple.0.lock().unwrap();
         if inner.mode != Mode::History {
             return Err(StatusCode::NOT_FOUND);
         }
+        ensure_history_ready(&mut inner);
         // Use cached data for past dates (they are immutable)
         let today_days = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -11,12 +11,10 @@ static GLOBAL: Jemalloc = Jemalloc;
 /// Releases unused memory back to the operating system.
 /// Uses jemalloc's arena purge to reduce RSS after memory-intensive operations.
 fn release_memory_to_os() {
-    // SAFETY: We're calling jemalloc's mallctl with valid arguments.
-    // arena.0.purge tells jemalloc to return unused pages to the OS.
     unsafe {
-        // Purge all arenas (not just arena 0) for more aggressive memory release
+        // MALLCTL_ARENAS_ALL = 4096: purge dirty pages from ALL jemalloc arenas.
         tikv_jemalloc_sys::mallctl(
-            c"arena.0.purge".as_ptr().cast(),
+            c"arena.4096.purge".as_ptr().cast(),
             ptr::null_mut(),
             ptr::null_mut(),
             ptr::null_mut(),
