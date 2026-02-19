@@ -1233,6 +1233,63 @@ export const COLUMN_HELP: Record<string, ColumnHelpEntry> = {
   },
 
   // =====================================================
+  // PGP (pg_store_plans)
+  // =====================================================
+  planid: {
+    label: "Plan ID",
+    description:
+      "Unique identifier for this execution plan (internal pg_store_plans hash).",
+    docUrl: "https://github.com/ossc-db/pg_store_plans",
+  },
+  stmt_queryid: {
+    label: "Query ID",
+    description:
+      "pg_stat_statements queryid of the parent statement. Multiple plans can share the same queryid.",
+    tip: "Group by stmt_queryid to compare all plans for the same query",
+    docUrl: "https://github.com/ossc-db/pg_store_plans",
+  },
+  plan: {
+    label: "Plan",
+    description:
+      "Normalized execution plan text (joins, scans, aggregations).",
+    tip: "Compare plans with same stmt_queryid to detect optimizer regressions",
+  },
+  first_call: {
+    label: "First Call",
+    description:
+      "When this plan was first executed. Helps identify newly appeared plans.",
+    tip: "A new plan with higher mean time than existing ones signals a regression",
+  },
+  last_call: {
+    label: "Last Call",
+    description:
+      "When this plan was last executed. Stale plans may indicate optimizer has already switched away.",
+  },
+  total_time_ms: {
+    label: "Total Time",
+    description:
+      "Cumulative execution time across all calls (ms).",
+  },
+  mean_time_ms: {
+    label: "Mean Time",
+    description:
+      "Average execution time per call (ms). Primary indicator for plan quality.",
+    tip: "Compare across plans with same stmt_queryid to detect regressions",
+  },
+  min_time_ms: {
+    label: "Min Time",
+    description:
+      "Minimum execution time recorded for this plan (ms).",
+    tip: "Best-case performance. Large gap to mean suggests varying data volumes",
+  },
+  max_time_ms: {
+    label: "Max Time",
+    description:
+      "Maximum execution time recorded for this plan (ms).",
+    tip: "Worst-case latency. Check for lock contention or cache misses",
+  },
+
+  // =====================================================
   // PGV (pg_stat_progress_vacuum)
   // =====================================================
   phase: {
@@ -1386,5 +1443,11 @@ export const VIEW_DESCRIPTIONS: Record<string, Record<string, string>> = {
   pgv: {
     default:
       "Currently running VACUUM operations \u2014 phase, progress, dead tuples",
+  },
+  pgp: {
+    time: "Plans consuming the most execution time \u2014 optimize these first",
+    io: "Plans doing the most physical I/O \u2014 low HIT% means cold data reads",
+    regression:
+      "Compare plans for the same query \u2014 detect optimizer switches to worse plans",
   },
 };

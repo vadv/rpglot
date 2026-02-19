@@ -195,7 +195,7 @@ export function TabContent({
       }
     }
 
-    if (activeTab === "pgs" && hideInactive) {
+    if ((activeTab === "pgs" || activeTab === "pgp") && hideInactive) {
       filtered = filtered.filter((row) => {
         const c = row.calls_s as number | null;
         return c != null && c > 0;
@@ -240,7 +240,7 @@ export function TabContent({
     if (activeTab === "prc" && pgOnly) {
       counts.nonpg = rawData.filter((r) => !isPgProcess(r)).length;
     }
-    if (activeTab === "pgs" && hideInactive) {
+    if ((activeTab === "pgs" || activeTab === "pgp") && hideInactive) {
       counts.inactive = rawData.filter((r) => {
         const c = r.calls_s as number | null;
         return c == null || c === 0;
@@ -294,7 +294,7 @@ export function TabContent({
         />
       );
     }
-    if (activeTab === "pgs") {
+    if (activeTab === "pgs" || activeTab === "pgp") {
       return (
         <ToggleButton
           active={hideInactive}
