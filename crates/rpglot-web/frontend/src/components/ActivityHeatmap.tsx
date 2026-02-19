@@ -6,6 +6,7 @@ interface ActivityHeatmapProps {
   startTs: number;
   endTs: number;
   currentTs: number;
+  hoveredIndex?: number | null;
 }
 
 export function ActivityHeatmap({
@@ -13,6 +14,7 @@ export function ActivityHeatmap({
   startTs,
   endTs,
   currentTs,
+  hoveredIndex,
 }: ActivityHeatmapProps) {
   const maxActive = useMemo(
     () => Math.max(1, ...buckets.map((b) => b.active)),
@@ -125,6 +127,16 @@ export function ActivityHeatmap({
             opacity={0.8}
           />
         ) : null,
+      )}
+      {hoveredIndex != null && hoveredIndex >= 0 && hoveredIndex < n && (
+        <rect
+          x={hoveredIndex}
+          y={0}
+          width={1}
+          height={24}
+          fill="var(--text-primary)"
+          opacity={0.15}
+        />
       )}
       {currentTs > startTs && currentTs < endTs && (
         <line
