@@ -23,19 +23,45 @@ impl AnalysisRule for PlanRegressionRule {
             return Vec::new();
         };
 
-        // Group plans by stmt_queryid, skip queryid == 0
+        // Build prev calls map: (stmt_queryid, planid) → calls
+        // Used to compute delta calls and determine if a plan is currently active.
+        let prev_calls: HashMap<(i64, i64), i64> = ctx
+            .prev_snapshot
+            .and_then(|ps| {
+                find_block(ps, |b| match b {
+                    DataBlock::PgStorePlans(v) => Some(v.as_slice()),
+                    _ => None,
+                })
+            })
+            .map(|prev_plans| {
+                prev_plans
+                    .iter()
+                    .map(|p| ((p.stmt_queryid, p.planid), p.calls))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Group plans by stmt_queryid, skip queryid == 0.
+        // Track (mean_time, calls_delta, plan_hash) per plan.
         let mut by_queryid: HashMap<i64, Vec<(f64, i64, u64)>> = HashMap::new();
         for p in plans {
             if p.stmt_queryid == 0 || p.calls <= 0 || p.mean_time <= 0.0 {
                 continue;
             }
-            by_queryid
-                .entry(p.stmt_queryid)
-                .or_default()
-                .push((p.mean_time, p.calls, p.plan_hash));
+            let prev = prev_calls
+                .get(&(p.stmt_queryid, p.planid))
+                .copied()
+                .unwrap_or(0);
+            let calls_delta = p.calls - prev;
+            by_queryid.entry(p.stmt_queryid).or_default().push((
+                p.mean_time,
+                calls_delta,
+                p.plan_hash,
+            ));
         }
 
-        // Find the group with the worst ratio
+        // Find the group with the worst ratio, but only flag regression
+        // if the SLOW plan is currently active (calls_delta > 0).
         let mut worst_ratio = 0.0_f64;
         let mut worst_qid: i64 = 0;
         let mut worst_plan_count: usize = 0;
@@ -50,11 +76,17 @@ impl AnalysisRule for PlanRegressionRule {
                 .iter()
                 .map(|(m, _, _)| *m)
                 .fold(f64::INFINITY, f64::min);
-            let (max_mean, _, slow_hash) = group
+            let (max_mean, slow_delta, slow_hash) = group
                 .iter()
                 .copied()
                 .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap();
+
+            // Only flag regression if the slow plan is actively being used.
+            // If slow_delta == 0, PostgreSQL already recovered to a faster plan.
+            if slow_delta <= 0 {
+                continue;
+            }
 
             if min_mean <= 0.0 {
                 continue;
@@ -152,6 +184,24 @@ mod tests {
         }
     }
 
+    fn make_ctx_with_prev<'a>(
+        snapshot: &'a Snapshot,
+        prev: &'a Snapshot,
+        interner: &'a StringInterner,
+        ewma: &'a EwmaState,
+    ) -> AnalysisContext<'a> {
+        AnalysisContext {
+            snapshot,
+            prev_snapshot: Some(prev),
+            interner,
+            timestamp: snapshot.timestamp,
+            ewma,
+            prev: None,
+            dt: 10.0,
+            backend_io_hit_pct: None,
+        }
+    }
+
     #[test]
     fn plan_regression_detects_multiple_plans() {
         let snap = make_snapshot(vec![
@@ -213,5 +263,49 @@ mod tests {
         assert_eq!(anomalies.len(), 1);
         assert_eq!(anomalies[0].entity_id, Some(200));
         assert!((anomalies[0].value - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn plan_regression_ignores_inactive_slow_plan() {
+        // Slow plan (planid=2, mean_time=100) has same calls in both snapshots → delta=0.
+        // Fast plan (planid=1, mean_time=10) gained new calls → active.
+        // Regression is resolved — slow plan not being used anymore.
+        let prev = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 40),
+            make_plan(100, 2, 100.0, 20),
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 55),  // +15 calls → active
+            make_plan(100, 2, 100.0, 20), // +0 calls → inactive
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert!(
+            anomalies.is_empty(),
+            "slow plan is inactive (calls_delta=0), regression resolved"
+        );
+    }
+
+    #[test]
+    fn plan_regression_detects_active_slow_plan() {
+        // Slow plan (planid=2) gained new calls → actively being used → regression.
+        let prev = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 50),
+            make_plan(100, 2, 100.0, 15),
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan(100, 1, 10.0, 52),  // +2 calls
+            make_plan(100, 2, 100.0, 20), // +5 calls → active slow plan
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert_eq!(anomalies.len(), 1, "slow plan is active → regression");
+        assert!((anomalies[0].value - 10.0).abs() < 0.01);
     }
 }
