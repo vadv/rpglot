@@ -112,7 +112,10 @@ function formatBytes(bytes: number): string {
 
 function formatDuration(totalSeconds: number): string {
   if (totalSeconds < 0) return "-";
-  if (totalSeconds < 1) return `${(totalSeconds * 1000).toFixed(0)}ms`;
+  if (totalSeconds === 0) return "0s";
+  const ms = totalSeconds * 1000;
+  if (ms < 1) return `${ms.toFixed(1)}ms`;
+  if (totalSeconds < 1) return `${ms.toFixed(0)}ms`;
   if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
   if (totalSeconds < 3600) {
     const m = Math.floor(totalSeconds / 60);

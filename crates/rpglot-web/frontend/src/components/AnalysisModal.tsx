@@ -257,10 +257,18 @@ export function AnalysisModal({
       let filter: string | undefined;
       let columnFilter: { column: string; value: string } | undefined;
 
-      // Group A: PGT/PGI — entity name from title
-      const nameMatch = incident.title.match(/^(?:Table|Index)\s+([^:\s]+)/);
-      if (nameMatch) {
-        filter = nameMatch[1];
+      // Group A-1: PGT — table name from title (matches display_name column)
+      const tableMatch = incident.title.match(/^Table\s+([^:\s]+)/);
+      // Group A-2: PGI — index name from title (matches index column, without schema prefix)
+      const indexMatch = incident.title.match(/^Index\s+([^:\s]+)/);
+      if (tableMatch) {
+        filter = tableMatch[1];
+      } else if (indexMatch) {
+        // PGI has no display_index column; the "index" column stores just the name
+        // without schema prefix. Title has "schema.indexname" — strip schema.
+        const full = indexMatch[1];
+        const dot = full.indexOf(".");
+        filter = dot >= 0 ? full.substring(dot + 1) : full;
       }
       // Group B: PGS/PGA/PRC — entity_id as string (queryid, PID)
       else if (incident.entity_id != null) {
