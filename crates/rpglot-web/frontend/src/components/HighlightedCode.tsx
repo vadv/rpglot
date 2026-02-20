@@ -39,7 +39,15 @@ export function HighlightedCode({ text, language, className }: Props) {
   return (
     <pre className={className}>
       {tokens.map((tok, i) => {
-        const cls = TOKEN_CLASS[tok.type];
+        const typeCls = TOKEN_CLASS[tok.type];
+        if (!typeCls && !tok.severity) return tok.text;
+        const sevCls =
+          tok.severity === "critical"
+            ? "hl-critical"
+            : tok.severity === "warn"
+              ? "hl-warn"
+              : "";
+        const cls = [typeCls, sevCls].filter(Boolean).join(" ");
         if (!cls) return tok.text;
         return (
           <span key={i} className={cls}>

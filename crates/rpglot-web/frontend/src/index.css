@@ -61,6 +61,8 @@
     --hl-cost: #64748b;
     --hl-arrow: #94a3b8;
     --hl-condition: #0284c7;
+    --hl-warn-bg: rgba(217, 119, 6, 0.15);
+    --hl-critical-bg: rgba(220, 38, 38, 0.15);
 
     color-scheme: light;
 }
@@ -119,6 +121,8 @@
     --hl-cost: #9aa0a6;
     --hl-arrow: #5f6368;
     --hl-condition: #38bdf8;
+    --hl-warn-bg: rgba(251, 191, 36, 0.15);
+    --hl-critical-bg: rgba(248, 113, 113, 0.15);
 
     color-scheme: dark;
 }
@@ -219,4 +223,12 @@ body {
 }
 .hl-condition {
     color: var(--hl-condition);
+}
+.hl-warn {
+    background: var(--hl-warn-bg);
+    border-radius: 2px;
+}
+.hl-critical {
+    background: var(--hl-critical-bg);
+    border-radius: 2px;
 }

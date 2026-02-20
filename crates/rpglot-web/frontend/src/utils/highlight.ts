@@ -12,6 +12,7 @@ export interface Token {
     | "arrow"
     | "condition";
   text: string;
+  severity?: "warn" | "critical";
 }
 
 const SQL_KEYWORDS = new Set([
@@ -681,6 +682,155 @@ const SORTED_CONDITIONS = [...CONDITION_LABELS].sort(
   (a, b) => b.length - a.length,
 );
 
+// --- EXPLAIN problem detection helpers ---
+
+type Severity = "warn" | "critical";
+
+interface Range {
+  start: number;
+  end: number;
+  type: Token["type"];
+  severity?: Severity;
+}
+
+/** Parse estimated rows from (cost=...) and actual rows from (actual time=...) on the same line */
+function computeRowSeverity(text: string): Severity | undefined {
+  const estMatch = /\(cost=[\d.]+\.\.[\d.]+ rows=(\d+) width=\d+\)/.exec(text);
+  const actMatch =
+    /\(actual time=[\d.]+\.\.[\d.]+ rows=(\d+) loops=(\d+)\)/.exec(text);
+  if (!estMatch || !actMatch) return undefined;
+  const est = parseInt(estMatch[1], 10);
+  const act = parseInt(actMatch[1], 10) * parseInt(actMatch[2], 10);
+  const ratio = Math.max(est, act) / Math.max(Math.min(est, act), 1);
+  if (ratio >= 100) return "critical";
+  if (ratio >= 10) return "warn";
+  return undefined;
+}
+
+/** Split a cost/actual block into sub-ranges, marking rows=N with severity if needed */
+function addCostBlockRanges(
+  ranges: Range[],
+  matchStart: number,
+  matchText: string,
+  rowSeverity: Severity | undefined,
+) {
+  if (!rowSeverity) {
+    ranges.push({ start: matchStart, end: matchStart + matchText.length, type: "cost" });
+    return;
+  }
+  // Find rows=N within the block
+  const rowsRe = /rows=\d+/g;
+  let rm;
+  let last = 0;
+  while ((rm = rowsRe.exec(matchText)) !== null) {
+    if (rm.index > last) {
+      ranges.push({
+        start: matchStart + last,
+        end: matchStart + rm.index,
+        type: "cost",
+      });
+    }
+    ranges.push({
+      start: matchStart + rm.index,
+      end: matchStart + rm.index + rm[0].length,
+      type: "cost",
+      severity: rowSeverity,
+    });
+    last = rm.index + rm[0].length;
+  }
+  if (last < matchText.length) {
+    ranges.push({
+      start: matchStart + last,
+      end: matchStart + matchText.length,
+      type: "cost",
+    });
+  }
+}
+
+/** Tokenize remaining text on a plan line with problem analysis */
+function tokenizeRemainingWithAnalysis(
+  text: string,
+  tokens: Token[],
+  condLabel?: string,
+) {
+  const ranges: Range[] = [];
+
+  // 1. Row estimation severity for the whole line
+  const rowSeverity = computeRowSeverity(text);
+
+  // 2. Cost/actual blocks
+  const costRe =
+    /\(cost=[\d.]+\.\.[\d.]+ rows=\d+ width=\d+\)|\(actual time=[\d.]+\.\.[\d.]+ rows=\d+ loops=\d+\)/g;
+  let m;
+  while ((m = costRe.exec(text)) !== null) {
+    addCostBlockRanges(ranges, m.index, m[0], rowSeverity);
+  }
+
+  // 3. Disk sort: "Sort Method: ... Disk: NkB"
+  const diskRe = /Disk:\s*(\d+)kB/g;
+  while ((m = diskRe.exec(text)) !== null) {
+    const kb = parseInt(m[1], 10);
+    const sev: Severity = kb >= 102400 ? "critical" : "warn";
+    ranges.push({ start: m.index, end: m.index + m[0].length, type: "cost", severity: sev });
+  }
+
+  // 4. Temp I/O: "temp read=N" or "temp written=N"
+  const tempRe = /temp (?:read|written)=(\d+)/g;
+  while ((m = tempRe.exec(text)) !== null) {
+    const val = parseInt(m[1], 10);
+    if (val > 0) {
+      ranges.push({ start: m.index, end: m.index + m[0].length, type: "cost", severity: "warn" });
+    }
+  }
+
+  // 5. Rows Removed by Filter / Index Recheck — number after the condition label
+  if (
+    condLabel === "Rows Removed by Filter:" ||
+    condLabel === "Rows Removed by Index Recheck:"
+  ) {
+    const numRe = /^\s*(\d+)/;
+    const nm = numRe.exec(text);
+    if (nm) {
+      const val = parseInt(nm[1], 10);
+      let sev: Severity | undefined;
+      if (val >= 100000) sev = "critical";
+      else if (val >= 10000) sev = "warn";
+      if (sev) {
+        const numStart = nm.index + nm[0].indexOf(nm[1]);
+        ranges.push({
+          start: numStart,
+          end: numStart + nm[1].length,
+          type: "cost",
+          severity: sev,
+        });
+      }
+    }
+  }
+
+  // Sort ranges by start position, then dedupe overlaps (keep first)
+  ranges.sort((a, b) => a.start - b.start);
+  const deduped: Range[] = [];
+  for (const r of ranges) {
+    if (deduped.length > 0 && r.start < deduped[deduped.length - 1].end) continue;
+    deduped.push(r);
+  }
+
+  // Emit tokens, filling gaps with plain
+  let pos = 0;
+  for (const r of deduped) {
+    if (r.start > pos) {
+      tokens.push({ type: "plain", text: text.slice(pos, r.start) });
+    }
+    const tok: Token = { type: r.type, text: text.slice(r.start, r.end) };
+    if (r.severity) tok.severity = r.severity;
+    tokens.push(tok);
+    pos = r.end;
+  }
+  if (pos < text.length) {
+    tokens.push({ type: "plain", text: text.slice(pos) });
+  }
+}
+
 export function tokenizePlan(text: string): Token[] {
   const lines = text.split("\n");
   const tokens: Token[] = [];
@@ -740,38 +890,23 @@ export function tokenizePlan(text: string): Token[] {
     }
 
     // Try to match condition label
+    let matchedCondLabel: string | undefined;
     if (!nodeMatched) {
       const trimmedRest = line.slice(pos);
       for (const cond of SORTED_CONDITIONS) {
         if (trimmedRest.startsWith(cond)) {
           tokens.push({ type: "condition", text: cond });
           pos += cond.length;
+          matchedCondLabel = cond;
           break;
         }
       }
     }
 
-    // Process remainder of line
-    let remaining = line.slice(pos);
+    // Process remainder of line with problem analysis
+    const remaining = line.slice(pos);
     if (remaining) {
-      // Find cost blocks (cost=... rows=... width=...)
-      const costRe =
-        /\(cost=[\d.]+\.\.[\d.]+ rows=\d+ width=\d+\)|\(actual time=[\d.]+\.\.[\d.]+ rows=\d+ loops=\d+\)/g;
-      let lastEnd = 0;
-      let match;
-      const parts: Token[] = [];
-
-      while ((match = costRe.exec(remaining)) !== null) {
-        if (match.index > lastEnd) {
-          parts.push({ type: "plain", text: remaining.slice(lastEnd, match.index) });
-        }
-        parts.push({ type: "cost", text: match[0] });
-        lastEnd = match.index + match[0].length;
-      }
-      if (lastEnd < remaining.length) {
-        parts.push({ type: "plain", text: remaining.slice(lastEnd) });
-      }
-      tokens.push(...parts);
+      tokenizeRemainingWithAnalysis(remaining, tokens, matchedCondLabel);
     }
   }
 
