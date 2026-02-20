@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { readUrlState, useUrlSync } from "./useUrlState";
 import { getTabData } from "../utils/tabData";
 import type { ApiSchema, ApiSnapshot, TabKey, DrillDown } from "../api/types";
@@ -23,7 +23,7 @@ export interface TabState {
   activeView: string;
   initialView: string | null;
   initialFilter: string | null;
-  flashRowId: string | number | null;
+  globalFilterPreset: string | null;
   smartFilterResetKey: number;
   columnFilterPreset: { column: string; value: string } | null;
   handleTabChange: (tab: TabKey) => void;
@@ -41,7 +41,7 @@ export interface TabState {
   setColumnFilterPreset: (
     preset: { column: string; value: string } | null,
   ) => void;
-  triggerFlash: (id: string | number) => void;
+  setGlobalFilterPreset: (filter: string | null) => void;
   resetSmartFilters: () => void;
 }
 
@@ -72,38 +72,11 @@ export function useTabState(
   // Initial view/filter from URL (consumed once by DataTable on mount)
   const [initialView, setInitialView] = useState<string | null>(urlState.view);
   const [initialFilter] = useState<string | null>(urlState.filter);
-  const [flashRowId, setFlashRowId] = useState<string | number | null>(null);
-  // Flash is "locked" for FLASH_LOCK_MS after trigger — no interaction can clear it.
-  const flashLockedUntil = useRef(0);
+  const [globalFilterPreset, setGlobalFilterPreset] = useState<string | null>(
+    null,
+  );
   // Incremented on drill-down / analysis jump to reset smart filters in TabContent
   const [smartFilterResetKey, setSmartFilterResetKey] = useState(0);
-
-  const FLASH_LOCK_MS = 5000;
-
-  const triggerFlash = useCallback((id: string | number) => {
-    setFlashRowId(id);
-    flashLockedUntil.current = Date.now() + FLASH_LOCK_MS;
-    // Scroll the target row into view within the table's scroll container.
-    // We can't use scrollIntoView({ block: "center" }) because nested
-    // overflow containers cause incorrect positioning.
-    requestAnimationFrame(() => {
-      const rowEl = document.getElementById(`row-${id}`);
-      if (!rowEl) return;
-      // Find the closest scrollable ancestor (the overflow-auto div)
-      const container = rowEl.closest(".overflow-auto") as HTMLElement | null;
-      if (container) {
-        const rowTop = rowEl.offsetTop;
-        const rowHeight = rowEl.offsetHeight;
-        const containerHeight = container.clientHeight;
-        container.scrollTo({
-          top: rowTop - containerHeight / 2 + rowHeight / 2,
-          behavior: "smooth",
-        });
-      } else {
-        rowEl.scrollIntoView({ block: "center", behavior: "smooth" });
-      }
-    });
-  }, []);
 
   // Reset selection on tab change
   const handleTabChange = useCallback(
@@ -112,16 +85,15 @@ export function useTabState(
       setSelectedId(null);
       setDetailOpen(false);
       setColumnFilterPreset(null);
+      setGlobalFilterPreset(null);
       urlSync({ tab, view: null, filter: null });
     },
     [urlSync],
   );
 
   // Validate selection: close detail if entity disappeared.
-  // Skip validation while flashRowId is active — we're waiting for a new snapshot
-  // to load after an analysis jump / drill-down navigation.
   useEffect(() => {
-    if (!snapshot || selectedId == null || flashRowId != null) return;
+    if (!snapshot || selectedId == null) return;
     const data = getTabData(snapshot, activeTab);
     const entityId = schema.tabs[activeTab].entity_id;
     const exists = data.some((row) => row[entityId] === selectedId);
@@ -129,7 +101,7 @@ export function useTabState(
       setSelectedId(null);
       setDetailOpen(false);
     }
-  }, [snapshot, selectedId, activeTab, schema, flashRowId]);
+  }, [snapshot, selectedId, activeTab, schema]);
 
   // Drill-down: after tab switch, apply column filter and/or find and select target row
   useEffect(() => {
@@ -162,17 +134,13 @@ export function useTabState(
       const id = targetRow[entityId] as string | number;
       setSelectedId(id);
       setDetailOpen(true);
-      triggerFlash(id);
     }
     setDrillDownTarget(null);
-  }, [drillDownTarget, snapshot, activeTab, schema, triggerFlash]);
+  }, [drillDownTarget, snapshot, activeTab, schema]);
 
   const handleSelectRow = useCallback((id: string | number | null) => {
     setSelectedId(id);
     setDetailOpen(id != null);
-    if (Date.now() > flashLockedUntil.current) {
-      setFlashRowId(null);
-    }
   }, []);
 
   const handleOpenDetail = useCallback(() => {
@@ -281,8 +249,8 @@ export function useTabState(
     setHelpOpen,
     columnFilterPreset,
     setColumnFilterPreset,
-    flashRowId,
-    triggerFlash,
+    globalFilterPreset,
+    setGlobalFilterPreset,
     smartFilterResetKey,
     resetSmartFilters: useCallback(
       () => setSmartFilterResetKey((k) => k + 1),

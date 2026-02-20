@@ -41,8 +41,8 @@ interface DataTableProps {
   snapshotTimestamp?: number;
   /** Extra toolbar controls rendered before the filter input */
   toolbarControls?: React.ReactNode;
-  /** Row ID to flash-highlight (pulsing animation after analysis jump) */
-  flashId?: string | number | null;
+  /** Global text filter to apply (e.g. from analysis jump). Consumed once on change. */
+  globalFilterPreset?: string | null;
   /** Column filter to apply (e.g. from schema view drill-down). Consumed once on change. */
   columnFilterPreset?: { column: string; value: string } | null;
 }
@@ -63,7 +63,7 @@ export function DataTable({
   onFilterChange,
   snapshotTimestamp,
   toolbarControls,
-  flashId,
+  globalFilterPreset,
   columnFilterPreset,
 }: DataTableProps) {
   const [activeView, setActiveView] = useState(() => {
@@ -92,15 +92,29 @@ export function DataTable({
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [globalFilter, setGlobalFilter] = useState(initialFilter ?? "");
 
+  // Apply global filter preset (e.g. from analysis jump)
+  const prevGlobalPreset = useRef(globalFilterPreset);
+  useEffect(() => {
+    if (globalFilterPreset !== prevGlobalPreset.current) {
+      setGlobalFilter(globalFilterPreset ?? "");
+      onFilterChange?.(globalFilterPreset ?? "");
+      prevGlobalPreset.current = globalFilterPreset;
+    }
+  }, [globalFilterPreset, onFilterChange]);
+
   // Apply column filter preset (e.g. from schema view drill-down)
   const prevPreset = useRef(columnFilterPreset);
   useEffect(() => {
-    if (columnFilterPreset && columnFilterPreset !== prevPreset.current) {
-      setColumnFilters([
-        { id: columnFilterPreset.column, value: [columnFilterPreset.value] },
-      ]);
+    if (columnFilterPreset !== prevPreset.current) {
+      if (columnFilterPreset) {
+        setColumnFilters([
+          { id: columnFilterPreset.column, value: [columnFilterPreset.value] },
+        ]);
+      } else {
+        setColumnFilters([]);
+      }
+      prevPreset.current = columnFilterPreset;
     }
-    prevPreset.current = columnFilterPreset;
   }, [columnFilterPreset]);
   const [filterPopover, setFilterPopover] = useState<{
     columnId: string;
@@ -510,16 +524,14 @@ export function DataTable({
             {rows.map((row, idx) => {
               const rowId = row.original[entityId] as string | number;
               const isSelected = rowId === selectedId;
-              const isFlashing =
-                isSelected && flashId != null && rowId === flashId;
               return (
                 <tr
                   key={row.id}
                   id={`row-${rowId}`}
                   onClick={() => handleRowClick(row.original)}
-                  className={`cursor-pointer ${isFlashing ? "" : "transition-colors duration-100 "}${
+                  className={`cursor-pointer transition-colors duration-100 ${
                     isSelected
-                      ? `bg-[var(--selection-bg)] border-l-[3px] border-l-[var(--selection-border)] shadow-[inset_0_0_0_1px_var(--selection-border)]${isFlashing ? " flash-row" : ""}`
+                      ? "bg-[var(--selection-bg)] border-l-[3px] border-l-[var(--selection-border)] shadow-[inset_0_0_0_1px_var(--selection-border)]"
                       : `${idx % 2 === 0 ? "bg-[var(--bg-base)]" : "bg-[var(--bg-overlay)]"} hover:bg-[var(--bg-hover)] border-l-2 border-l-transparent`
                   }`}
                 >

@@ -21,6 +21,8 @@ export interface AnalysisJump {
   tab?: TabKey;
   view?: string;
   entityId?: number;
+  filter?: string;
+  columnFilter?: { column: string; value: string };
 }
 
 // ============================================================
@@ -111,6 +113,14 @@ const RULE_TARGET: Record<string, { tab: TabKey; view?: string }> = {
   network_spike: { tab: "prc" },
   cgroup_throttled: { tab: "prc" },
   cgroup_oom_kill: { tab: "prc" },
+};
+
+/** Column filter for aggregate PGA rules (Группа C). */
+const RULE_COLUMN_FILTER: Record<string, { column: string; value: string }> = {
+  idle_in_transaction: { column: "state", value: "idle in transaction" },
+  wait_lock: { column: "wait_event_type", value: "Lock" },
+  wait_sync_replica: { column: "wait_event", value: "SyncRep" },
+  high_active_sessions: { column: "state", value: "active" },
 };
 
 const CATEGORY_LABEL: Record<string, string> = {
@@ -241,11 +251,33 @@ export function AnalysisModal({
   const handleJump = useCallback(
     (incident: AnalysisIncident) => {
       const target = RULE_TARGET[incident.rule_id];
+      const tab = target?.tab ?? CATEGORY_TAB[incident.category];
+
+      // Determine filter strategy
+      let filter: string | undefined;
+      let columnFilter: { column: string; value: string } | undefined;
+
+      // Group A: PGT/PGI — entity name from title
+      const nameMatch = incident.title.match(/^(?:Table|Index)\s+(\S+)/);
+      if (nameMatch) {
+        filter = nameMatch[1];
+      }
+      // Group B: PGS/PGA/PRC — entity_id as string (queryid, PID)
+      else if (incident.entity_id != null) {
+        filter = String(incident.entity_id);
+      }
+      // Group C: PGA aggregate — column filter
+      else {
+        columnFilter = RULE_COLUMN_FILTER[incident.rule_id];
+      }
+
       onJump({
         timestamp: incident.peak_ts,
-        tab: target?.tab ?? CATEGORY_TAB[incident.category],
+        tab,
         view: target?.view,
         entityId: incident.entity_id ?? undefined,
+        filter,
+        columnFilter,
       });
       onClose();
     },

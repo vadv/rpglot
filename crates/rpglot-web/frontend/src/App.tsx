@@ -385,7 +385,7 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
     setLiveFollow((prev) => !prev);
   }, []);
 
-  // Handle jump from analysis modal — switch tab + jump to timestamp
+  // Handle jump from analysis modal — switch tab + apply filters + jump to timestamp
   const handleAnalysisJump = useCallback(
     (jump: AnalysisJump) => {
       if (jump.tab) {
@@ -396,10 +396,12 @@ function HistoryApp({ schema }: { schema: ApiSchema }) {
       }
       // Reset smart filters so the target row is visible
       tabState.resetSmartFilters();
+      // Apply filters: global text filter or column filter (or null for both — clearing)
+      tabState.setGlobalFilterPreset(jump.filter ?? null);
+      tabState.setColumnFilterPreset(jump.columnFilter ?? null);
       handleManualJump(jump.timestamp);
       if (jump.entityId != null) {
         tabState.handleSelectRow(jump.entityId);
-        tabState.triggerFlash(jump.entityId);
       }
     },
     [handleManualJump, tabState],

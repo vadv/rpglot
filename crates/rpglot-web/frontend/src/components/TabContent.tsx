@@ -48,7 +48,7 @@ export function TabContent({
     handleFilterChange,
     columnFilterPreset,
     setColumnFilterPreset,
-    flashRowId,
+    globalFilterPreset,
     smartFilterResetKey,
   } = tabState;
   const tabSchema = schema.tabs[activeTab];
@@ -411,7 +411,7 @@ export function TabContent({
           onFilterChange={handleFilterChange}
           snapshotTimestamp={snapshot.timestamp}
           toolbarControls={toolbarControls}
-          flashId={flashRowId}
+          globalFilterPreset={globalFilterPreset}
           columnFilterPreset={columnFilterPreset}
         />
       </div>
