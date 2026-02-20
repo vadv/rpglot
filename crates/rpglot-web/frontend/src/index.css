@@ -162,16 +162,7 @@ body {
     animation: pulse-btn 1.5s ease-in-out infinite;
 }
 
-@keyframes flash-row {
-    0%,
-    100% {
-        background-color: var(--selection-bg);
-    }
-    50% {
-        background-color: rgba(59, 130, 246, 0.6);
-    }
-}
-
 .flash-row {
-    animation: flash-row 0.8s ease-in-out 6;
+    background-color: rgba(59, 130, 246, 0.35) !important;
+    box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.6) !important;
 }

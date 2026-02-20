@@ -98,6 +98,18 @@ impl AnalysisRule for PlanRegressionRule {
                 continue;
             }
 
+            // Find fast plan's delta — if the fast plan is also getting calls,
+            // this is normal parameterized behavior (both plans active), not a regression.
+            let fast_delta = group
+                .iter()
+                .filter(|(m, _, _)| (*m - min_mean).abs() < f64::EPSILON)
+                .map(|(_, d, _)| *d)
+                .max()
+                .unwrap_or(0);
+            if fast_delta > 0 {
+                continue;
+            }
+
             // Skip micro-regressions: if the slow plan is under 5ms,
             // the absolute impact is negligible regardless of ratio.
             if max_mean < MIN_SLOW_MEAN_MS {
@@ -264,15 +276,14 @@ mod tests {
 
     #[test]
     fn plan_regression_detects_multiple_plans() {
-        // Both plans gained calls at meaningful rate → both active.
-        // 300s interval, +20 and +30 calls → rates 0.067 and 0.1
+        // Slow plan active (+30), fast plan inactive (+0) → regression detected.
         let prev = make_snapshot(vec![
-            make_plan_at(100, 1, 10.0, 30, T0),
+            make_plan_at(100, 1, 10.0, 50, T0),
             make_plan_at(100, 2, 100.0, 10, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan_at(100, 1, 10.0, 50, T1),  // +20, rate=0.067
-            make_plan_at(100, 2, 100.0, 40, T1), // +30, rate=0.1
+            make_plan_at(100, 1, 10.0, 50, T1),  // +0, inactive
+            make_plan_at(100, 2, 100.0, 40, T1), // +30, active
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -284,6 +295,28 @@ mod tests {
         assert!((anomalies[0].value - 10.0).abs() < 0.01);
         assert_eq!(anomalies[0].entity_id, Some(100));
         assert_eq!(anomalies[0].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn plan_regression_skips_both_active() {
+        // Both slow and fast plans are active → normal parameterized behavior, not regression.
+        let prev = make_snapshot(vec![
+            make_plan_at(100, 1, 10.0, 30, T0),
+            make_plan_at(100, 2, 100.0, 10, T0),
+        ]);
+        let snap = make_snapshot(vec![
+            make_plan_at(100, 1, 10.0, 50, T1),  // +20, active
+            make_plan_at(100, 2, 100.0, 40, T1), // +30, active
+        ]);
+        let interner = StringInterner::new();
+        let ewma = EwmaState::new(0.1);
+        let ctx = make_ctx_with_prev(&snap, &prev, &interner, &ewma);
+
+        let anomalies = PlanRegressionRule.evaluate(&ctx);
+        assert!(
+            anomalies.is_empty(),
+            "both plans active → stable multi-plan state, not regression"
+        );
     }
 
     #[test]
@@ -318,6 +351,7 @@ mod tests {
 
     #[test]
     fn plan_regression_picks_worst_group() {
+        // Both groups: fast plan inactive, slow plan active → regression.
         let prev = make_snapshot(vec![
             make_plan_at(100, 1, 10.0, 40, T0),
             make_plan_at(100, 2, 50.0, 10, T0),
@@ -325,10 +359,10 @@ mod tests {
             make_plan_at(200, 4, 100.0, 5, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan_at(100, 1, 10.0, 60, T1),
-            make_plan_at(100, 2, 50.0, 30, T1),
-            make_plan_at(200, 3, 5.0, 100, T1),
-            make_plan_at(200, 4, 100.0, 25, T1), // +20, rate=0.067
+            make_plan_at(100, 1, 10.0, 40, T1),  // +0, inactive (fast)
+            make_plan_at(100, 2, 50.0, 30, T1),  // +20, active (slow)
+            make_plan_at(200, 3, 5.0, 80, T1),   // +0, inactive (fast)
+            make_plan_at(200, 4, 100.0, 25, T1), // +20, active (slow)
         ]);
         let interner = StringInterner::new();
         let ewma = EwmaState::new(0.1);
@@ -384,13 +418,13 @@ mod tests {
     #[test]
     fn plan_regression_detects_slow_plan_above_threshold() {
         // Slow plan has mean_time 100ms >= MIN_SLOW_MEAN_MS (5ms).
-        // Even with few calls, the absolute impact is significant.
+        // Fast plan inactive, slow plan active → regression.
         let prev = make_snapshot(vec![
             make_plan_at(100, 1, 10.0, 500, T0),
             make_plan_at(100, 2, 100.0, 100, T0),
         ]);
         let snap = make_snapshot(vec![
-            make_plan_at(100, 1, 10.0, 600, T1),
+            make_plan_at(100, 1, 10.0, 500, T1),  // +0, inactive
             make_plan_at(100, 2, 100.0, 102, T1), // +2 calls, but mean 100ms
         ]);
         let interner = StringInterner::new();

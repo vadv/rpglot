@@ -98,7 +98,7 @@ export function useTabState(
         rowEl.scrollIntoView({ block: "center", behavior: "smooth" });
       }
     });
-    setTimeout(() => setFlashRowId(null), 5500);
+    // No auto-clear: highlight stays until user navigates (arrow keys / mouse click)
   }, []);
 
   // Reset selection on tab change
@@ -166,6 +166,7 @@ export function useTabState(
   const handleSelectRow = useCallback((id: string | number | null) => {
     setSelectedId(id);
     setDetailOpen(id != null);
+    setFlashRowId(null); // Clear persistent highlight on user interaction
   }, []);
 
   const handleOpenDetail = useCallback(() => {

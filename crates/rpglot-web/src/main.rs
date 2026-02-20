@@ -806,7 +806,7 @@ fn find_pgs_prev_snapshot(
     pos: usize,
     current_collected_at: i64,
 ) -> Option<Snapshot> {
-    let max_lookback = 10;
+    let max_lookback = 30; // PGS cached ~30s, need ~300s / 5min lookback
     let start = pos.saturating_sub(max_lookback);
     for p in (start..pos).rev() {
         if let Some(snap) = hp.snapshot_at(p)
@@ -874,7 +874,7 @@ fn find_pgt_prev_snapshot(
     pos: usize,
     current_collected_at: i64,
 ) -> Option<Snapshot> {
-    let max_lookback = 10;
+    let max_lookback = 30; // PGT cached ~30s, need ~300s / 5min lookback
     let start = pos.saturating_sub(max_lookback);
     for p in (start..pos).rev() {
         if let Some(snap) = hp.snapshot_at(p)
@@ -892,7 +892,7 @@ fn find_pgi_prev_snapshot(
     pos: usize,
     current_collected_at: i64,
 ) -> Option<Snapshot> {
-    let max_lookback = 10;
+    let max_lookback = 30; // PGI cached ~30s, need ~300s / 5min lookback
     let start = pos.saturating_sub(max_lookback);
     for p in (start..pos).rev() {
         if let Some(snap) = hp.snapshot_at(p)
@@ -1097,6 +1097,14 @@ fn seed_pgp_prev(inner: &mut WebAppInner, prev: &Snapshot) {
 // Rate computation (mirrors TUI tab_states logic)
 // ============================================================
 
+/// Maximum dt (seconds) for PGS/PGT/PGI rate computation (~30s collection cache).
+/// 5-second tolerance accounts for timing jitter in snapshot collection.
+const MAX_RATE_DT_SECS: f64 = 605.0;
+
+/// Maximum dt (seconds) for PGP rate computation (pg_store_plans, 300s collection interval).
+/// Allows up to two missed collection cycles (3 × 300s + 5s tolerance).
+const MAX_PGP_RATE_DT_SECS: f64 = 905.0;
+
 fn update_pgs_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
     let Some(stmts) = snapshot.blocks.iter().find_map(|b| {
         if let DataBlock::PgStatStatements(v) = b {
@@ -1139,6 +1147,13 @@ fn update_pgs_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
     }
 
     let dt = (now_ts - prev_ts) as f64;
+
+    if dt > MAX_RATE_DT_SECS {
+        inner.pgs_prev_ts = Some(now_ts);
+        inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
+        inner.pgs_rates.clear();
+        return;
+    }
 
     let mut rates = HashMap::with_capacity(stmts.len());
     for s in stmts {
@@ -1222,6 +1237,13 @@ fn update_pgp_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
     }
 
     let dt = (now_ts - prev_ts) as f64;
+
+    if dt > MAX_PGP_RATE_DT_SECS {
+        inner.pgp_prev_ts = Some(now_ts);
+        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
+        inner.pgp_rates.clear();
+        return;
+    }
 
     let mut rates = HashMap::with_capacity(plans.len());
     for p in plans {
