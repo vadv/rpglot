@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { readUrlState, useUrlSync } from "./useUrlState";
 import { getTabData } from "../utils/tabData";
 import type { ApiSchema, ApiSnapshot, TabKey, DrillDown } from "../api/types";
@@ -73,11 +73,16 @@ export function useTabState(
   const [initialView, setInitialView] = useState<string | null>(urlState.view);
   const [initialFilter] = useState<string | null>(urlState.filter);
   const [flashRowId, setFlashRowId] = useState<string | number | null>(null);
+  // Flash is "locked" for FLASH_LOCK_MS after trigger — no interaction can clear it.
+  const flashLockedUntil = useRef(0);
   // Incremented on drill-down / analysis jump to reset smart filters in TabContent
   const [smartFilterResetKey, setSmartFilterResetKey] = useState(0);
 
+  const FLASH_LOCK_MS = 5000;
+
   const triggerFlash = useCallback((id: string | number) => {
     setFlashRowId(id);
+    flashLockedUntil.current = Date.now() + FLASH_LOCK_MS;
     // Scroll the target row into view within the table's scroll container.
     // We can't use scrollIntoView({ block: "center" }) because nested
     // overflow containers cause incorrect positioning.
@@ -98,7 +103,6 @@ export function useTabState(
         rowEl.scrollIntoView({ block: "center", behavior: "smooth" });
       }
     });
-    // No auto-clear: highlight stays until user navigates (arrow keys / mouse click)
   }, []);
 
   // Reset selection on tab change
@@ -166,7 +170,9 @@ export function useTabState(
   const handleSelectRow = useCallback((id: string | number | null) => {
     setSelectedId(id);
     setDetailOpen(id != null);
-    setFlashRowId(null); // Clear persistent highlight on user interaction
+    if (Date.now() > flashLockedUntil.current) {
+      setFlashRowId(null);
+    }
   }, []);
 
   const handleOpenDetail = useCallback(() => {
