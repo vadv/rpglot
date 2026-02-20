@@ -139,7 +139,7 @@ function AppContent() {
   return <LiveApp schema={schema} />;
 }
 
-/** Updates document.title with health score + instance name. */
+/** Updates document.title with health score, instance name, role, and hostname. */
 function useDocumentTitle(
   snapshot: ApiSnapshot | null | undefined,
   instance?: InstanceInfo,
@@ -152,10 +152,20 @@ function useDocumentTitle(
     const score = snapshot.health_score;
     const prefix = score <= 50 ? `[!${score}]` : `[${score}]`;
     const dbName = instance?.database ?? deriveLargestDb(snapshot);
-    document.title = dbName
-      ? `${prefix} ${dbName} \u2014 rpglot`
+    const parts: string[] = [];
+    if (dbName) parts.push(dbName);
+    const repl = snapshot.replication;
+    if (repl) {
+      parts.push(repl.is_standby ? "Standby" : "Primary");
+    }
+    if (instance?.hostname) {
+      parts.push(instance.hostname);
+    }
+    const mid = parts.length > 0 ? parts.join(" \u00b7 ") : "";
+    document.title = mid
+      ? `${prefix} ${mid} \u2014 rpglot`
       : `${prefix} rpglot`;
-  }, [snapshot?.health_score, instance?.database, snapshot]);
+  }, [snapshot?.health_score, instance?.database, instance?.hostname, snapshot?.replication, snapshot]);
 }
 
 function LiveApp({ schema }: { schema: ApiSchema }) {

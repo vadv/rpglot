@@ -62,6 +62,9 @@ pub struct ReplicationInfo {
     pub connected_replicas: u32,
     /// Details of connected replicas (primary only).
     pub replicas: Vec<ReplicaDetail>,
+    /// Primary host address (standby only, from pg_stat_wal_receiver).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_host: Option<String>,
 }
 
 /// Detail of a connected streaming replica.

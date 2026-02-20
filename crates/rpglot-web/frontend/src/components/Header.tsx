@@ -18,6 +18,8 @@ import {
   Activity,
   GitBranch,
   ArrowDown,
+  ArrowUp,
+  ExternalLink,
 } from "lucide-react";
 import {
   formatTimestamp,
@@ -490,16 +492,33 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
             ? "var(--status-warning-bg)"
             : "var(--status-critical-bg)";
 
+    const senderHost = repl.sender_host;
+
     return (
       <RichTooltip
         content={
-          <div className="w-44">
+          <div className="w-52">
             <div className="font-semibold text-[var(--text-primary)] mb-1">
               Standby (Replica)
             </div>
             <div className="text-xs text-[var(--text-secondary)]">
               Replay lag: {lagText}
             </div>
+            {senderHost && (
+              <>
+                <div className="border-t border-[var(--border-default)] my-1.5" />
+                <a
+                  href={`${window.location.protocol}//${senderHost}:${window.location.port}/`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-xs px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                >
+                  <ArrowUp size={10} className="shrink-0 text-[var(--status-success)]" />
+                  <span className="flex-1 min-w-0 truncate">Primary: {senderHost}</span>
+                  <ExternalLink size={10} className="shrink-0 opacity-50" />
+                </a>
+              </>
+            )}
           </div>
         }
         side="bottom"
@@ -537,35 +556,58 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
             Primary (Master)
           </div>
           {repl.replicas.length > 0 ? (
-            <div className="space-y-1">
-              {repl.replicas.map((r, i) => (
-                <div
-                  key={i}
-                  className="text-xs flex items-center gap-1.5"
-                >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full shrink-0"
-                    style={{
-                      backgroundColor:
-                        r.state === "streaming"
-                          ? "var(--status-success)"
-                          : "var(--status-warning)",
-                    }}
-                  />
-                  <span
-                    className="text-[var(--text-secondary)] flex-1 min-w-0 truncate"
-                    title={r.application_name || r.client_addr || undefined}
+            <div className="space-y-0.5">
+              {repl.replicas.map((r, i) => {
+                const replicaUrl = r.client_addr
+                  ? `${window.location.protocol}//${r.client_addr}:${window.location.port}/`
+                  : null;
+                const inner = (
+                  <>
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{
+                        backgroundColor:
+                          r.state === "streaming"
+                            ? "var(--status-success)"
+                            : "var(--status-warning)",
+                      }}
+                    />
+                    <span
+                      className="text-[var(--text-secondary)] flex-1 min-w-0 truncate"
+                      title={r.application_name || r.client_addr || undefined}
+                    >
+                      {r.application_name || r.client_addr || "local"}
+                    </span>
+                    <span className="text-[var(--text-tertiary)] shrink-0">
+                      {r.sync_state}
+                    </span>
+                    <span className="text-[var(--text-tertiary)] font-mono shrink-0">
+                      {formatBytes(r.replay_lag_bytes)}
+                    </span>
+                    {replicaUrl && (
+                      <ExternalLink size={10} className="shrink-0 opacity-50" />
+                    )}
+                  </>
+                );
+                return replicaUrl ? (
+                  <a
+                    key={i}
+                    href={replicaUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
                   >
-                    {r.application_name || r.client_addr || "local"}
-                  </span>
-                  <span className="text-[var(--text-tertiary)] shrink-0">
-                    {r.sync_state}
-                  </span>
-                  <span className="text-[var(--text-tertiary)] font-mono shrink-0">
-                    {formatBytes(r.replay_lag_bytes)}
-                  </span>
-                </div>
-              ))}
+                    {inner}
+                  </a>
+                ) : (
+                  <div
+                    key={i}
+                    className="text-xs flex items-center gap-1.5 px-1.5 py-1"
+                  >
+                    {inner}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div className="text-xs text-[var(--text-tertiary)]">

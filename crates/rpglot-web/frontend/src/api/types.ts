@@ -447,6 +447,7 @@ export interface InstanceInfo {
   database: string;
   pg_version: string;
   is_standby?: boolean;
+  hostname?: string;
 }
 
 export interface ReplicaDetail {
@@ -462,6 +463,7 @@ export interface ReplicationInfo {
   replay_lag_s?: number;
   connected_replicas: number;
   replicas: ReplicaDetail[];
+  sender_host?: string;
 }
 
 export interface ApiSchema {

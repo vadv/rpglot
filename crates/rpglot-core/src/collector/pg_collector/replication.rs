@@ -41,11 +41,15 @@ impl PostgresCollector {
                 .ok()
                 .and_then(|row| row.try_get::<_, i64>(0).ok());
 
+            // Get primary host from pg_stat_wal_receiver
+            let sender_host = self.query_sender_host().unwrap_or_default();
+
             ReplicationStatus {
                 is_in_recovery: true,
                 replay_lag_s,
                 connected_replicas: 0,
                 replicas: Vec::new(),
+                sender_host,
             }
         } else {
             // Primary: get connected replicas
@@ -81,6 +85,7 @@ impl PostgresCollector {
                 replay_lag_s: None,
                 connected_replicas,
                 replicas,
+                sender_host: String::new(),
             }
         };
 
@@ -95,5 +100,106 @@ impl PostgresCollector {
         self.replication_cache_time = Some(std::time::Instant::now());
 
         Some(status)
+    }
+
+    /// Query sender_host from pg_stat_wal_receiver (standby only).
+    ///
+    /// PG 11+: use `sender_host` column directly.
+    /// PG 10: parse `host=...` from `conninfo` column.
+    fn query_sender_host(&mut self) -> Option<String> {
+        let client = self.client.as_mut()?;
+        let v = self.server_version_num.unwrap_or(0);
+
+        if v >= 110000 {
+            // PG 11+: sender_host column available
+            client
+                .query_one(
+                    "SELECT coalesce(sender_host, '') FROM pg_stat_wal_receiver LIMIT 1",
+                    &[],
+                )
+                .ok()
+                .and_then(|row| {
+                    let host: String = row.get(0);
+                    if host.is_empty() { None } else { Some(host) }
+                })
+        } else {
+            // PG 10: parse host from conninfo
+            client
+                .query_one(
+                    "SELECT coalesce(conninfo, '') FROM pg_stat_wal_receiver LIMIT 1",
+                    &[],
+                )
+                .ok()
+                .and_then(|row| {
+                    let conninfo: String = row.get(0);
+                    parse_host_from_conninfo(&conninfo)
+                })
+        }
+    }
+}
+
+/// Extract `host=<value>` from a libpq connection string.
+///
+/// Handles both unquoted (`host=10.0.0.1`) and single-quoted (`host='10.0.0.1'`) values.
+fn parse_host_from_conninfo(conninfo: &str) -> Option<String> {
+    let prefix = "host=";
+    let pos = conninfo.find(prefix)?;
+    let after = &conninfo[pos + prefix.len()..];
+    if let Some(rest) = after.strip_prefix('\'') {
+        // Quoted value: find closing quote
+        let end = rest.find('\'')?;
+        let host = &rest[..end];
+        if host.is_empty() {
+            None
+        } else {
+            Some(host.to_string())
+        }
+    } else {
+        // Unquoted value: ends at space or end of string
+        let host = after.split(' ').next().unwrap_or("");
+        if host.is_empty() {
+            None
+        } else {
+            Some(host.to_string())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_host_unquoted() {
+        assert_eq!(
+            parse_host_from_conninfo("user=replicator host=10.0.0.1 port=5432"),
+            Some("10.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_host_quoted() {
+        assert_eq!(
+            parse_host_from_conninfo("user=replicator host='10.0.0.1' port=5432"),
+            Some("10.0.0.1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_host_at_end() {
+        assert_eq!(
+            parse_host_from_conninfo("user=replicator host=primary.db.local"),
+            Some("primary.db.local".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_host_empty() {
+        assert_eq!(parse_host_from_conninfo("user=replicator port=5432"), None);
+    }
+
+    #[test]
+    fn test_parse_host_empty_value() {
+        assert_eq!(parse_host_from_conninfo("host= port=5432"), None);
     }
 }

@@ -35,6 +35,9 @@ pub struct InstanceInfo {
     /// Whether the instance is a standby (replica). None if unknown.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_standby: Option<bool>,
+    /// Machine hostname.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]

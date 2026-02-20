@@ -187,6 +187,8 @@ struct WebAppInner {
     heatmap_cache: HashMap<String, Vec<rpglot_core::storage::heatmap::HeatmapBucket>>,
     // Instance metadata (database name + PG version + is_standby), cached from provider.
     instance_info: Option<(String, String, Option<bool>)>,
+    // Machine hostname, obtained at startup.
+    hostname: String,
 }
 
 type SharedState = Arc<Mutex<WebAppInner>>;
@@ -257,6 +259,8 @@ async fn async_main(args: Args) {
 
     let (tx, _rx) = broadcast::channel::<Arc<ApiSnapshot>>(16);
 
+    let hostname = get_hostname();
+
     let inner = WebAppInner {
         provider,
         mode,
@@ -280,6 +284,7 @@ async fn async_main(args: Args) {
         history_end,
         heatmap_cache: HashMap::new(),
         instance_info: None,
+        hostname,
     };
 
     let state: SharedState = Arc::new(Mutex::new(inner));
@@ -420,6 +425,23 @@ async fn async_main(args: Args) {
         .expect("failed to bind");
 
     axum::serve(listener, app).await.expect("server error");
+}
+
+/// Get machine hostname via the `hostname` command.
+fn get_hostname() -> String {
+    process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
 }
 
 fn create_live_provider(args: &Args) -> Box<dyn SnapshotProvider + Send> {
@@ -1460,6 +1482,7 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
     } else {
         None
     };
+    let hostname = inner.hostname.clone();
     let instance = inner
         .instance_info
         .as_ref()
@@ -1467,6 +1490,11 @@ async fn handle_schema(State(state_tuple): AppState) -> Json<ApiSchema> {
             database: db.clone(),
             pg_version: ver.clone(),
             is_standby: *is_standby,
+            hostname: if hostname.is_empty() {
+                None
+            } else {
+                Some(hostname.clone())
+            },
         });
     Json(ApiSchema::generate(mode, timeline, instance))
 }

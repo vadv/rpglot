@@ -976,6 +976,9 @@ pub struct ReplicationStatus {
     pub connected_replicas: u32,
     /// Details of connected replicas (primary only).
     pub replicas: Vec<ReplicaInfo>,
+    /// Primary host address (standby only, from pg_stat_wal_receiver).
+    #[serde(default)]
+    pub sender_host: String,
 }
 
 /// Information about a connected streaming replica.

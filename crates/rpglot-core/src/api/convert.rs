@@ -1983,6 +1983,11 @@ fn extract_replication(snap: &Snapshot) -> Option<ReplicationInfo> {
                         replay_lag_bytes: ri.replay_lag_bytes,
                     })
                     .collect(),
+                sender_host: if r.sender_host.is_empty() {
+                    None
+                } else {
+                    Some(r.sender_host.clone())
+                },
             })
         } else {
             None
