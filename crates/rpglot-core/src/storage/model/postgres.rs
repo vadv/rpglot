@@ -75,6 +75,12 @@ pub struct PgStatActivityInfo {
     /// Source: `pg_stat_activity.query_start`
     /// When the currently active query was started.
     pub query_start: f64,
+
+    /// PostgreSQL server time when this data was collected (seconds since epoch, sub-second precision).
+    /// Source: `EXTRACT(EPOCH FROM now())` — uses PG clock, not host clock.
+    /// Used as reference for duration computation to avoid host/PG clock skew.
+    #[serde(default)]
+    pub collected_at: f64,
 }
 
 /// Query statistics from pg_stat_statements extension.

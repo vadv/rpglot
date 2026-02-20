@@ -1141,19 +1141,26 @@ fn extract_pga(
     activities
         .iter()
         .map(|a| {
-            let now_f = now as f64;
+            // Use PG's own clock (collected_at) for duration computation.
+            // This avoids clock skew between host (snap.timestamp, integer seconds)
+            // and PG's sub-second precision epoch values.
+            let ref_time = if a.collected_at > 0.0 {
+                a.collected_at
+            } else {
+                now as f64
+            };
             let query_duration_s = if a.query_start > 0.0 {
-                Some(now_f - a.query_start)
+                Some((ref_time - a.query_start).max(0.0))
             } else {
                 None
             };
             let xact_duration_s = if a.xact_start > 0.0 {
-                Some(now_f - a.xact_start)
+                Some((ref_time - a.xact_start).max(0.0))
             } else {
                 None
             };
             let backend_duration_s = if a.backend_start > 0.0 {
-                Some(now_f - a.backend_start)
+                Some((ref_time - a.backend_start).max(0.0))
             } else {
                 None
             };

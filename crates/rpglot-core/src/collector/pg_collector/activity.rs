@@ -50,6 +50,7 @@ impl PostgresCollector {
                             backend_start: row.get("backend_start"),
                             xact_start: row.get("xact_start"),
                             query_start: row.get("query_start"),
+                            collected_at: row.get("collected_at"),
                         }
                     })
                     .collect()

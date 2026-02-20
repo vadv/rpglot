@@ -9,7 +9,7 @@
 //! ```text
 //! ┌─────────────────────────────────────────────────────────┐
 //! │ HEADER (48 bytes, uncompressed)                         │
-//! │   magic: [u8; 4]              = b"RPG4"                 │
+//! │   magic: [u8; 4]              = b"RPG5"                 │
 //! │   version: u16                = 4                       │
 //! │   snapshot_count: u16                                   │
 //! │   interner_offset: u64        (byte offset in file)     │
@@ -45,8 +45,8 @@ use std::io::{self, Read as _, Seek, SeekFrom, Write};
 use std::path::Path;
 use tracing::warn;
 
-const MAGIC: [u8; 4] = *b"RPG4";
-const VERSION: u16 = 4;
+const MAGIC: [u8; 4] = *b"RPG5";
+const VERSION: u16 = 5;
 const HEADER_SIZE: usize = 48;
 const INDEX_ENTRY_SIZE: usize = 28; // offset: u64 + compressed_len: u64 + timestamp: i64 + uncompressed_len: u32
 pub(crate) const DICT_MAX_SIZE: usize = 112 * 1024; // 112 KB
@@ -74,7 +74,7 @@ pub fn read_chunk_metadata(path: &Path) -> io::Result<ChunkMetadata> {
     let magic = &header[0..4];
     if magic != MAGIC {
         return Err(io::Error::other(format!(
-            "invalid magic: expected RPG4, got {:?}",
+            "invalid magic: expected RPG5, got {:?}",
             magic
         )));
     }
@@ -134,7 +134,7 @@ impl ChunkReader {
         let magic = &data[0..4];
         if magic != MAGIC {
             return Err(io::Error::other(format!(
-                "invalid magic: expected RPG4, got {:?}",
+                "invalid magic: expected RPG5, got {:?}",
                 magic
             )));
         }

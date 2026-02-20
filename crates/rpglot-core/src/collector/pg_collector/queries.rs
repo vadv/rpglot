@@ -24,7 +24,8 @@ pub(super) fn build_stat_activity_query(server_version_num: Option<i32>) -> Stri
                 COALESCE(backend_type, '') as backend_type,
                 COALESCE(EXTRACT(EPOCH FROM backend_start)::double precision, 0) as backend_start,
                 COALESCE(EXTRACT(EPOCH FROM xact_start)::double precision, 0) as xact_start,
-                COALESCE(EXTRACT(EPOCH FROM query_start)::double precision, 0) as query_start
+                COALESCE(EXTRACT(EPOCH FROM query_start)::double precision, 0) as query_start,
+                EXTRACT(EPOCH FROM now())::double precision as collected_at
             FROM pg_stat_activity
         "#
     )
