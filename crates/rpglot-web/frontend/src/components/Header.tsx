@@ -502,7 +502,7 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
     return (
       <RichTooltip
         content={
-          <div className="w-52">
+          <div>
             <div className="font-semibold text-[var(--text-primary)] mb-1">
               Standby (Replica)
             </div>
@@ -516,10 +516,10 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
                   href={`${window.location.protocol}//${stripCidr(senderHost)}:${window.location.port}/`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-xs px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
+                  className="flex items-center gap-1.5 text-xs px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer whitespace-nowrap"
                 >
                   <ArrowUp size={10} className="shrink-0 text-[var(--status-success)]" />
-                  <span className="flex-1 min-w-0 truncate">Primary: {senderHost}</span>
+                  <span>Primary: {senderHost}</span>
                   <ExternalLink size={10} className="shrink-0 opacity-50" />
                 </a>
               </>
@@ -556,7 +556,7 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
   return (
     <RichTooltip
       content={
-        <div className="w-72">
+        <div>
           <div className="font-semibold text-[var(--text-primary)] mb-1">
             Primary (Master)
           </div>
@@ -577,10 +577,7 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
                             : "var(--status-warning)",
                       }}
                     />
-                    <span
-                      className="text-[var(--text-secondary)] flex-1 min-w-0 truncate"
-                      title={r.application_name || r.client_addr || undefined}
-                    >
+                    <span className="text-[var(--text-secondary)] whitespace-nowrap">
                       {r.application_name || r.client_addr || "local"}
                     </span>
                     <span className="text-[var(--text-tertiary)] shrink-0">
@@ -600,14 +597,14 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
                     href={replicaUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors cursor-pointer"
+                    className="text-xs flex items-center gap-1.5 px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors cursor-pointer whitespace-nowrap"
                   >
                     {inner}
                   </a>
                 ) : (
                   <div
                     key={i}
-                    className="text-xs flex items-center gap-1.5 px-1.5 py-1"
+                    className="text-xs flex items-center gap-1.5 px-1.5 py-1 whitespace-nowrap"
                   >
                     {inner}
                   </div>
