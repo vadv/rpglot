@@ -22,9 +22,9 @@ pub(super) fn build_stat_activity_query(server_version_num: Option<i32>) -> Stri
                 COALESCE(wait_event_type, '') as wait_event_type,
                 COALESCE(wait_event, '') as wait_event,
                 COALESCE(backend_type, '') as backend_type,
-                COALESCE(EXTRACT(EPOCH FROM backend_start)::bigint, 0) as backend_start,
-                COALESCE(EXTRACT(EPOCH FROM xact_start)::bigint, 0) as xact_start,
-                COALESCE(EXTRACT(EPOCH FROM query_start)::bigint, 0) as query_start
+                COALESCE(EXTRACT(EPOCH FROM backend_start)::double precision, 0) as backend_start,
+                COALESCE(EXTRACT(EPOCH FROM xact_start)::double precision, 0) as xact_start,
+                COALESCE(EXTRACT(EPOCH FROM query_start)::double precision, 0) as query_start
             FROM pg_stat_activity
         "#
     )
@@ -256,9 +256,9 @@ pub(super) fn build_lock_tree_query() -> &'static str {
                 COALESCE(a.query, '') AS query,
                 COALESCE(a.application_name, '') AS application_name,
                 COALESCE(a.backend_type, '') AS backend_type,
-                COALESCE(EXTRACT(EPOCH FROM a.xact_start)::bigint, 0) AS xact_start,
-                COALESCE(EXTRACT(EPOCH FROM a.query_start)::bigint, 0) AS query_start,
-                COALESCE(EXTRACT(EPOCH FROM a.state_change)::bigint, 0) AS state_change
+                COALESCE(EXTRACT(EPOCH FROM a.xact_start)::double precision, 0) AS xact_start,
+                COALESCE(EXTRACT(EPOCH FROM a.query_start)::double precision, 0) AS query_start,
+                COALESCE(EXTRACT(EPOCH FROM a.state_change)::double precision, 0) AS state_change
             FROM pg_stat_activity a
             WHERE a.state IS DISTINCT FROM 'idle'
         ),
@@ -380,8 +380,8 @@ pub(super) fn build_store_plans_query(fork: StorePlansFork) -> String {
                 COALESCE(s.temp_blks_written, 0) AS temp_blks_written,
                 ({blk_read_time_expr})::double precision AS blk_read_time,
                 ({blk_write_time_expr})::double precision AS blk_write_time,
-                COALESCE(EXTRACT(EPOCH FROM s.first_call)::bigint, 0) AS first_call,
-                COALESCE(EXTRACT(EPOCH FROM s.last_call)::bigint, 0) AS last_call
+                COALESCE(EXTRACT(EPOCH FROM s.first_call)::double precision, 0) AS first_call,
+                COALESCE(EXTRACT(EPOCH FROM s.last_call)::double precision, 0) AS last_call
             FROM pg_store_plans s
             LEFT JOIN pg_database d ON d.oid = s.dbid
             LEFT JOIN pg_roles r ON r.oid = s.userid

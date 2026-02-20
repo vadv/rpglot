@@ -395,9 +395,9 @@ fn build_content(
 
     // Timestamps section
     lines.push(section("Timestamps"));
-    lines.push(kv("first_call", &format_epoch_age(plan.first_call)));
+    lines.push(kv("first_call", &format_epoch_age(plan.first_call as i64)));
     push_help(&mut lines, show_help, HELP, "first_call");
-    lines.push(kv("last_call", &format_epoch_age(plan.last_call)));
+    lines.push(kv("last_call", &format_epoch_age(plan.last_call as i64)));
     push_help(&mut lines, show_help, HELP, "last_call");
     lines.push(Line::raw(""));
 

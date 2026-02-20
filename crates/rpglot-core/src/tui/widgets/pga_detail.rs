@@ -314,28 +314,35 @@ fn build_content<'a>(
 
     // Section 2: Timing
     lines.push(section("Timing"));
-    lines.push(kv("Backend Start", &format_timestamp(pg.backend_start)));
+    lines.push(kv(
+        "Backend Start",
+        &format_timestamp(pg.backend_start as i64),
+    ));
     push_help(&mut lines, show_help, HELP, "Backend Start");
     lines.push(kv(
         "Transaction Start",
-        &format_timestamp_or_none(pg.xact_start),
+        &format_timestamp_or_none(pg.xact_start as i64),
     ));
     push_help(&mut lines, show_help, HELP, "Transaction Start");
-    lines.push(kv("Query Start", &format_timestamp_or_none(pg.query_start)));
+    lines.push(kv(
+        "Query Start",
+        &format_timestamp_or_none(pg.query_start as i64),
+    ));
     push_help(&mut lines, show_help, HELP, "Query Start");
 
-    let query_duration = if pg.query_start > 0 {
-        now - pg.query_start
+    let now_f = now as f64;
+    let query_duration = if pg.query_start > 0.0 {
+        (now_f - pg.query_start) as i64
     } else {
         0
     };
-    let xact_duration = if pg.xact_start > 0 {
-        now - pg.xact_start
+    let xact_duration = if pg.xact_start > 0.0 {
+        (now_f - pg.xact_start) as i64
     } else {
         0
     };
-    let backend_duration = if pg.backend_start > 0 {
-        now - pg.backend_start
+    let backend_duration = if pg.backend_start > 0.0 {
+        (now_f - pg.backend_start) as i64
     } else {
         0
     };

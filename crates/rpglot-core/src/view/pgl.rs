@@ -103,9 +103,9 @@ pub fn build_locks_view(
             };
 
             let duration = if n.depth <= 1 {
-                format_epoch_age(n.xact_start)
+                format_epoch_age(n.xact_start as i64)
             } else {
-                format_epoch_age(n.state_change)
+                format_epoch_age(n.state_change as i64)
             };
 
             let lock_mode_full = resolve(n.lock_mode_hash);

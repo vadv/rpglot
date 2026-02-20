@@ -78,18 +78,19 @@ impl PgActivityRowData {
         let backend_type = resolve_hash(interner, pg.backend_type_hash);
         let application_name = resolve_hash(interner, pg.application_name_hash);
 
-        let query_duration_secs = if pg.query_start > 0 {
-            Some(now.saturating_sub(pg.query_start))
+        let now_f = now as f64;
+        let query_duration_secs = if pg.query_start > 0.0 {
+            Some((now_f - pg.query_start) as i64)
         } else {
             None
         };
-        let xact_duration_secs = if pg.xact_start > 0 {
-            Some(now.saturating_sub(pg.xact_start))
+        let xact_duration_secs = if pg.xact_start > 0.0 {
+            Some((now_f - pg.xact_start) as i64)
         } else {
             None
         };
-        let backend_duration_secs = if pg.backend_start > 0 {
-            Some(now.saturating_sub(pg.backend_start))
+        let backend_duration_secs = if pg.backend_start > 0.0 {
+            Some((now_f - pg.backend_start) as i64)
         } else {
             None
         };

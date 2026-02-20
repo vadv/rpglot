@@ -43,14 +43,16 @@ impl AnalysisRule for IdleInTransactionRule {
         let idle_in_tx_hash = xxhash_rust::xxh3::xxh3_64(b"idle in transaction");
 
         let mut count = 0u64;
-        let mut max_duration: i64 = 0;
+        let mut max_duration: f64 = 0.0;
 
         for s in sessions {
-            if s.state_hash == idle_in_tx_hash && s.xact_start > 0 {
-                let duration = ctx.snapshot.timestamp - s.xact_start;
-                if duration > 30 {
+            if s.state_hash == idle_in_tx_hash && s.xact_start > 0.0 {
+                let duration = ctx.snapshot.timestamp as f64 - s.xact_start;
+                if duration > 30.0 {
                     count += 1;
-                    max_duration = max_duration.max(duration);
+                    if duration > max_duration {
+                        max_duration = duration;
+                    }
                 }
             }
         }
@@ -65,12 +67,13 @@ impl AnalysisRule for IdleInTransactionRule {
             Severity::Warning
         };
 
+        let max_dur_display = max_duration as i64;
         vec![Anomaly {
             timestamp: ctx.timestamp,
             rule_id: "idle_in_transaction",
             category: Category::PgActivity,
             severity,
-            title: format!("{count} idle-in-transaction session(s), longest {max_duration}s"),
+            title: format!("{count} idle-in-transaction session(s), longest {max_dur_display}s"),
             detail: None,
             value: count as f64,
             merge_key: None,
@@ -104,7 +107,7 @@ impl AnalysisRule for LongQueryRule {
         let autovacuum_hash = xxhash_rust::xxh3::xxh3_64(b"autovacuum worker");
 
         let mut count = 0u64;
-        let mut max_duration: i64 = 0;
+        let mut max_duration: f64 = 0.0;
         let mut longest_query_hash: u64 = 0;
         let mut worst_pid: i32 = 0;
 
@@ -116,9 +119,9 @@ impl AnalysisRule for LongQueryRule {
             {
                 continue;
             }
-            if s.state_hash == active_hash && s.query_start > 0 {
-                let duration = ctx.timestamp - s.query_start;
-                if duration > 30 {
+            if s.state_hash == active_hash && s.query_start > 0.0 {
+                let duration = ctx.timestamp as f64 - s.query_start;
+                if duration > 30.0 {
                     count += 1;
                     if duration > max_duration {
                         max_duration = duration;
@@ -133,7 +136,7 @@ impl AnalysisRule for LongQueryRule {
             return Vec::new();
         }
 
-        let severity = if max_duration > 300 {
+        let severity = if max_duration > 300.0 {
             Severity::Critical
         } else {
             Severity::Warning
@@ -153,9 +156,9 @@ impl AnalysisRule for LongQueryRule {
             rule_id: "long_query",
             category: Category::PgActivity,
             severity,
-            title: format!("{count} long query(s), longest {max_duration}s"),
+            title: format!("{count} long query(s), longest {}s", max_duration as i64),
             detail,
-            value: max_duration as f64,
+            value: max_duration,
             merge_key: None,
             entity_id: Some(worst_pid as i64),
         }]

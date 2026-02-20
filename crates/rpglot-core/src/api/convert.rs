@@ -1141,18 +1141,19 @@ fn extract_pga(
     activities
         .iter()
         .map(|a| {
-            let query_duration_s = if a.query_start > 0 {
-                Some(now.saturating_sub(a.query_start))
+            let now_f = now as f64;
+            let query_duration_s = if a.query_start > 0.0 {
+                Some(now_f - a.query_start)
             } else {
                 None
             };
-            let xact_duration_s = if a.xact_start > 0 {
-                Some(now.saturating_sub(a.xact_start))
+            let xact_duration_s = if a.xact_start > 0.0 {
+                Some(now_f - a.xact_start)
             } else {
                 None
             };
-            let backend_duration_s = if a.backend_start > 0 {
-                Some(now.saturating_sub(a.backend_start))
+            let backend_duration_s = if a.backend_start > 0.0 {
+                Some(now_f - a.backend_start)
             } else {
                 None
             };

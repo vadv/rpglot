@@ -58,9 +58,9 @@ fn parse_lock_tree_row(
     let application_name: String = row.try_get(9).unwrap_or_default();
     let backend_type: String = row.try_get(10).unwrap_or_default();
 
-    let xact_start: i64 = row.try_get(11).unwrap_or(0);
-    let query_start: i64 = row.try_get(12).unwrap_or(0);
-    let state_change: i64 = row.try_get(13).unwrap_or(0);
+    let xact_start: f64 = row.try_get(11).unwrap_or(0.0);
+    let query_start: f64 = row.try_get(12).unwrap_or(0.0);
+    let state_change: f64 = row.try_get(13).unwrap_or(0.0);
 
     let lock_type: String = row.try_get(14).unwrap_or_default();
     let lock_mode: String = row.try_get(15).unwrap_or_default();

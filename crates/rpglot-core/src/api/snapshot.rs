@@ -467,17 +467,17 @@ pub struct PgActivityRow {
     pub query: String,
     pub query_id: i64,
     /// Query duration in seconds (now - query_start), None if no active query.
-    pub query_duration_s: Option<i64>,
+    pub query_duration_s: Option<f64>,
     /// Transaction duration in seconds (now - xact_start).
-    pub xact_duration_s: Option<i64>,
+    pub xact_duration_s: Option<f64>,
     /// Backend duration in seconds (now - backend_start).
-    pub backend_duration_s: Option<i64>,
+    pub backend_duration_s: Option<f64>,
     /// backend_start epoch.
-    pub backend_start: i64,
+    pub backend_start: f64,
     /// xact_start epoch.
-    pub xact_start: i64,
+    pub xact_start: f64,
     /// query_start epoch.
-    pub query_start: i64,
+    pub query_start: f64,
     /// CPU% from OS process (if matched).
     pub cpu_pct: Option<f64>,
     /// Resident memory KB from OS process (if matched).
@@ -575,9 +575,9 @@ pub struct PgStorePlansRow {
     /// Total execution time (ms).
     pub total_time_ms: f64,
     /// First call epoch (0 = unknown).
-    pub first_call: i64,
+    pub first_call: f64,
     /// Last call epoch (0 = unknown).
-    pub last_call: i64,
+    pub last_call: f64,
     // --- rates (per second, computed from deltas) ---
     pub calls_s: Option<f64>,
     pub rows_s: Option<f64>,
@@ -762,11 +762,11 @@ pub struct PgLocksRow {
     pub lock_granted: bool,
     pub query: String,
     /// Transaction start epoch.
-    pub xact_start: i64,
+    pub xact_start: f64,
     /// Query start epoch.
-    pub query_start: i64,
+    pub query_start: f64,
     /// State change epoch.
-    pub state_change: i64,
+    pub state_change: f64,
 }
 
 /// pg_stat_progress_vacuum row (PG 9.6+).

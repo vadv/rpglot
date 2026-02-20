@@ -276,11 +276,20 @@ pub fn render_pgl_detail(
 
     // Timing section
     lines.push(section("Timing"));
-    lines.push(kv("Transaction Start", &format_epoch_age(node.xact_start)));
+    lines.push(kv(
+        "Transaction Start",
+        &format_epoch_age(node.xact_start as i64),
+    ));
     push_help(&mut lines, show_help, HELP, "Transaction Start");
-    lines.push(kv("Query Start", &format_epoch_age(node.query_start)));
+    lines.push(kv(
+        "Query Start",
+        &format_epoch_age(node.query_start as i64),
+    ));
     push_help(&mut lines, show_help, HELP, "Query Start");
-    lines.push(kv("State Change", &format_epoch_age(node.state_change)));
+    lines.push(kv(
+        "State Change",
+        &format_epoch_age(node.state_change as i64),
+    ));
     push_help(&mut lines, show_help, HELP, "State Change");
 
     // State section

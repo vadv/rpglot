@@ -61,20 +61,20 @@ pub struct PgStatActivityInfo {
     /// Source: `pg_stat_activity.backend_type` - interned via StringInterner
     pub backend_type_hash: u64,
 
-    /// Backend start time (seconds since Unix epoch).
+    /// Backend start time (seconds since Unix epoch, sub-second precision).
     /// Source: `pg_stat_activity.backend_start`
     /// When the backend process was started.
-    pub backend_start: i64,
+    pub backend_start: f64,
 
-    /// Transaction start time (seconds since Unix epoch).
+    /// Transaction start time (seconds since Unix epoch, sub-second precision).
     /// Source: `pg_stat_activity.xact_start`
     /// When the current transaction was started (0 if no active transaction).
-    pub xact_start: i64,
+    pub xact_start: f64,
 
-    /// Current query start time (seconds since Unix epoch).
+    /// Current query start time (seconds since Unix epoch, sub-second precision).
     /// Source: `pg_stat_activity.query_start`
     /// When the currently active query was started.
-    pub query_start: i64,
+    pub query_start: f64,
 }
 
 /// Query statistics from pg_stat_statements extension.
@@ -313,15 +313,15 @@ pub struct PgStorePlansInfo {
     /// Source: ossc-db: sum(shared+local+temp _blk_write_time), vadv: blk_write_time
     pub blk_write_time: f64,
 
-    /// First execution time (epoch seconds).
+    /// First execution time (epoch seconds, sub-second precision).
     /// Source: `pg_store_plans.first_call`
     #[serde(default)]
-    pub first_call: i64,
+    pub first_call: f64,
 
-    /// Last execution time (epoch seconds).
+    /// Last execution time (epoch seconds, sub-second precision).
     /// Source: `pg_store_plans.last_call`
     #[serde(default)]
-    pub last_call: i64,
+    pub last_call: f64,
 
     /// Unix timestamp (seconds since epoch) when this data was collected from PostgreSQL.
     /// Used to calculate accurate rates when collector caches pg_store_plans.
@@ -704,12 +704,12 @@ pub struct PgLockTreeNode {
     /// Hash of backend_type.
     pub backend_type_hash: u64,
 
-    /// Transaction start (epoch seconds).
-    pub xact_start: i64,
-    /// Query start (epoch seconds).
-    pub query_start: i64,
-    /// Last state change (epoch seconds, proxy for wait start).
-    pub state_change: i64,
+    /// Transaction start (epoch seconds, sub-second precision).
+    pub xact_start: f64,
+    /// Query start (epoch seconds, sub-second precision).
+    pub query_start: f64,
+    /// Last state change (epoch seconds, sub-second precision).
+    pub state_change: f64,
 
     /// Hash of lock type (relation, transactionid, etc.).
     pub lock_type_hash: u64,
