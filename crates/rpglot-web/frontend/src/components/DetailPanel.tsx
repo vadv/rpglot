@@ -6,6 +6,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Maximize2,
 } from "lucide-react";
 import type {
   TabKey,
@@ -17,6 +18,8 @@ import { formatValue } from "../utils/formatters";
 import { COLUMN_DESCRIPTIONS } from "../utils/columnDescriptions";
 import { getThresholdClass } from "../utils/thresholds";
 import { Tooltip } from "./Tooltip";
+import { HighlightedCode } from "./HighlightedCode";
+import { QueryModal } from "./QueryModal";
 
 interface DetailPanelProps {
   tab: TabKey;
@@ -37,6 +40,7 @@ interface Section {
   title: string;
   fields: string[];
   type?: "kv" | "query";
+  language?: "sql" | "plan" | "text";
 }
 
 const TAB_SECTIONS: Record<TabKey, Section[]> = {
@@ -112,7 +116,7 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
       title: "PostgreSQL",
       fields: ["pg_backend_type", "pg_query"],
     },
-    { title: "Command", fields: ["cmdline"], type: "query" },
+    { title: "Command", fields: ["cmdline"], type: "query", language: "text" },
   ],
   pga: [
     {
@@ -161,7 +165,7 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
         "stmt_hit_pct",
       ],
     },
-    { title: "Query", fields: ["query"], type: "query" },
+    { title: "Query", fields: ["query"], type: "query", language: "sql" },
   ],
   pgs: [
     {
@@ -205,7 +209,7 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
         "wal_bytes",
       ],
     },
-    { title: "Query", fields: ["query"], type: "query" },
+    { title: "Query", fields: ["query"], type: "query", language: "sql" },
   ],
   pgt: [
     {
@@ -327,8 +331,8 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
         "hit_pct",
       ],
     },
-    { title: "Query", fields: ["query"], type: "query" },
-    { title: "Plan", fields: ["plan"], type: "query" },
+    { title: "Query", fields: ["query"], type: "query", language: "sql" },
+    { title: "Plan", fields: ["plan"], type: "query", language: "plan" },
   ],
   pge: [
     {
@@ -343,9 +347,9 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
         "extra_num2",
       ],
     },
-    { title: "Message", fields: ["message"], type: "query" },
-    { title: "Sample", fields: ["sample"], type: "query" },
-    { title: "Statement", fields: ["statement"], type: "query" },
+    { title: "Message", fields: ["message"], type: "query", language: "text" },
+    { title: "Sample", fields: ["sample"], type: "query", language: "sql" },
+    { title: "Statement", fields: ["statement"], type: "query", language: "sql" },
   ],
   pgl: [
     {
@@ -372,7 +376,7 @@ const TAB_SECTIONS: Record<TabKey, Section[]> = {
       title: "State",
       fields: ["state", "wait_event_type", "wait_event"],
     },
-    { title: "Query", fields: ["query"], type: "query" },
+    { title: "Query", fields: ["query"], type: "query", language: "sql" },
   ],
   pgv: [
     {
@@ -491,11 +495,14 @@ function DetailSection({
   snapshotTimestamp?: number;
 }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
 
   if (section.type === "query") {
     const fieldKey = section.fields[0] ?? "query";
     const queryText = String(row[fieldKey] ?? "");
     if (!queryText) return null;
+
+    const lang = section.language ?? "text";
 
     return (
       <div>
@@ -505,12 +512,33 @@ function DetailSection({
             collapsed={collapsed}
             onToggle={() => setCollapsed(!collapsed)}
           />
-          {!collapsed && <CopyButton text={queryText} />}
+          {!collapsed && (
+            <div className="flex items-center gap-0.5">
+              <button
+                onClick={() => setModalOpen(true)}
+                className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded transition-colors text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
+              >
+                <Maximize2 size={10} />
+                <span>expand</span>
+              </button>
+              <CopyButton text={queryText} />
+            </div>
+          )}
         </div>
         {!collapsed && (
-          <pre className="mt-1.5 p-3 bg-[var(--bg-base)] border border-[var(--border-default)] rounded-lg text-[13px] font-mono text-[var(--text-primary)] whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
-            {queryText}
-          </pre>
+          <HighlightedCode
+            text={queryText}
+            language={lang}
+            className="mt-1.5 p-3 bg-[var(--bg-base)] border border-[var(--border-default)] rounded-lg text-[13px] font-mono text-[var(--text-primary)] whitespace-pre-wrap break-all max-h-64 overflow-y-auto"
+          />
+        )}
+        {modalOpen && (
+          <QueryModal
+            text={queryText}
+            language={lang}
+            title={section.title}
+            onClose={() => setModalOpen(false)}
+          />
         )}
       </div>
     );

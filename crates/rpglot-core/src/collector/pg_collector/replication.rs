@@ -174,8 +174,7 @@ mod tests {
     fn strip_cidr_mask(addr: &str) -> &str {
         match addr.rfind('/') {
             Some(pos)
-                if addr[pos + 1..].bytes().all(|b| b.is_ascii_digit())
-                    && pos + 1 < addr.len() =>
+                if addr[pos + 1..].bytes().all(|b| b.is_ascii_digit()) && pos + 1 < addr.len() =>
             {
                 &addr[..pos]
             }
