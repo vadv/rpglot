@@ -102,9 +102,9 @@ export function ActivityHeatmap({
           />
         ) : null,
       )}
-      {/* Health score strip — thin colored bar near bottom */}
+      {/* Health score strip — only warning/critical (green omitted to reduce noise) */}
       {buckets.map((b, i) =>
-        b.active === 0 && b.health === 0 ? null : (
+        b.health > 0 && b.health < 80 ? (
           <rect
             key={`hs-${i}`}
             x={i}
@@ -112,15 +112,13 @@ export function ActivityHeatmap({
             width={1}
             height={2}
             fill={
-              b.health >= 80
-                ? "var(--status-success, #4ade80)"
-                : b.health >= 50
-                  ? "var(--status-warning)"
-                  : "var(--status-critical)"
+              b.health >= 50
+                ? "var(--status-warning)"
+                : "var(--status-critical)"
             }
             opacity={0.7}
           />
-        ),
+        ) : null,
       )}
       {/* Autovacuum indicators — green rectangles at bottom */}
       {buckets.map((b, i) =>
