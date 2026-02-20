@@ -92,7 +92,7 @@ impl PgTablesRowData {
         let database = resolve_hash(interner, t.datname_hash);
         let schema = resolve_hash(interner, t.schemaname_hash);
         let table = resolve_hash(interner, t.relname_hash);
-        let display_name = if schema.is_empty() || schema == "public" {
+        let display_name = if schema.is_empty() {
             table.clone()
         } else {
             format!("{}.{}", schema, table)

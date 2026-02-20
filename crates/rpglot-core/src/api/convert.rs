@@ -1523,7 +1523,7 @@ fn extract_pgt(
             let schema = resolve(interner, t.schemaname_hash);
             let table = resolve(interner, t.relname_hash);
             let tablespace = resolve(interner, t.tablespace_hash);
-            let display_name = if schema.is_empty() || schema == "public" {
+            let display_name = if schema.is_empty() {
                 table.clone()
             } else {
                 format!("{}.{}", schema, table)
@@ -1698,7 +1698,7 @@ fn extract_pgi(
             let table = resolve(interner, i.relname_hash);
             let index = resolve(interner, i.indexrelname_hash);
             let tablespace = resolve(interner, i.tablespace_hash);
-            let display_table = if schema.is_empty() || schema == "public" {
+            let display_table = if schema.is_empty() {
                 table.clone()
             } else {
                 format!("{}.{}", schema, table)

@@ -51,7 +51,7 @@ impl PgIndexesRowData {
         let schema = resolve_hash(interner, i.schemaname_hash);
         let table_name = resolve_hash(interner, i.relname_hash);
         let index_name = resolve_hash(interner, i.indexrelname_hash);
-        let display_table = if schema.is_empty() || schema == "public" {
+        let display_table = if schema.is_empty() {
             table_name.clone()
         } else {
             format!("{}.{}", schema, table_name)

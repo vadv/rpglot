@@ -31,7 +31,7 @@ pub(crate) fn fmt_blks_per_s(rate: f64) -> String {
 fn qualified_name(interner: &StringInterner, schema_hash: u64, rel_hash: u64) -> String {
     let rel = interner.resolve(rel_hash).unwrap_or("unknown");
     match interner.resolve(schema_hash) {
-        Some(s) if s != "public" => format!("{s}.{rel}"),
+        Some(s) if !s.is_empty() => format!("{s}.{rel}"),
         _ => rel.to_string(),
     }
 }

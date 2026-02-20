@@ -14,7 +14,7 @@ fn qualified_index_name(
     let idx = interner.resolve(index_hash).unwrap_or("unknown");
     let tbl = interner.resolve(table_hash).unwrap_or("?");
     match interner.resolve(schema_hash) {
-        Some(s) if s != "public" => format!("{s}.{idx} on {s}.{tbl}"),
+        Some(s) if !s.is_empty() => format!("{s}.{idx} on {s}.{tbl}"),
         _ => format!("{idx} on {tbl}"),
     }
 }
