@@ -89,11 +89,20 @@ export function DataTable({
     return [];
   });
 
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-  const [globalFilter, setGlobalFilter] = useState(initialFilter ?? "");
+  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(() => {
+    if (columnFilterPreset) {
+      return [
+        { id: columnFilterPreset.column, value: [columnFilterPreset.value] },
+      ];
+    }
+    return [];
+  });
+  const [globalFilter, setGlobalFilter] = useState(
+    globalFilterPreset ?? initialFilter ?? "",
+  );
 
-  // Apply global filter preset (e.g. from analysis jump)
-  const prevGlobalPreset = useRef(globalFilterPreset);
+  // Apply global filter preset changes after mount (e.g. same-tab analysis jump)
+  const prevGlobalPreset = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (globalFilterPreset !== prevGlobalPreset.current) {
       setGlobalFilter(globalFilterPreset ?? "");
@@ -102,8 +111,10 @@ export function DataTable({
     }
   }, [globalFilterPreset, onFilterChange]);
 
-  // Apply column filter preset (e.g. from schema view drill-down)
-  const prevPreset = useRef(columnFilterPreset);
+  // Apply column filter preset changes after mount (e.g. drill-down on same tab)
+  const prevPreset = useRef<
+    { column: string; value: string } | null | undefined
+  >(undefined);
   useEffect(() => {
     if (columnFilterPreset !== prevPreset.current) {
       if (columnFilterPreset) {
