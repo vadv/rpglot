@@ -24,8 +24,8 @@ const MAX_WAL_ENTRY_SIZE: u32 = 256 * 1024 * 1024;
 
 // ── Heatmap format constants ─────────────────────────────────────────────────
 
-const HEATMAP_MAGIC: &[u8; 4] = b"HM03";
-const HEATMAP_ENTRY_SIZE: usize = 14;
+const HEATMAP_MAGIC: &[u8; 4] = b"HM04";
+const HEATMAP_ENTRY_SIZE: usize = 15;
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
@@ -705,7 +705,7 @@ fn dump_heatmap(path: &Path, cli: &Cli) {
                 .to_string_lossy()
                 .into(),
             file_size,
-            format: "HM03".into(),
+            format: "HM04".into(),
             entries,
         };
         println!("{}", serde_json::to_string_pretty(&json).unwrap());

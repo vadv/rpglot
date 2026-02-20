@@ -600,6 +600,7 @@ export interface HeatmapBucket {
   checkpoints: number;
   autovacuums: number;
   slow_queries: number;
+  health: number;
 }
 
 // Tab key type

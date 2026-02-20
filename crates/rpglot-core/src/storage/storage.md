@@ -10,7 +10,7 @@
 |------|----------|
 | `interner.rs` | StringInterner — дедупликация строк через xxh3_64 хеши |
 | `chunk.rs` | Chunk формат RPG3: zstd + dictionary + index, random access |
-| `heatmap.rs` | Heatmap формат HM03: sidecar для timeline без декомпрессии |
+| `heatmap.rs` | Heatmap формат HM04: sidecar для timeline без декомпрессии |
 | `manager.rs` | StorageManager: WAL (CRC32 framing), flush, rotation |
 | `model/snapshot.rs` | Snapshot, DataBlock enum (25 вариантов) |
 | `model/process.rs` | ProcessInfo — метрики /proc/[pid]/* |
@@ -22,7 +22,7 @@
 ## Форматы файлов
 
 - **Chunk**: `rpglot_YYYY-MM-DD_HH.zst` — RPG3 формат, postcard serialization, zstd + trained dictionary
-- **Heatmap**: `rpglot_YYYY-MM-DD_HH.heatmap` — HM03, 14 bytes per entry (CPU%, sessions, errors, events)
+- **Heatmap**: `rpglot_YYYY-MM-DD_HH.heatmap` — HM04, 15 bytes per entry (CPU%, sessions, errors, events)
 - **WAL**: `wal.log` — CRC32-framed postcard(WalEntry), fsync после каждого фрейма
 
 ## Ключевые принципы

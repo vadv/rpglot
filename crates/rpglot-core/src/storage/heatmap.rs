@@ -8,7 +8,7 @@
 //!
 //! ## File format
 //!
-//! 4-byte magic `b"HM03"` followed by 14-byte little-endian entries.
+//! 4-byte magic `b"HM04"` followed by 15-byte little-endian entries.
 
 use std::path::{Path, PathBuf};
 use std::{fs, io};
@@ -16,16 +16,18 @@ use std::{fs, io};
 use serde::Serialize;
 use xxhash_rust::xxh3::xxh3_64;
 
+use crate::analysis::{PrevSample, compute_health_score};
+
 use super::model::{
     CgroupCpuInfo, CgroupMemoryInfo, DataBlock, ErrorCategory, PgLogEventType, Snapshot,
     SystemCpuInfo,
 };
 
-/// Magic bytes identifying heatmap sidecar files (v3: 14 bytes per entry, per-severity errors).
-const HEATMAP_MAGIC: &[u8; 4] = b"HM03";
+/// Magic bytes identifying heatmap sidecar files (v4: 15 bytes per entry, +health_score).
+const HEATMAP_MAGIC: &[u8; 4] = b"HM04";
 
 /// Entry size in bytes.
-const ENTRY_SIZE: usize = 14;
+const ENTRY_SIZE: usize = 15;
 
 /// Local severity mapping for error categories in heatmap context.
 /// Same logic as in pg_errors.rs and convert.rs (intentionally duplicated — 5 lines).
@@ -48,7 +50,7 @@ enum ErrorSeverityGroup {
 }
 
 /// Lightweight per-snapshot heatmap entry.
-/// 14 bytes per entry.
+/// 15 bytes per entry.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct HeatmapEntry {
@@ -72,6 +74,8 @@ pub struct HeatmapEntry {
     pub autovacuum_count: u8,
     /// Number of slow query events in this snapshot interval.
     pub slow_query_count: u8,
+    /// Health score (0..100, where 100 = perfectly healthy).
+    pub health_score: u8,
 }
 
 /// A bucketed heatmap data point for frontend display.
@@ -99,6 +103,8 @@ pub struct HeatmapBucket {
     pub autovacuums: u8,
     /// Total slow query events in this bucket.
     pub slow_queries: u8,
+    /// Min (worst) health score in this bucket (0..100).
+    pub health: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +117,7 @@ pub fn heatmap_path(chunk_path: &Path) -> PathBuf {
 }
 
 /// Writes heatmap entries to a `.heatmap` sidecar file.
-/// Format: 4-byte magic `b"HM03"` + 14-byte little-endian entries.
+/// Format: 4-byte magic `b"HM04"` + 15-byte little-endian entries.
 pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
     let mut buf = Vec::with_capacity(4 + entries.len() * ENTRY_SIZE);
     buf.extend_from_slice(HEATMAP_MAGIC);
@@ -126,6 +132,7 @@ pub fn write_heatmap(path: &Path, entries: &[HeatmapEntry]) -> io::Result<()> {
         buf.push(e.checkpoint_count);
         buf.push(e.autovacuum_count);
         buf.push(e.slow_query_count);
+        buf.push(e.health_score);
     }
     fs::write(path, buf)
 }
@@ -157,6 +164,7 @@ pub fn read_heatmap(path: &Path) -> io::Result<Vec<HeatmapEntry>> {
             checkpoint_count: payload[off + 11],
             autovacuum_count: payload[off + 12],
             slow_query_count: payload[off + 13],
+            health_score: payload[off + 14],
         });
     }
     Ok(entries)
@@ -401,6 +409,7 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
     let mut prev_cpu: Option<&SystemCpuInfo> = None;
     let mut prev_cgroup_cpu: Option<&CgroupCpuInfo> = None;
     let mut prev_timestamp: Option<i64> = None;
+    let mut prev_sample: Option<PrevSample> = None;
 
     for snap in snapshots {
         let active = count_active_sessions(snap);
@@ -433,6 +442,9 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
         let autovacuums = count_autovacuum_events(snap);
         let slow_queries = count_slow_query_events(snap);
 
+        // Health score
+        let health_score = compute_health_score(snap, prev_sample.as_ref(), delta_time).0;
+
         entries.push(HeatmapEntry {
             active_sessions: active,
             cpu_pct_x10: cpu,
@@ -444,11 +456,13 @@ pub fn build_heatmap_from_snapshots(snapshots: &[Snapshot]) -> Vec<HeatmapEntry>
             checkpoint_count: checkpoints,
             autovacuum_count: autovacuums,
             slow_query_count: slow_queries,
+            health_score,
         });
 
         prev_cpu = extract_system_cpu(snap);
         prev_cgroup_cpu = extract_cgroup_cpu(snap);
         prev_timestamp = Some(snap.timestamp);
+        prev_sample = Some(PrevSample::extract(snap));
     }
     entries
 }
@@ -464,6 +478,7 @@ pub fn build_heatmap_streaming(reader: &super::chunk::ChunkReader) -> Option<Vec
     let mut prev_cpu: Option<SystemCpuInfo> = None;
     let mut prev_cgroup_cpu: Option<CgroupCpuInfo> = None;
     let mut prev_timestamp: Option<i64> = None;
+    let mut prev_sample: Option<PrevSample> = None;
 
     for i in 0..count {
         let snap = match reader.read_snapshot(i) {
@@ -503,6 +518,9 @@ pub fn build_heatmap_streaming(reader: &super::chunk::ChunkReader) -> Option<Vec
         let autovacuums = count_autovacuum_events(&snap);
         let slow_queries = count_slow_query_events(&snap);
 
+        // Health score
+        let health_score = compute_health_score(&snap, prev_sample.as_ref(), delta_time).0;
+
         entries.push(HeatmapEntry {
             active_sessions: active,
             cpu_pct_x10: cpu,
@@ -514,12 +532,14 @@ pub fn build_heatmap_streaming(reader: &super::chunk::ChunkReader) -> Option<Vec
             checkpoint_count: checkpoints,
             autovacuum_count: autovacuums,
             slow_query_count: slow_queries,
+            health_score,
         });
 
         // Keep only small prev state — snapshot is dropped
         prev_cpu = extract_system_cpu(&snap).cloned();
         prev_cgroup_cpu = extract_cgroup_cpu(&snap).cloned();
         prev_timestamp = Some(snap.timestamp);
+        prev_sample = Some(PrevSample::extract(&snap));
     }
 
     Some(entries)
@@ -557,6 +577,7 @@ pub fn bucket_heatmap(
                 checkpoints: 0,
                 autovacuums: 0,
                 slow_queries: 0,
+                health: 100,
             }
         })
         .collect();
@@ -580,6 +601,7 @@ pub fn bucket_heatmap(
         buckets[idx].slow_queries = buckets[idx]
             .slow_queries
             .saturating_add(entry.slow_query_count);
+        buckets[idx].health = buckets[idx].health.min(entry.health_score);
     }
 
     buckets
@@ -603,6 +625,7 @@ mod tests {
                 checkpoint_count: 1,
                 autovacuum_count: 2,
                 slow_query_count: 4,
+                health_score: 85,
             },
             HeatmapEntry {
                 active_sessions: 0,
@@ -615,6 +638,7 @@ mod tests {
                 checkpoint_count: 0,
                 autovacuum_count: 0,
                 slow_query_count: 0,
+                health_score: 100,
             },
             HeatmapEntry {
                 active_sessions: 100,
@@ -627,6 +651,7 @@ mod tests {
                 checkpoint_count: 3,
                 autovacuum_count: 7,
                 slow_query_count: 16,
+                health_score: 30,
             },
         ];
         let dir = std::env::temp_dir().join("rpglot_test_heatmap");
@@ -646,6 +671,7 @@ mod tests {
         assert_eq!(loaded[0].checkpoint_count, 1);
         assert_eq!(loaded[0].autovacuum_count, 2);
         assert_eq!(loaded[0].slow_query_count, 4);
+        assert_eq!(loaded[0].health_score, 85);
         assert_eq!(loaded[2].active_sessions, 100);
         assert_eq!(loaded[2].cpu_pct_x10, 999);
         assert_eq!(loaded[2].cgroup_cpu_pct_x10, 500);
@@ -656,6 +682,7 @@ mod tests {
         assert_eq!(loaded[2].checkpoint_count, 3);
         assert_eq!(loaded[2].autovacuum_count, 7);
         assert_eq!(loaded[2].slow_query_count, 16);
+        assert_eq!(loaded[2].health_score, 30);
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
@@ -677,6 +704,7 @@ mod tests {
                     checkpoint_count: 1,
                     autovacuum_count: 0,
                     slow_query_count: 2,
+                    health_score: 90,
                 },
             ),
             (
@@ -692,6 +720,7 @@ mod tests {
                     checkpoint_count: 0,
                     autovacuum_count: 2,
                     slow_query_count: 1,
+                    health_score: 60,
                 },
             ),
             (
@@ -707,6 +736,7 @@ mod tests {
                     checkpoint_count: 1,
                     autovacuum_count: 3,
                     slow_query_count: 3,
+                    health_score: 40,
                 },
             ),
         ];
@@ -723,7 +753,8 @@ mod tests {
         assert_eq!(buckets[0].checkpoints, 1);
         assert_eq!(buckets[0].autovacuums, 0);
         assert_eq!(buckets[0].slow_queries, 2);
-        // Second bucket [150, 200]: entries at 150 and 200 — max for errors
+        assert_eq!(buckets[0].health, 90);
+        // Second bucket [150, 200]: entries at 150 and 200 — min for health
         assert_eq!(buckets[1].active, 10);
         assert_eq!(buckets[1].cpu, 700);
         assert_eq!(buckets[1].cgroup_cpu, 400);
@@ -734,6 +765,7 @@ mod tests {
         assert_eq!(buckets[1].checkpoints, 1); // 0 + 1
         assert_eq!(buckets[1].autovacuums, 5); // 2 + 3
         assert_eq!(buckets[1].slow_queries, 4); // 1 + 3
+        assert_eq!(buckets[1].health, 40); // min(60, 40)
     }
 
     #[test]

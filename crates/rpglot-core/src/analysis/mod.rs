@@ -912,6 +912,13 @@ impl Analyzer {
         let start_pos = timestamps.partition_point(|&ts| ts < start_ts);
         let end_pos = timestamps.partition_point(|&ts| ts <= end_ts);
 
+        // Pre-load health scores from heatmap (already computed during heatmap build)
+        let heatmap_health: HashMap<i64, u8> = provider
+            .load_heatmap_range(start_ts, end_ts)
+            .into_iter()
+            .map(|(ts, entry)| (ts, entry.health_score))
+            .collect();
+
         let mut ewma = EwmaState::new(0.1);
         let mut prev_sample: Option<PrevSample> = None;
         let mut prev_snap: Option<Snapshot> = None;
@@ -950,9 +957,14 @@ impl Analyzer {
                 anomalies.extend(rule.evaluate(&ctx));
             }
 
+            // Use pre-computed health from heatmap; fallback to recompute if missing
+            let score = heatmap_health
+                .get(&snapshot.timestamp)
+                .copied()
+                .unwrap_or_else(|| compute_health_score(&snapshot, prev_sample.as_ref(), dt).0);
             health_scores.push(HealthPoint {
                 ts: snapshot.timestamp,
-                score: compute_health_score(&snapshot, prev_sample.as_ref(), dt).0,
+                score,
             });
 
             // Extract pg_settings from the first snapshot that has them

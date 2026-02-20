@@ -32,7 +32,7 @@ src/storage/
 ├── storage.md          # Внутренняя документация модуля
 ├── interner.rs         # Дедупликация строк через XXH3 хеширование
 ├── chunk.rs            # Chunk формат RPG3 (zstd + dictionary + index)
-├── heatmap.rs          # Heatmap формат HM03 (timeline sidecar)
+├── heatmap.rs          # Heatmap формат HM04 (timeline sidecar)
 ├── manager.rs          # StorageManager: WAL, chunks, flush, rotation
 └── model/
     ├── mod.rs          # Re-exports всех моделей
@@ -176,18 +176,18 @@ StorageManager::load_wal_snapshot_at(wal_path, offset, length) -> Snapshot
 ```
 Загружает один снапшот по offset/length из scan_wal_metadata.
 
-## Heatmap format (HM03)
+## Heatmap format (HM04)
 
 Sidecar файл `.heatmap` рядом с каждым `.zst` chunk. Позволяет отрисовать timeline без декомпрессии снапшотов.
 
 ```
 +------------------------------------------+
-| magic: "HM03" (4 bytes)                 |
-| entries: [HeatmapEntry] (14 bytes each) |
+| magic: "HM04" (4 bytes)                 |
+| entries: [HeatmapEntry] (15 bytes each) |
 +------------------------------------------+
 ```
 
-### HeatmapEntry (14 bytes, little-endian)
+### HeatmapEntry (15 bytes, little-endian)
 
 | Offset | Тип | Поле | Описание |
 |--------|-----|------|----------|
@@ -201,6 +201,7 @@ Sidecar файл `.heatmap` рядом с каждым `.zst` chunk. Позво�
 | 11 | u8 | checkpoint_count | Checkpoint events |
 | 12 | u8 | autovacuum_count | Autovacuum/autoanalyze events |
 | 13 | u8 | slow_query_count | Slow query events |
+| 14 | u8 | health_score | Health score (0–100, 100 = healthy) |
 
 ### Классификация ошибок по severity
 
@@ -484,7 +485,7 @@ pub struct RotationResult {
 
 При смене формата файлов:
 - Chunk: смена magic (`RPG3` → следующая версия)
-- Heatmap: смена magic (`HM03` → следующая версия). Старые файлы автоматически пересоздаются из снапшотов.
+- Heatmap: смена magic (`HM04` → следующая версия). Старые файлы автоматически пересоздаются из снапшотов.
 
 ## Memory Management
 

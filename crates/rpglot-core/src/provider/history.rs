@@ -887,6 +887,7 @@ impl HistoryProvider {
                                     checkpoint_count: checkpoints,
                                     autovacuum_count: autovacuums,
                                     slow_query_count: slow_queries,
+                                    health_score: 100,
                                 },
                             ));
                         }
@@ -914,6 +915,7 @@ impl HistoryProvider {
                                     checkpoint_count: checkpoints,
                                     autovacuum_count: autovacuums,
                                     slow_query_count: slow_queries,
+                                    health_score: 100,
                                 },
                             ));
                         }
