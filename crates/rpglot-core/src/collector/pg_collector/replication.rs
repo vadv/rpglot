@@ -56,7 +56,7 @@ impl PostgresCollector {
             let replicas = client
                 .query(
                     "SELECT \
-                         coalesce(client_addr::text, '') as client_addr, \
+                         coalesce(host(client_addr)::text, '') as client_addr, \
                          coalesce(application_name, '') as application_name, \
                          coalesce(state, '') as state, \
                          coalesce(sync_state, '') as sync_state, \
@@ -168,6 +168,40 @@ fn parse_host_from_conninfo(conninfo: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Strip CIDR mask suffix (e.g. `/32`, `/128`) from an IP address string.
+    /// Mirror of the function in `convert.rs` — kept here for unit tests.
+    fn strip_cidr_mask(addr: &str) -> &str {
+        match addr.rfind('/') {
+            Some(pos)
+                if addr[pos + 1..].bytes().all(|b| b.is_ascii_digit())
+                    && pos + 1 < addr.len() =>
+            {
+                &addr[..pos]
+            }
+            _ => addr,
+        }
+    }
+
+    #[test]
+    fn test_strip_cidr_ipv4() {
+        assert_eq!(strip_cidr_mask("10.0.0.1/32"), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_strip_cidr_no_mask() {
+        assert_eq!(strip_cidr_mask("10.0.0.1"), "10.0.0.1");
+    }
+
+    #[test]
+    fn test_strip_cidr_ipv6() {
+        assert_eq!(strip_cidr_mask("::1/128"), "::1");
+    }
+
+    #[test]
+    fn test_strip_cidr_empty() {
+        assert_eq!(strip_cidr_mask(""), "");
+    }
 
     #[test]
     fn test_parse_host_unquoted() {

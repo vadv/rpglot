@@ -18,6 +18,18 @@ use crate::storage::model::{
 
 use super::snapshot::*;
 
+/// Strip CIDR mask suffix (e.g. `/32`, `/128`) from an IP address string.
+fn strip_cidr_mask(addr: &str) -> &str {
+    match addr.rfind('/') {
+        Some(pos)
+            if addr[pos + 1..].bytes().all(|b| b.is_ascii_digit()) && pos + 1 < addr.len() =>
+        {
+            &addr[..pos]
+        }
+        _ => addr,
+    }
+}
+
 /// Sum Option<f64> values: returns Some(sum) if at least one is Some, None if all are None.
 fn add_opts(vals: &[Option<f64>]) -> Option<f64> {
     let mut sum = 0.0_f64;
@@ -1976,7 +1988,7 @@ fn extract_replication(snap: &Snapshot) -> Option<ReplicationInfo> {
                     .replicas
                     .iter()
                     .map(|ri| ReplicaDetail {
-                        client_addr: ri.client_addr.clone(),
+                        client_addr: strip_cidr_mask(&ri.client_addr).to_string(),
                         application_name: ri.application_name.clone(),
                         state: ri.state.clone(),
                         sync_state: ri.sync_state.clone(),

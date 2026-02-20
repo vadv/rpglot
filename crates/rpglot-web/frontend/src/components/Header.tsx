@@ -467,6 +467,11 @@ function SessionBadge({ snapshot }: { snapshot: ApiSnapshot }) {
   );
 }
 
+/** Strip CIDR mask suffix (/32, /128) from IP address — safety net for inet::text. */
+function stripCidr(addr: string): string {
+  return addr.replace(/\/\d+$/, "");
+}
+
 function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
   const repl = snapshot.replication;
   if (!repl) return null;
@@ -508,7 +513,7 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
               <>
                 <div className="border-t border-[var(--border-default)] my-1.5" />
                 <a
-                  href={`${window.location.protocol}//${senderHost}:${window.location.port}/`}
+                  href={`${window.location.protocol}//${stripCidr(senderHost)}:${window.location.port}/`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center gap-1.5 text-xs px-1.5 py-1 rounded hover:bg-[var(--bg-hover)] transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)] cursor-pointer"
@@ -559,7 +564,7 @@ function ReplicationBadge({ snapshot }: { snapshot: ApiSnapshot }) {
             <div className="space-y-0.5">
               {repl.replicas.map((r, i) => {
                 const replicaUrl = r.client_addr
-                  ? `${window.location.protocol}//${r.client_addr}:${window.location.port}/`
+                  ? `${window.location.protocol}//${stripCidr(r.client_addr)}:${window.location.port}/`
                   : null;
                 const inner = (
                   <>
