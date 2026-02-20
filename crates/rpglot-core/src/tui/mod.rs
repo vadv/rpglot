@@ -6,6 +6,7 @@
 mod app;
 mod event;
 mod input;
+pub mod navigable;
 mod render;
 pub(crate) mod state;
 pub(crate) mod style;

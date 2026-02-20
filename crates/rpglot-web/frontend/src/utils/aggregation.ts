@@ -8,64 +8,71 @@ import type {
 } from "../api/types";
 
 // ============================================================
+// Column definition helpers — reduce boilerplate for ColumnSchema arrays
+// ============================================================
+
+const col = (
+  key: string,
+  label: string,
+  opts?: Partial<ColumnSchema>,
+): ColumnSchema => ({
+  key,
+  label,
+  type: "number" as DataType,
+  sortable: true,
+  ...opts,
+});
+
+const strCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, { type: "string" as DataType, filterable: true });
+
+const intCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, { type: "integer" as DataType });
+
+const pctCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, {
+    unit: "percent" as Unit,
+    format: "percent" as Format,
+  });
+
+const rateCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, {
+    unit: "per_sec" as Unit,
+    format: "rate" as Format,
+  });
+
+const bytesCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, {
+    type: "integer" as DataType,
+    unit: "bytes" as Unit,
+    format: "bytes" as Format,
+  });
+
+const blksCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, {
+    unit: "blks/s" as Unit,
+    format: "bytes" as Format,
+  });
+
+const durationCol = (key: string, label: string): ColumnSchema =>
+  col(key, label, {
+    unit: "ms" as Unit,
+    format: "duration" as Format,
+  });
+
+// ============================================================
 // PGP Regression view — detect plan regressions per query
 // ============================================================
 
 export const PGP_REGRESSION_COLUMNS: ColumnSchema[] = [
-  {
-    key: "stmt_queryid",
-    label: "Query ID",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "time_ratio",
-    label: "Ratio",
-    type: "number" as DataType,
-    sortable: true,
-  },
-  {
-    key: "mean_time_ms",
-    label: "Mean Time",
-    type: "number" as DataType,
-    unit: "ms" as Unit,
-    format: "duration" as Format,
-    sortable: true,
-  },
-  {
-    key: "calls_s",
-    label: "Calls/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "first_call",
-    label: "First Call",
-    type: "string" as DataType,
-    sortable: true,
-  },
-  {
-    key: "last_call",
-    label: "Last Call",
-    type: "string" as DataType,
-    sortable: true,
-  },
-  {
-    key: "database",
-    label: "Database",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "plan",
-    label: "Plan",
-    type: "string" as DataType,
-    sortable: false,
-  },
+  strCol("stmt_queryid", "Query ID"),
+  col("time_ratio", "Ratio"),
+  durationCol("mean_time_ms", "Mean Time"),
+  rateCol("calls_s", "Calls/s"),
+  strCol("first_call", "First Call"),
+  strCol("last_call", "Last Call"),
+  strCol("database", "Database"),
+  col("plan", "Plan", { type: "string" as DataType, sortable: false }),
 ];
 
 /**
@@ -151,127 +158,22 @@ export const SCHEMA_VIEW: ViewSchema = {
 };
 
 export const SCHEMA_COLUMNS: ColumnSchema[] = [
-  {
-    key: "schema",
-    label: "Schema",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "tables",
-    label: "Tables",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "size_bytes",
-    label: "Size",
-    type: "integer" as DataType,
-    unit: "bytes" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "n_live_tup",
-    label: "Live Tuples",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "n_dead_tup",
-    label: "Dead Tuples",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "dead_pct",
-    label: "DEAD%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "seq_scan_s",
-    label: "Seq/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_scan_s",
-    label: "Idx/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "seq_pct",
-    label: "SEQ%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "tup_read_s",
-    label: "Tup Rd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "ins_s",
-    label: "Ins/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "upd_s",
-    label: "Upd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "del_s",
-    label: "Del/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_rd_s",
-    label: "Disk Read/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_hit_s",
-    label: "Buf Hit/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "io_hit_pct",
-    label: "HIT%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
+  strCol("schema", "Schema"),
+  intCol("tables", "Tables"),
+  bytesCol("size_bytes", "Size"),
+  intCol("n_live_tup", "Live Tuples"),
+  intCol("n_dead_tup", "Dead Tuples"),
+  pctCol("dead_pct", "DEAD%"),
+  rateCol("seq_scan_s", "Seq/s"),
+  rateCol("idx_scan_s", "Idx/s"),
+  pctCol("seq_pct", "SEQ%"),
+  rateCol("tup_read_s", "Tup Rd/s"),
+  rateCol("ins_s", "Ins/s"),
+  rateCol("upd_s", "Upd/s"),
+  rateCol("del_s", "Del/s"),
+  blksCol("blk_rd_s", "Disk Read/s"),
+  blksCol("blk_hit_s", "Buf Hit/s"),
+  pctCol("io_hit_pct", "HIT%"),
 ];
 
 /** Aggregate PGT rows by a grouping field (schema or database) */
@@ -401,127 +303,22 @@ export const DATABASE_VIEW: ViewSchema = {
 };
 
 export const DATABASE_COLUMNS: ColumnSchema[] = [
-  {
-    key: "database",
-    label: "Database",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "tables",
-    label: "Tables",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "size_bytes",
-    label: "Size",
-    type: "integer" as DataType,
-    unit: "bytes" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "n_live_tup",
-    label: "Live Tuples",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "n_dead_tup",
-    label: "Dead Tuples",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "dead_pct",
-    label: "DEAD%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "seq_scan_s",
-    label: "Seq/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_scan_s",
-    label: "Idx/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "seq_pct",
-    label: "SEQ%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "tup_read_s",
-    label: "Tup Rd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "ins_s",
-    label: "Ins/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "upd_s",
-    label: "Upd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "del_s",
-    label: "Del/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_rd_s",
-    label: "Disk Read/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_hit_s",
-    label: "Buf Hit/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "io_hit_pct",
-    label: "HIT%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
+  strCol("database", "Database"),
+  intCol("tables", "Tables"),
+  bytesCol("size_bytes", "Size"),
+  intCol("n_live_tup", "Live Tuples"),
+  intCol("n_dead_tup", "Dead Tuples"),
+  pctCol("dead_pct", "DEAD%"),
+  rateCol("seq_scan_s", "Seq/s"),
+  rateCol("idx_scan_s", "Idx/s"),
+  pctCol("seq_pct", "SEQ%"),
+  rateCol("tup_read_s", "Tup Rd/s"),
+  rateCol("ins_s", "Ins/s"),
+  rateCol("upd_s", "Upd/s"),
+  rateCol("del_s", "Del/s"),
+  blksCol("blk_rd_s", "Disk Read/s"),
+  blksCol("blk_hit_s", "Buf Hit/s"),
+  pctCol("io_hit_pct", "HIT%"),
 ];
 
 // ============================================================
@@ -555,127 +352,22 @@ export const TABLESPACE_VIEW: ViewSchema = {
 };
 
 export const TABLESPACE_COLUMNS: ColumnSchema[] = [
-  {
-    key: "tablespace",
-    label: "Tablespace",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "tables",
-    label: "Tables",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "size_bytes",
-    label: "Size",
-    type: "integer" as DataType,
-    unit: "bytes" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "n_live_tup",
-    label: "Live Tuples",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "n_dead_tup",
-    label: "Dead Tuples",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "dead_pct",
-    label: "DEAD%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "seq_scan_s",
-    label: "Seq/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_scan_s",
-    label: "Idx/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "seq_pct",
-    label: "SEQ%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "tup_read_s",
-    label: "Tup Rd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "ins_s",
-    label: "Ins/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "upd_s",
-    label: "Upd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "del_s",
-    label: "Del/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_rd_s",
-    label: "Disk Read/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_hit_s",
-    label: "Buf Hit/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "io_hit_pct",
-    label: "HIT%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
+  strCol("tablespace", "Tablespace"),
+  intCol("tables", "Tables"),
+  bytesCol("size_bytes", "Size"),
+  intCol("n_live_tup", "Live Tuples"),
+  intCol("n_dead_tup", "Dead Tuples"),
+  pctCol("dead_pct", "DEAD%"),
+  rateCol("seq_scan_s", "Seq/s"),
+  rateCol("idx_scan_s", "Idx/s"),
+  pctCol("seq_pct", "SEQ%"),
+  rateCol("tup_read_s", "Tup Rd/s"),
+  rateCol("ins_s", "Ins/s"),
+  rateCol("upd_s", "Upd/s"),
+  rateCol("del_s", "Del/s"),
+  blksCol("blk_rd_s", "Disk Read/s"),
+  blksCol("blk_hit_s", "Buf Hit/s"),
+  pctCol("io_hit_pct", "HIT%"),
 ];
 
 // ============================================================
@@ -704,87 +396,17 @@ export const PGI_SCHEMA_VIEW: ViewSchema = {
 };
 
 export const PGI_SCHEMA_COLUMNS: ColumnSchema[] = [
-  {
-    key: "schema",
-    label: "Schema",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "indexes",
-    label: "Indexes",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "tables",
-    label: "Tables",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "size_bytes",
-    label: "Size",
-    type: "integer" as DataType,
-    unit: "bytes" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_scan_s",
-    label: "Scan/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_tup_read_s",
-    label: "Tup Rd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_tup_fetch_s",
-    label: "Tup Ft/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_rd_s",
-    label: "Disk Read/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_hit_s",
-    label: "Buf Hit/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "io_hit_pct",
-    label: "HIT%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "unused",
-    label: "Unused",
-    type: "integer" as DataType,
-    sortable: true,
-  },
+  strCol("schema", "Schema"),
+  intCol("indexes", "Indexes"),
+  intCol("tables", "Tables"),
+  bytesCol("size_bytes", "Size"),
+  rateCol("idx_scan_s", "Scan/s"),
+  rateCol("idx_tup_read_s", "Tup Rd/s"),
+  rateCol("idx_tup_fetch_s", "Tup Ft/s"),
+  blksCol("blk_rd_s", "Disk Read/s"),
+  blksCol("blk_hit_s", "Buf Hit/s"),
+  pctCol("io_hit_pct", "HIT%"),
+  intCol("unused", "Unused"),
 ];
 
 /** Aggregate PGI rows by a grouping field (schema or database) */
@@ -882,87 +504,17 @@ export const PGI_DATABASE_VIEW: ViewSchema = {
 };
 
 export const PGI_DATABASE_COLUMNS: ColumnSchema[] = [
-  {
-    key: "database",
-    label: "Database",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "indexes",
-    label: "Indexes",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "tables",
-    label: "Tables",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "size_bytes",
-    label: "Size",
-    type: "integer" as DataType,
-    unit: "bytes" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_scan_s",
-    label: "Scan/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_tup_read_s",
-    label: "Tup Rd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_tup_fetch_s",
-    label: "Tup Ft/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_rd_s",
-    label: "Disk Read/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_hit_s",
-    label: "Buf Hit/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "io_hit_pct",
-    label: "HIT%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "unused",
-    label: "Unused",
-    type: "integer" as DataType,
-    sortable: true,
-  },
+  strCol("database", "Database"),
+  intCol("indexes", "Indexes"),
+  intCol("tables", "Tables"),
+  bytesCol("size_bytes", "Size"),
+  rateCol("idx_scan_s", "Scan/s"),
+  rateCol("idx_tup_read_s", "Tup Rd/s"),
+  rateCol("idx_tup_fetch_s", "Tup Ft/s"),
+  blksCol("blk_rd_s", "Disk Read/s"),
+  blksCol("blk_hit_s", "Buf Hit/s"),
+  pctCol("io_hit_pct", "HIT%"),
+  intCol("unused", "Unused"),
 ];
 
 // ============================================================
@@ -991,85 +543,15 @@ export const PGI_TABLESPACE_VIEW: ViewSchema = {
 };
 
 export const PGI_TABLESPACE_COLUMNS: ColumnSchema[] = [
-  {
-    key: "tablespace",
-    label: "Tablespace",
-    type: "string" as DataType,
-    sortable: true,
-    filterable: true,
-  },
-  {
-    key: "indexes",
-    label: "Indexes",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "tables",
-    label: "Tables",
-    type: "integer" as DataType,
-    sortable: true,
-  },
-  {
-    key: "size_bytes",
-    label: "Size",
-    type: "integer" as DataType,
-    unit: "bytes" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_scan_s",
-    label: "Scan/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_tup_read_s",
-    label: "Tup Rd/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "idx_tup_fetch_s",
-    label: "Tup Ft/s",
-    type: "number" as DataType,
-    unit: "per_sec" as Unit,
-    format: "rate" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_rd_s",
-    label: "Disk Read/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "blk_hit_s",
-    label: "Buf Hit/s",
-    type: "number" as DataType,
-    unit: "blks/s" as Unit,
-    format: "bytes" as Format,
-    sortable: true,
-  },
-  {
-    key: "io_hit_pct",
-    label: "HIT%",
-    type: "number" as DataType,
-    unit: "percent" as Unit,
-    format: "percent" as Format,
-    sortable: true,
-  },
-  {
-    key: "unused",
-    label: "Unused",
-    type: "integer" as DataType,
-    sortable: true,
-  },
+  strCol("tablespace", "Tablespace"),
+  intCol("indexes", "Indexes"),
+  intCol("tables", "Tables"),
+  bytesCol("size_bytes", "Size"),
+  rateCol("idx_scan_s", "Scan/s"),
+  rateCol("idx_tup_read_s", "Tup Rd/s"),
+  rateCol("idx_tup_fetch_s", "Tup Ft/s"),
+  blksCol("blk_rd_s", "Disk Read/s"),
+  blksCol("blk_hit_s", "Buf Hit/s"),
+  pctCol("io_hit_pct", "HIT%"),
+  intCol("unused", "Unused"),
 ];

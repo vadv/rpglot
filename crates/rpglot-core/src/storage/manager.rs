@@ -2,6 +2,7 @@ use crate::storage::interner::StringInterner;
 use crate::storage::model::{DataBlock, Snapshot};
 use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use std::collections::HashSet;
+use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -11,6 +12,40 @@ use tracing::warn;
 const WAL_FRAME_HEADER_SIZE: usize = 8;
 /// Sanity limit for a single WAL entry (256 MB).
 const MAX_WAL_ENTRY_SIZE: u32 = 256 * 1024 * 1024;
+
+/// Errors that can occur when reading a single WAL frame.
+enum WalFrameError {
+    /// Not enough bytes for frame header.
+    TruncatedHeader,
+    /// Frame length exceeds sanity limit.
+    FrameTooLarge(u32),
+    /// Payload is shorter than declared length.
+    TruncatedPayload { need: u32, have: usize },
+    /// CRC32 checksum mismatch.
+    CrcMismatch { expected: u32, actual: u32 },
+    /// Postcard deserialization failed.
+    DeserializationFailed(String),
+}
+
+impl fmt::Display for WalFrameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::TruncatedHeader => write!(f, "truncated frame header"),
+            Self::FrameTooLarge(len) => write!(f, "frame length {} exceeds limit", len),
+            Self::TruncatedPayload { need, have } => {
+                write!(f, "truncated payload: need {} bytes, have {}", need, have)
+            }
+            Self::CrcMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "CRC mismatch: expected {:#010x}, got {:#010x}",
+                    expected, actual
+                )
+            }
+            Self::DeserializationFailed(msg) => write!(f, "deserialization failed: {}", msg),
+        }
+    }
+}
 
 /// Configuration for automatic data rotation.
 #[derive(Debug, Clone)]
@@ -97,7 +132,6 @@ impl StorageManager {
 
     /// Recovers WAL state on startup.
     /// Counts valid entries and truncates any corrupted data at the end.
-    /// WAL frame format: [u32 LE length][u32 LE crc32][payload]
     fn recover_from_wal(&mut self) {
         let wal_path = self.base_path.join("wal.log");
 
@@ -115,52 +149,22 @@ impl StorageManager {
         let mut pos = 0usize;
         let mut valid_end_position = 0usize;
         let mut recovered_count = 0usize;
-        let mut last_error: Option<String> = None;
+        let mut last_error: Option<WalFrameError> = None;
 
         // Count valid WAL entries and find valid end position
         loop {
-            if pos + WAL_FRAME_HEADER_SIZE > data.len() {
-                if pos < data.len() {
-                    last_error = Some("truncated frame header".into());
-                }
-                break;
-            }
-            let length = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
-            let expected_crc = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap());
-
-            if length > MAX_WAL_ENTRY_SIZE {
-                last_error = Some(format!("frame length {} exceeds limit", length));
-                break;
-            }
-
-            let payload_end = pos + WAL_FRAME_HEADER_SIZE + length as usize;
-            if payload_end > data.len() {
-                last_error = Some(format!(
-                    "truncated payload: need {} bytes, have {}",
-                    length,
-                    data.len() - pos - WAL_FRAME_HEADER_SIZE
-                ));
-                break;
-            }
-
-            let payload = &data[pos + WAL_FRAME_HEADER_SIZE..payload_end];
-            let actual_crc = crc32fast::hash(payload);
-            if actual_crc != expected_crc {
-                last_error = Some(format!(
-                    "CRC mismatch: expected {:#010x}, got {:#010x}",
-                    expected_crc, actual_crc
-                ));
-                break;
-            }
-
-            match postcard::from_bytes::<WalEntry>(payload) {
-                Ok(_entry) => {
-                    pos = payload_end;
+            match Self::read_wal_frame_validated(&data, pos) {
+                Ok((_entry, next_pos)) => {
+                    pos = next_pos;
                     valid_end_position = pos;
                     recovered_count += 1;
                 }
+                Err(WalFrameError::TruncatedHeader) if pos == data.len() => {
+                    // Exact end of file — not an error
+                    break;
+                }
                 Err(e) => {
-                    last_error = Some(format!("deserialization failed: {}", e));
+                    last_error = Some(e);
                     break;
                 }
             }
@@ -306,7 +310,22 @@ impl StorageManager {
                         hashes.insert(e.statement_hash);
                     }
                 }
-                _ => {}
+                // Variants without string hashes — listed explicitly so the
+                // compiler forces us to handle new variants.
+                DataBlock::PgStatBgwriter(_)
+                | DataBlock::SystemCpu(_)
+                | DataBlock::SystemLoad(_)
+                | DataBlock::SystemMem(_)
+                | DataBlock::SystemPsi(_)
+                | DataBlock::SystemVmstat(_)
+                | DataBlock::SystemFile(_)
+                | DataBlock::SystemStat(_)
+                | DataBlock::SystemNetSnmp(_)
+                | DataBlock::Cgroup(_)
+                | DataBlock::PgLogEvents(_)
+                | DataBlock::PgLogDetailedEvents(_)
+                | DataBlock::PgSettings(_)
+                | DataBlock::ReplicationStatus(_) => {}
             }
         }
         hashes
@@ -315,44 +334,7 @@ impl StorageManager {
     /// Adds a snapshot to storage with hourly segmentation.
     /// Returns true if a chunk was flushed (hour boundary crossed or size limit reached).
     pub fn add_snapshot(&mut self, snapshot: Snapshot, interner: &StringInterner) -> bool {
-        // Check if hour changed and flush if needed
-        let now = Utc::now();
-        let current_hour = now.hour();
-        let current_date = now.date_naive();
-        let mut flushed = false;
-
-        if let (Some(prev_hour), Some(prev_date)) = (self.current_hour, self.current_date)
-            && (prev_hour != current_hour || prev_date != current_date)
-            && self.wal_entries_count > 0
-        {
-            // Hour changed, flush the current chunk
-            let _ = self.flush_chunk_with_time(prev_date, prev_hour);
-            flushed = true;
-        }
-
-        // Update current hour/date tracking
-        self.current_hour = Some(current_hour);
-        self.current_date = Some(current_date);
-
-        // Create minimal interner for this WAL entry (only hashes used in this snapshot)
-        let used_hashes = Self::collect_snapshot_hashes(&snapshot);
-        let wal_interner = interner.filter(&used_hashes);
-
-        // Write to WAL for SIGKILL resilience (framed: length + crc32 + postcard)
-        let wal_entry = WalEntry {
-            snapshot,
-            interner: wal_interner,
-        };
-        Self::write_wal_frame(&mut self.wal_file, &wal_entry);
-        self.wal_entries_count += 1;
-
-        // Check if size limit reached
-        if self.wal_entries_count >= self.chunk_size_limit {
-            let _ = self.flush_chunk();
-            flushed = true;
-        }
-
-        flushed
+        self.add_snapshot_at(snapshot, Utc::now(), interner)
     }
 
     /// Adds a snapshot with a specific timestamp (for testing or replay).
@@ -568,32 +550,47 @@ impl StorageManager {
         Ok((snapshots, merged_interner))
     }
 
-    /// Reads a single WAL frame from `data` at `pos`.
-    /// Returns `Some((entry, next_pos))` on success, `None` on any error.
-    fn read_wal_frame(data: &[u8], pos: usize) -> Option<(WalEntry, usize)> {
+    /// Reads a single WAL frame from `data` at `pos` with detailed error reporting.
+    fn read_wal_frame_validated(
+        data: &[u8],
+        pos: usize,
+    ) -> Result<(WalEntry, usize), WalFrameError> {
         if pos + WAL_FRAME_HEADER_SIZE > data.len() {
-            return None;
+            return Err(WalFrameError::TruncatedHeader);
         }
         let length = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap());
         let expected_crc = u32::from_le_bytes(data[pos + 4..pos + 8].try_into().unwrap());
 
         if length > MAX_WAL_ENTRY_SIZE {
-            return None;
+            return Err(WalFrameError::FrameTooLarge(length));
         }
 
         let payload_end = pos + WAL_FRAME_HEADER_SIZE + length as usize;
         if payload_end > data.len() {
-            return None;
+            return Err(WalFrameError::TruncatedPayload {
+                need: length,
+                have: data.len() - pos - WAL_FRAME_HEADER_SIZE,
+            });
         }
 
         let payload = &data[pos + WAL_FRAME_HEADER_SIZE..payload_end];
         let actual_crc = crc32fast::hash(payload);
         if actual_crc != expected_crc {
-            return None;
+            return Err(WalFrameError::CrcMismatch {
+                expected: expected_crc,
+                actual: actual_crc,
+            });
         }
 
-        let entry: WalEntry = postcard::from_bytes(payload).ok()?;
-        Some((entry, payload_end))
+        let entry: WalEntry = postcard::from_bytes(payload)
+            .map_err(|e| WalFrameError::DeserializationFailed(e.to_string()))?;
+        Ok((entry, payload_end))
+    }
+
+    /// Reads a single WAL frame from `data` at `pos`.
+    /// Returns `Some((entry, next_pos))` on success, `None` on any error.
+    fn read_wal_frame(data: &[u8], pos: usize) -> Option<(WalEntry, usize)> {
+        Self::read_wal_frame_validated(data, pos).ok()
     }
 
     /// Scans WAL file and returns entry metadata (byte_offset, frame_length, timestamp)

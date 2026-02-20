@@ -367,7 +367,7 @@ fn build_store_plans_view(
         .iter()
         .map(|p| {
             let mut row = PgStorePlansRowData::from_plan(p, interner);
-            if let Some(r) = state.rates.get(&p.planid) {
+            if let Some(r) = state.rate_state.rates.get(&p.planid) {
                 row.calls_s = r.calls_s;
                 row.rows_s = r.rows_s;
                 row.exec_time_ms_s = r.exec_time_ms_s;
@@ -442,8 +442,11 @@ fn build_store_plans_view(
 
     // Build sample info
     let sample_info = state
-        .dt_secs
-        .map(|dt| format!("[dt={:.0}s]", dt))
+        .rate_state
+        .rates
+        .values()
+        .next()
+        .map(|r| format!("[dt={:.0}s]", r.dt_secs))
         .unwrap_or_default();
 
     let title = if let Some(filter) = &state.filter {

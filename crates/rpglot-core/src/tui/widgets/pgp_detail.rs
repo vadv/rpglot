@@ -175,8 +175,8 @@ pub fn render_pgp_detail(
         return;
     };
 
-    let rates = state.pgp.rates.get(&planid);
-    let prev_plan = state.pgp.delta_base.get(&planid);
+    let rates = state.pgp.rate_state.rates.get(&planid);
+    let prev_plan = state.pgp.rate_state.prev_sample.get(&planid);
 
     // Find the parent query from pg_stat_statements for cross-reference
     let parent_query = find_statement(snapshot, plan.stmt_queryid);

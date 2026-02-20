@@ -87,7 +87,7 @@ pub fn render_pgi_detail(
         return;
     };
 
-    let prev = state.pgi.delta_base.get(&indexrelid);
+    let prev = state.pgi.rate_state.prev_sample.get(&indexrelid);
     let content = build_content(idx, prev, interner, show_help);
 
     let scroll = match &mut state.popup {

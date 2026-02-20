@@ -334,7 +334,7 @@ pub fn build_tables_view(
         .iter()
         .map(|t| {
             let mut row = PgTablesRowData::from_table(t, interner);
-            if let Some(r) = state.rates.get(&t.relid) {
+            if let Some(r) = state.rate_state.rates.get(&t.relid) {
                 row.seq_scan_s = r.seq_scan_s;
                 row.seq_tup_read_s = r.seq_tup_read_s;
                 row.idx_scan_s = r.idx_scan_s;
@@ -412,7 +412,8 @@ pub fn build_tables_view(
         })
         .collect();
 
-    let sample_info = match state.dt_secs {
+    let dt_secs = state.rate_state.rates.values().next().map(|r| r.dt_secs);
+    let sample_info = match dt_secs {
         Some(dt) => format!("[dt={:.0}s]", dt),
         None => String::new(),
     };

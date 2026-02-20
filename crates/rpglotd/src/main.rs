@@ -40,6 +40,7 @@ use rpglot_core::collector::RealFs;
 #[cfg(not(target_os = "linux"))]
 use rpglot_core::collector::mock::MockFs;
 use rpglot_core::collector::{Collector, PostgresCollector};
+use rpglot_core::fmt::{FmtStyle, format_bytes};
 use rpglot_core::storage::model::DataBlock;
 use rpglot_core::storage::{RotationConfig, StorageManager};
 use rpglot_core::util::is_container;
@@ -117,23 +118,6 @@ fn parse_size(s: &str) -> Result<u64, String> {
         .map_err(|e| format!("invalid size '{}': {}", s, e))
 }
 
-/// Formats bytes as human-readable size string.
-fn format_size(bytes: u64) -> String {
-    const GB: u64 = 1024 * 1024 * 1024;
-    const MB: u64 = 1024 * 1024;
-    const KB: u64 = 1024;
-
-    if bytes >= GB {
-        format!("{:.1}G", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
-        format!("{:.1}M", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
-        format!("{:.1}K", bytes as f64 / KB as f64)
-    } else {
-        format!("{}B", bytes)
-    }
-}
-
 /// Initializes the tracing subscriber with the appropriate log level.
 /// Default level is INFO (equivalent to -v). Use -q for quiet mode (errors only).
 fn init_logging(verbose: u8, quiet: bool) {
@@ -180,7 +164,32 @@ fn describe_snapshot(snapshot: &rpglot_core::storage::Snapshot) -> String {
             DataBlock::PgLogDetailedEvents(evts) if !evts.is_empty() => {
                 parts.push(format!("{} log_events", evts.len()));
             }
-            _ => {}
+            DataBlock::PgLockTree(nodes) => parts.push(format!("{} lock_nodes", nodes.len())),
+            DataBlock::PgStatProgressVacuum(v) if !v.is_empty() => {
+                parts.push(format!("{} vacuums", v.len()))
+            }
+            DataBlock::PgSettings(s) if !s.is_empty() => {
+                parts.push(format!("{} settings", s.len()))
+            }
+            DataBlock::ReplicationStatus(_) => parts.push("replication".to_string()),
+            DataBlock::SystemCpu(c) => parts.push(format!("{} cpus", c.len())),
+            DataBlock::SystemLoad(_) => parts.push("load".to_string()),
+            DataBlock::SystemMem(_) => parts.push("mem".to_string()),
+            DataBlock::SystemPsi(_) => parts.push("psi".to_string()),
+            DataBlock::SystemVmstat(_) => parts.push("vmstat".to_string()),
+            DataBlock::SystemFile(_) => parts.push("file".to_string()),
+            DataBlock::SystemInterrupts(i) => parts.push(format!("{} irqs", i.len())),
+            DataBlock::SystemSoftirqs(s) => parts.push(format!("{} softirqs", s.len())),
+            DataBlock::SystemStat(_) => parts.push("stat".to_string()),
+            DataBlock::SystemNetSnmp(_) => parts.push("netsnmp".to_string()),
+            DataBlock::Cgroup(_) => parts.push("cgroup".to_string()),
+            DataBlock::PgLogEvents(_) => parts.push("log_events_counts".to_string()),
+            // Empty guards for PgLogErrors/PgLogDetailedEvents/PgStatProgressVacuum/PgSettings
+            // fall through here (guard `if !is_empty()` didn't match).
+            DataBlock::PgLogErrors(_)
+            | DataBlock::PgLogDetailedEvents(_)
+            | DataBlock::PgStatProgressVacuum(_)
+            | DataBlock::PgSettings(_) => {}
         }
     }
 
@@ -202,7 +211,7 @@ fn main() {
     );
     info!(
         "Rotation policy: max_size={}, max_days={}",
-        format_size(args.max_size),
+        format_bytes(args.max_size, FmtStyle::Compact),
         args.max_days
     );
 
@@ -304,13 +313,13 @@ fn main() {
                     "Initial rotation: removed {} by age, {} by size, freed {}",
                     result.files_removed_by_age,
                     result.files_removed_by_size,
-                    format_size(result.bytes_freed)
+                    format_bytes(result.bytes_freed, FmtStyle::Compact)
                 );
             }
             info!(
                 "Storage status: {} files, {}",
                 result.files_remaining,
-                format_size(result.total_size_after)
+                format_bytes(result.total_size_after, FmtStyle::Compact)
             );
         }
         Err(e) => {
@@ -335,7 +344,7 @@ fn main() {
                     "Snapshot #{}: {} ({})",
                     snapshot_count,
                     description,
-                    format_size(serialized_size as u64)
+                    format_bytes(serialized_size as u64, FmtStyle::Compact)
                 );
 
                 // Log PostgreSQL error if any
@@ -382,9 +391,9 @@ fn main() {
                             "Rotation: removed {} by age, {} by size, freed {}, {} files remaining ({})",
                             result.files_removed_by_age,
                             result.files_removed_by_size,
-                            format_size(result.bytes_freed),
+                            format_bytes(result.bytes_freed, FmtStyle::Compact),
                             result.files_remaining,
-                            format_size(result.total_size_after)
+                            format_bytes(result.total_size_after, FmtStyle::Compact)
                         );
                     }
                 }

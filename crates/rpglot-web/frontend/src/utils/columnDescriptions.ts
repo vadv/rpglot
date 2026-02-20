@@ -10,7 +10,7 @@ const EXTRA_DESCRIPTIONS: Record<string, string> = {
   // === PRC (OS Processes) ===
   ppid: "Parent process ID",
   name: "Process name (comm)",
-  vsize_kb: "Virtual memory size (total address space)",
+
   rsize_kb: "Resident set size (physical memory used)",
   vgrow_kb: "Virtual memory growth since last sample",
   rgrow_kb: "Resident memory growth since last sample",
@@ -39,7 +39,7 @@ const EXTRA_DESCRIPTIONS: Record<string, string> = {
   priority: "Scheduling priority",
   rtprio: "Real-time scheduling priority",
   policy: "Scheduling policy (0=normal, 1=FIFO, 2=RR)",
-  blkdelay: "Block I/O delay (ticks)",
+
   minflt: "Minor page faults (no disk I/O)",
   majflt: "Major page faults (required disk I/O)",
   tty: "Terminal device number",

@@ -2,6 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::navigable::NavigableTable;
 use super::state::{AppState, InputMode, PopupState, ProcessViewMode, Tab};
 
 /// Result of handling a key event.
@@ -69,62 +70,26 @@ fn dispatch_navigation(state: &mut AppState, action: NavAction) {
                     }
                 }
             },
-            Tab::PostgresActive => match action {
-                NavAction::Up => state.pga.select_up(),
-                NavAction::Down => state.pga.select_down(),
-                NavAction::PageUp(n) => state.pga.page_up(n),
-                NavAction::PageDown(n) => state.pga.page_down(n),
-                NavAction::Home => state.pga.home(),
-                NavAction::End => state.pga.end(),
-            },
-            Tab::PgStatements => match action {
-                NavAction::Up => state.pgs.select_up(),
-                NavAction::Down => state.pgs.select_down(),
-                NavAction::PageUp(n) => state.pgs.page_up(n),
-                NavAction::PageDown(n) => state.pgs.page_down(n),
-                NavAction::Home => state.pgs.home(),
-                NavAction::End => state.pgs.end(),
-            },
-            Tab::PgStorePlans => match action {
-                NavAction::Up => state.pgp.select_up(),
-                NavAction::Down => state.pgp.select_down(),
-                NavAction::PageUp(n) => state.pgp.page_up(n),
-                NavAction::PageDown(n) => state.pgp.page_down(n),
-                NavAction::Home => state.pgp.home(),
-                NavAction::End => state.pgp.end(),
-            },
-            Tab::PgTables => match action {
-                NavAction::Up => state.pgt.select_up(),
-                NavAction::Down => state.pgt.select_down(),
-                NavAction::PageUp(n) => state.pgt.page_up(n),
-                NavAction::PageDown(n) => state.pgt.page_down(n),
-                NavAction::Home => state.pgt.home(),
-                NavAction::End => state.pgt.end(),
-            },
-            Tab::PgIndexes => match action {
-                NavAction::Up => state.pgi.select_up(),
-                NavAction::Down => state.pgi.select_down(),
-                NavAction::PageUp(n) => state.pgi.page_up(n),
-                NavAction::PageDown(n) => state.pgi.page_down(n),
-                NavAction::Home => state.pgi.home(),
-                NavAction::End => state.pgi.end(),
-            },
-            Tab::PgErrors => match action {
-                NavAction::Up => state.pge.select_up(),
-                NavAction::Down => state.pge.select_down(),
-                NavAction::PageUp(n) => state.pge.page_up(n),
-                NavAction::PageDown(n) => state.pge.page_down(n),
-                NavAction::Home => state.pge.home(),
-                NavAction::End => state.pge.end(),
-            },
-            Tab::PgLocks => match action {
-                NavAction::Up => state.pgl.select_up(),
-                NavAction::Down => state.pgl.select_down(),
-                NavAction::PageUp(n) => state.pgl.page_up(n),
-                NavAction::PageDown(n) => state.pgl.page_down(n),
-                NavAction::Home => state.pgl.home(),
-                NavAction::End => state.pgl.end(),
-            },
+            _ => {
+                let nav: &mut dyn NavigableTable = match state.current_tab {
+                    Tab::PostgresActive => &mut state.pga,
+                    Tab::PgStatements => &mut state.pgs,
+                    Tab::PgStorePlans => &mut state.pgp,
+                    Tab::PgTables => &mut state.pgt,
+                    Tab::PgIndexes => &mut state.pgi,
+                    Tab::PgErrors => &mut state.pge,
+                    Tab::PgLocks => &mut state.pgl,
+                    Tab::Processes => unreachable!(),
+                };
+                match action {
+                    NavAction::Up => nav.select_up(),
+                    NavAction::Down => nav.select_down(),
+                    NavAction::PageUp(n) => nav.page_up(n),
+                    NavAction::PageDown(n) => nav.page_down(n),
+                    NavAction::Home => nav.home(),
+                    NavAction::End => nav.end(),
+                }
+            }
         },
     }
 }

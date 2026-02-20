@@ -283,6 +283,7 @@ export interface PgStatementsRow {
   wal_records: number;
   wal_bytes: number;
   total_exec_time: number;
+  stale?: boolean;
 }
 
 export interface PgStorePlansRow {
@@ -311,6 +312,7 @@ export interface PgStorePlansRow {
   temp_blks_written_s: number | null;
   rows_per_call: number | null;
   hit_pct: number | null;
+  stale?: boolean;
 }
 
 export interface PgTablesRow {

@@ -189,16 +189,16 @@ impl App {
         self.state.prev_total_cpu_time = Some(current_total_cpu_time);
 
         // Update pg_stat_statements rates cache (used by PGS tab).
-        self.state.pgs.update_rates_from_snapshot(&snapshot);
+        crate::rates::update_pgs_rates(&mut self.state.pgs.rate_state, &snapshot);
 
         // Update pg_store_plans rates cache (used by PGP tab).
-        self.state.pgp.update_rates_from_snapshot(&snapshot);
+        crate::rates::update_pgp_rates(&mut self.state.pgp.rate_state, &snapshot);
 
         // Update pg_stat_user_tables rates cache (used by PGT tab).
-        self.state.pgt.update_rates_from_snapshot(&snapshot);
+        crate::rates::update_pgt_rates(&mut self.state.pgt.rate_state, &snapshot);
 
         // Update pg_stat_user_indexes rates cache (used by PGI tab).
-        self.state.pgi.update_rates_from_snapshot(&snapshot);
+        crate::rates::update_pgi_rates(&mut self.state.pgi.rate_state, &snapshot);
 
         // Accumulate PostgreSQL log errors (used by PGE tab).
         self.state.pge.accumulate_from_snapshot(&snapshot);

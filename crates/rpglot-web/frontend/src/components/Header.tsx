@@ -28,7 +28,8 @@ import {
   dateToEpochInTz,
 } from "../utils/formatters";
 import type { TimezoneMode } from "../utils/formatters";
-import { CalendarPopover, TimeInput } from "./Timeline";
+import { CalendarPopover } from "./CalendarPopover";
+import { TimeInput } from "./TimeInput";
 import { RichTooltip } from "./RichTooltip";
 import { healthColor, healthBgColor } from "../utils/healthScore";
 import type {

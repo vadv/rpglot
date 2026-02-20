@@ -58,17 +58,17 @@ use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{Uri, header};
 use axum::middleware::Next;
-use rpglot_core::api::convert::{ConvertContext, convert};
+use rpglot_core::api::convert::{ConvertContext, convert, resolve};
 use rpglot_core::api::schema::{ApiMode, ApiSchema, DateInfo, InstanceInfo, TimelineInfo};
-use rpglot_core::api::snapshot::ApiSnapshot;
+use rpglot_core::api::snapshot::{ApiSnapshot, PgStatementsRow, PgStorePlansRow};
 #[cfg(target_os = "linux")]
 use rpglot_core::collector::RealFs;
 #[cfg(not(target_os = "linux"))]
 use rpglot_core::collector::mock::MockFs;
 use rpglot_core::collector::{Collector, PostgresCollector};
-use rpglot_core::models::{PgIndexesRates, PgStatementsRates, PgStorePlansRates, PgTablesRates};
 use rpglot_core::provider::{HistoryProvider, LiveProvider, SnapshotProvider};
-use rpglot_core::storage::model::{DataBlock, Snapshot};
+use rpglot_core::storage::StringInterner;
+use rpglot_core::storage::model::{DataBlock, PgStatStatementsInfo, PgStorePlansInfo, Snapshot};
 use rust_embed::Embed;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -162,22 +162,10 @@ struct WebAppInner {
     raw_snapshot: Option<Snapshot>,
     prev_snapshot: Option<Snapshot>,
     // Rates
-    pgs_rates: HashMap<i64, PgStatementsRates>,
-    pgp_rates: HashMap<i64, PgStorePlansRates>,
-    pgt_rates: HashMap<u32, PgTablesRates>,
-    pgi_rates: HashMap<u32, PgIndexesRates>,
-    // PGS rate tracking
-    pgs_prev_sample: HashMap<i64, rpglot_core::storage::model::PgStatStatementsInfo>,
-    pgs_prev_ts: Option<i64>,
-    // PGP rate tracking
-    pgp_prev_sample: HashMap<i64, rpglot_core::storage::model::PgStorePlansInfo>,
-    pgp_prev_ts: Option<i64>,
-    // PGT rate tracking
-    pgt_prev_sample: HashMap<u32, rpglot_core::storage::model::PgStatUserTablesInfo>,
-    pgt_prev_ts: Option<i64>,
-    // PGI rate tracking
-    pgi_prev_sample: HashMap<u32, rpglot_core::storage::model::PgStatUserIndexesInfo>,
-    pgi_prev_ts: Option<i64>,
+    pgs_rate: rpglot_core::rates::PgsRateState,
+    pgp_rate: rpglot_core::rates::PgpRateState,
+    pgt_rate: rpglot_core::rates::PgtRateState,
+    pgi_rate: rpglot_core::rates::PgiRateState,
     // History metadata (updated by refresh task)
     total_snapshots: Option<usize>,
     history_start: Option<i64>,
@@ -267,18 +255,10 @@ async fn async_main(args: Args) {
         current_snapshot: None,
         raw_snapshot: None,
         prev_snapshot: None,
-        pgs_rates: HashMap::new(),
-        pgp_rates: HashMap::new(),
-        pgt_rates: HashMap::new(),
-        pgi_rates: HashMap::new(),
-        pgs_prev_sample: HashMap::new(),
-        pgs_prev_ts: None,
-        pgp_prev_sample: HashMap::new(),
-        pgp_prev_ts: None,
-        pgt_prev_sample: HashMap::new(),
-        pgt_prev_ts: None,
-        pgi_prev_sample: HashMap::new(),
-        pgi_prev_ts: None,
+        pgs_rate: rpglot_core::rates::PgsRateState::default(),
+        pgp_rate: rpglot_core::rates::PgpRateState::default(),
+        pgt_rate: rpglot_core::rates::PgtRateState::default(),
+        pgi_rate: rpglot_core::rates::PgiRateState::default(),
         total_snapshots,
         history_start,
         history_end,
@@ -653,26 +633,14 @@ fn evict_caches(inner: &mut WebAppInner) {
     inner.current_snapshot = None;
     inner.raw_snapshot = None;
     inner.prev_snapshot = None;
-    inner.pgs_rates.clear();
-    inner.pgs_rates.shrink_to_fit();
-    inner.pgp_rates.clear();
-    inner.pgp_rates.shrink_to_fit();
-    inner.pgt_rates.clear();
-    inner.pgt_rates.shrink_to_fit();
-    inner.pgi_rates.clear();
-    inner.pgi_rates.shrink_to_fit();
-    inner.pgs_prev_sample.clear();
-    inner.pgs_prev_sample.shrink_to_fit();
-    inner.pgs_prev_ts = None;
-    inner.pgp_prev_sample.clear();
-    inner.pgp_prev_sample.shrink_to_fit();
-    inner.pgp_prev_ts = None;
-    inner.pgt_prev_sample.clear();
-    inner.pgt_prev_sample.shrink_to_fit();
-    inner.pgt_prev_ts = None;
-    inner.pgi_prev_sample.clear();
-    inner.pgi_prev_sample.shrink_to_fit();
-    inner.pgi_prev_ts = None;
+    inner.pgs_rate.reset();
+    inner.pgs_rate.shrink_to_fit();
+    inner.pgp_rate.reset();
+    inner.pgp_rate.shrink_to_fit();
+    inner.pgt_rate.reset();
+    inner.pgt_rate.shrink_to_fit();
+    inner.pgi_rate.reset();
+    inner.pgi_rate.shrink_to_fit();
     inner.heatmap_cache.clear();
     inner.heatmap_cache.shrink_to_fit();
     // Full eviction: drop chunk index, timestamps, WAL — back to uninitialized
@@ -717,6 +685,101 @@ fn ensure_history_ready(inner: &mut WebAppInner) -> bool {
     true
 }
 
+/// Create a stale `PgStatementsRow` from a `PgStatStatementsInfo` (all rates = None).
+fn pgs_info_to_stale_row(s: &PgStatStatementsInfo, interner: &StringInterner) -> PgStatementsRow {
+    let int = Some(interner);
+    let total_blks = s.shared_blks_hit + s.shared_blks_read;
+    let hit_pct = if total_blks > 0 {
+        Some(s.shared_blks_hit as f64 * 100.0 / total_blks as f64)
+    } else {
+        None
+    };
+    let rows_per_call = if s.calls > 0 {
+        Some(s.rows as f64 / s.calls as f64)
+    } else {
+        None
+    };
+    PgStatementsRow {
+        queryid: s.queryid,
+        database: resolve(int, s.datname_hash),
+        user: resolve(int, s.usename_hash),
+        query: resolve(int, s.query_hash),
+        calls: s.calls,
+        rows: s.rows,
+        mean_exec_time_ms: s.mean_exec_time,
+        min_exec_time_ms: s.min_exec_time,
+        max_exec_time_ms: s.max_exec_time,
+        stddev_exec_time_ms: s.stddev_exec_time,
+        calls_s: None,
+        rows_s: None,
+        exec_time_ms_s: None,
+        shared_blks_read_s: None,
+        shared_blks_hit_s: None,
+        shared_blks_dirtied_s: None,
+        shared_blks_written_s: None,
+        local_blks_read_s: None,
+        local_blks_written_s: None,
+        temp_blks_read_s: None,
+        temp_blks_written_s: None,
+        temp_mb_s: None,
+        rows_per_call,
+        hit_pct,
+        total_plan_time: s.total_plan_time,
+        wal_records: s.wal_records,
+        wal_bytes: s.wal_bytes,
+        total_exec_time: s.total_exec_time,
+        stale: true,
+    }
+}
+
+/// Create a stale `PgStorePlansRow` from a `PgStorePlansInfo` (all rates = None).
+fn pgp_info_to_stale_row(
+    p: &PgStorePlansInfo,
+    interner: &StringInterner,
+    query: &str,
+) -> PgStorePlansRow {
+    let int = Some(interner);
+    let total_blks = p.shared_blks_hit + p.shared_blks_read;
+    let hit_pct = if total_blks > 0 {
+        Some(p.shared_blks_hit as f64 * 100.0 / total_blks as f64)
+    } else {
+        None
+    };
+    let rows_per_call = if p.calls > 0 {
+        Some(p.rows as f64 / p.calls as f64)
+    } else {
+        None
+    };
+    PgStorePlansRow {
+        planid: p.planid,
+        stmt_queryid: p.stmt_queryid,
+        database: resolve(int, p.datname_hash),
+        user: resolve(int, p.usename_hash),
+        query: query.to_string(),
+        plan: resolve(int, p.plan_hash),
+        calls: p.calls,
+        rows: p.rows,
+        mean_time_ms: p.mean_time,
+        min_time_ms: p.min_time,
+        max_time_ms: p.max_time,
+        total_time_ms: p.total_time,
+        first_call: p.first_call,
+        last_call: p.last_call,
+        calls_s: None,
+        rows_s: None,
+        exec_time_ms_s: None,
+        shared_blks_read_s: None,
+        shared_blks_hit_s: None,
+        shared_blks_dirtied_s: None,
+        shared_blks_written_s: None,
+        temp_blks_read_s: None,
+        temp_blks_written_s: None,
+        rows_per_call,
+        hit_pct,
+        stale: true,
+    }
+}
+
 /// Advance provider, compute rates, convert to ApiSnapshot.
 fn advance_and_convert(inner: &mut WebAppInner) {
     // Advance provider to get next snapshot
@@ -746,10 +809,10 @@ fn advance_and_convert(inner: &mut WebAppInner) {
     }
 
     // Update rates (must happen before borrowing interner)
-    update_pgs_rates(inner, &snapshot);
-    update_pgp_rates(inner, &snapshot);
-    update_pgt_rates(inner, &snapshot);
-    update_pgi_rates(inner, &snapshot);
+    rpglot_core::rates::update_pgs_rates(&mut inner.pgs_rate, &snapshot);
+    rpglot_core::rates::update_pgp_rates(&mut inner.pgp_rate, &snapshot);
+    rpglot_core::rates::update_pgt_rates(&mut inner.pgt_rate, &snapshot);
+    rpglot_core::rates::update_pgi_rates(&mut inner.pgi_rate, &snapshot);
 
     // Convert to API snapshot (interner borrowed here, after rates are done)
     // For history mode, extract prev/next timestamps for navigation
@@ -768,14 +831,40 @@ fn advance_and_convert(inner: &mut WebAppInner) {
         snapshot: &snapshot,
         prev_snapshot: inner.prev_snapshot.as_ref(),
         interner: inner.provider.interner(),
-        pgs_rates: &inner.pgs_rates,
-        pgp_rates: &inner.pgp_rates,
-        pgt_rates: &inner.pgt_rates,
-        pgi_rates: &inner.pgi_rates,
+        pgs_rates: &inner.pgs_rate.rates,
+        pgp_rates: &inner.pgp_rate.rates,
+        pgt_rates: &inner.pgt_rate.rates,
+        pgi_rates: &inner.pgi_rate.rates,
     };
     let mut api_snapshot = convert(&ctx);
     api_snapshot.prev_timestamp = prev_ts;
     api_snapshot.next_timestamp = next_ts;
+
+    // Merge stale PGS entries from prev_sample
+    if let Some(interner) = inner.provider.interner() {
+        let pgs_ids: HashSet<i64> = api_snapshot.pgs.iter().map(|r| r.queryid).collect();
+        for info in inner.pgs_rate.prev_sample.values() {
+            if !pgs_ids.contains(&info.queryid) {
+                api_snapshot.pgs.push(pgs_info_to_stale_row(info, interner));
+            }
+        }
+
+        // Merge stale PGP entries from prev_sample
+        let pgp_ids: HashSet<i64> = api_snapshot.pgp.iter().map(|r| r.planid).collect();
+        for info in inner.pgp_rate.prev_sample.values() {
+            if !pgp_ids.contains(&info.planid) {
+                let query = inner
+                    .pgs_rate
+                    .prev_sample
+                    .get(&info.stmt_queryid)
+                    .map(|s| resolve(Some(interner), s.query_hash))
+                    .unwrap_or_default();
+                api_snapshot
+                    .pgp
+                    .push(pgp_info_to_stale_row(info, interner, &query));
+            }
+        }
+    }
 
     // Rotate snapshots
     inner.prev_snapshot = inner.raw_snapshot.take();
@@ -958,18 +1047,10 @@ fn reconvert_current(inner: &mut WebAppInner) {
     };
 
     // Reset rate tracking state
-    inner.pgs_rates.clear();
-    inner.pgp_rates.clear();
-    inner.pgt_rates.clear();
-    inner.pgi_rates.clear();
-    inner.pgs_prev_sample.clear();
-    inner.pgs_prev_ts = None;
-    inner.pgp_prev_sample.clear();
-    inner.pgp_prev_ts = None;
-    inner.pgt_prev_sample.clear();
-    inner.pgt_prev_ts = None;
-    inner.pgi_prev_sample.clear();
-    inner.pgi_prev_ts = None;
+    inner.pgs_rate.reset();
+    inner.pgp_rate.reset();
+    inner.pgt_rate.reset();
+    inner.pgi_rate.reset();
 
     // Seed prev_samples and compute rates.
     // All pg_stat_* data is cached ~30s by the collector while snapshots are
@@ -993,7 +1074,7 @@ fn reconvert_current(inner: &mut WebAppInner) {
         });
         let pgt_prev = pgt_seed.as_ref().unwrap_or(prev);
         seed_pgt_prev(inner, pgt_prev);
-        update_pgt_rates(inner, &snapshot);
+        rpglot_core::rates::update_pgt_rates(&mut inner.pgt_rate, &snapshot);
 
         // PGI
         let pgi_seed = extract_pgi_collected_at(&snapshot).and_then(|curr_ts| {
@@ -1001,7 +1082,7 @@ fn reconvert_current(inner: &mut WebAppInner) {
         });
         let pgi_prev = pgi_seed.as_ref().unwrap_or(prev);
         seed_pgi_prev(inner, pgi_prev);
-        update_pgi_rates(inner, &snapshot);
+        rpglot_core::rates::update_pgi_rates(&mut inner.pgi_rate, &snapshot);
 
         // PGS
         let pgs_seed = extract_pgs_collected_at(&snapshot).and_then(|curr_ts| {
@@ -1009,7 +1090,7 @@ fn reconvert_current(inner: &mut WebAppInner) {
         });
         let pgs_prev = pgs_seed.as_ref().unwrap_or(prev);
         seed_pgs_prev(inner, pgs_prev);
-        update_pgs_rates(inner, &snapshot);
+        rpglot_core::rates::update_pgs_rates(&mut inner.pgs_rate, &snapshot);
 
         // PGP
         let pgp_seed = extract_pgp_collected_at(&snapshot).and_then(|curr_ts| {
@@ -1017,7 +1098,7 @@ fn reconvert_current(inner: &mut WebAppInner) {
         });
         let pgp_prev = pgp_seed.as_ref().unwrap_or(prev);
         seed_pgp_prev(inner, pgp_prev);
-        update_pgp_rates(inner, &snapshot);
+        rpglot_core::rates::update_pgp_rates(&mut inner.pgp_rate, &snapshot);
     }
 
     let interner = inner.provider.interner();
@@ -1025,10 +1106,10 @@ fn reconvert_current(inner: &mut WebAppInner) {
         snapshot: &snapshot,
         prev_snapshot: prev_adjacent.as_ref(),
         interner,
-        pgs_rates: &inner.pgs_rates,
-        pgp_rates: &inner.pgp_rates,
-        pgt_rates: &inner.pgt_rates,
-        pgi_rates: &inner.pgi_rates,
+        pgs_rates: &inner.pgs_rate.rates,
+        pgp_rates: &inner.pgp_rate.rates,
+        pgt_rates: &inner.pgt_rate.rates,
+        pgi_rates: &inner.pgi_rate.rates,
     };
     let mut api_snapshot = convert(&ctx);
     api_snapshot.prev_timestamp = prev_ts;
@@ -1053,8 +1134,8 @@ fn seed_pgs_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             .map(|s| s.collected_at)
             .filter(|&t| t > 0)
             .unwrap_or(prev.timestamp);
-        inner.pgs_prev_ts = Some(ts);
-        inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
+        inner.pgs_rate.prev_ts = Some(ts);
+        inner.pgs_rate.prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
     }
 }
 
@@ -1072,8 +1153,8 @@ fn seed_pgt_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             .map(|t| t.collected_at)
             .filter(|&t| t > 0)
             .unwrap_or(prev.timestamp);
-        inner.pgt_prev_ts = Some(ts);
-        inner.pgt_prev_sample = tables.iter().map(|t| (t.relid, t.clone())).collect();
+        inner.pgt_rate.prev_ts = Some(ts);
+        inner.pgt_rate.prev_sample = tables.iter().map(|t| (t.relid, t.clone())).collect();
     }
 }
 
@@ -1091,8 +1172,8 @@ fn seed_pgi_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             .map(|i| i.collected_at)
             .filter(|&t| t > 0)
             .unwrap_or(prev.timestamp);
-        inner.pgi_prev_ts = Some(ts);
-        inner.pgi_prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
+        inner.pgi_rate.prev_ts = Some(ts);
+        inner.pgi_rate.prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
     }
 }
 
@@ -1110,331 +1191,9 @@ fn seed_pgp_prev(inner: &mut WebAppInner, prev: &Snapshot) {
             .map(|p| p.collected_at)
             .filter(|&t| t > 0)
             .unwrap_or(prev.timestamp);
-        inner.pgp_prev_ts = Some(ts);
-        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
+        inner.pgp_rate.prev_ts = Some(ts);
+        inner.pgp_rate.prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
     }
-}
-
-// ============================================================
-// Rate computation (mirrors TUI tab_states logic)
-// ============================================================
-
-/// Maximum dt (seconds) for PGS/PGT/PGI rate computation (~30s collection cache).
-/// 5-second tolerance accounts for timing jitter in snapshot collection.
-const MAX_RATE_DT_SECS: f64 = 605.0;
-
-/// Maximum dt (seconds) for PGP rate computation (pg_store_plans, 300s collection interval).
-/// Allows up to two missed collection cycles (3 × 300s + 5s tolerance).
-const MAX_PGP_RATE_DT_SECS: f64 = 905.0;
-
-fn update_pgs_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
-    let Some(stmts) = snapshot.blocks.iter().find_map(|b| {
-        if let DataBlock::PgStatStatements(v) = b {
-            Some(v)
-        } else {
-            None
-        }
-    }) else {
-        inner.pgs_rates.clear();
-        return;
-    };
-
-    if stmts.is_empty() {
-        inner.pgs_rates.clear();
-        return;
-    }
-
-    let now_ts = stmts
-        .first()
-        .map(|s| s.collected_at)
-        .filter(|&t| t > 0)
-        .unwrap_or(snapshot.timestamp);
-
-    let Some(prev_ts) = inner.pgs_prev_ts else {
-        inner.pgs_prev_ts = Some(now_ts);
-        inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
-        inner.pgs_rates.clear();
-        return;
-    };
-
-    if now_ts == prev_ts {
-        return;
-    }
-
-    if now_ts < prev_ts {
-        inner.pgs_prev_ts = Some(now_ts);
-        inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
-        inner.pgs_rates.clear();
-        return;
-    }
-
-    let dt = (now_ts - prev_ts) as f64;
-
-    if dt > MAX_RATE_DT_SECS {
-        inner.pgs_prev_ts = Some(now_ts);
-        inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
-        inner.pgs_rates.clear();
-        return;
-    }
-
-    let mut rates = HashMap::with_capacity(stmts.len());
-    for s in stmts {
-        let mut r = PgStatementsRates {
-            dt_secs: dt,
-            ..Default::default()
-        };
-        if let Some(prev) = inner.pgs_prev_sample.get(&s.queryid) {
-            r.calls_s = di64(s.calls, prev.calls).map(|d| d as f64 / dt);
-            r.rows_s = di64(s.rows, prev.rows).map(|d| d as f64 / dt);
-            r.exec_time_ms_s = df64(s.total_exec_time, prev.total_exec_time).map(|d| d / dt);
-            r.shared_blks_read_s =
-                di64(s.shared_blks_read, prev.shared_blks_read).map(|d| d as f64 / dt);
-            r.shared_blks_hit_s =
-                di64(s.shared_blks_hit, prev.shared_blks_hit).map(|d| d as f64 / dt);
-            r.shared_blks_dirtied_s =
-                di64(s.shared_blks_dirtied, prev.shared_blks_dirtied).map(|d| d as f64 / dt);
-            r.shared_blks_written_s =
-                di64(s.shared_blks_written, prev.shared_blks_written).map(|d| d as f64 / dt);
-            r.local_blks_read_s =
-                di64(s.local_blks_read, prev.local_blks_read).map(|d| d as f64 / dt);
-            r.local_blks_written_s =
-                di64(s.local_blks_written, prev.local_blks_written).map(|d| d as f64 / dt);
-            r.temp_blks_read_s = di64(s.temp_blks_read, prev.temp_blks_read).map(|d| d as f64 / dt);
-            r.temp_blks_written_s =
-                di64(s.temp_blks_written, prev.temp_blks_written).map(|d| d as f64 / dt);
-            if let (Some(dr), Some(dw)) = (
-                di64(s.temp_blks_read, prev.temp_blks_read),
-                di64(s.temp_blks_written, prev.temp_blks_written),
-            ) {
-                r.temp_mb_s = Some(((dr + dw) as f64 * 8.0 / 1024.0) / dt);
-            }
-        }
-        rates.insert(s.queryid, r);
-    }
-
-    inner.pgs_rates = rates;
-    inner.pgs_prev_ts = Some(now_ts);
-    inner.pgs_prev_sample = stmts.iter().map(|s| (s.queryid, s.clone())).collect();
-}
-
-fn update_pgp_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
-    let Some(plans) = snapshot.blocks.iter().find_map(|b| {
-        if let DataBlock::PgStorePlans(v) = b {
-            Some(v)
-        } else {
-            None
-        }
-    }) else {
-        inner.pgp_rates.clear();
-        return;
-    };
-
-    if plans.is_empty() {
-        inner.pgp_rates.clear();
-        return;
-    }
-
-    let now_ts = plans
-        .first()
-        .map(|p| p.collected_at)
-        .filter(|&t| t > 0)
-        .unwrap_or(snapshot.timestamp);
-
-    let Some(prev_ts) = inner.pgp_prev_ts else {
-        inner.pgp_prev_ts = Some(now_ts);
-        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
-        inner.pgp_rates.clear();
-        return;
-    };
-
-    if now_ts == prev_ts {
-        return;
-    }
-
-    if now_ts < prev_ts {
-        inner.pgp_prev_ts = Some(now_ts);
-        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
-        inner.pgp_rates.clear();
-        return;
-    }
-
-    let dt = (now_ts - prev_ts) as f64;
-
-    if dt > MAX_PGP_RATE_DT_SECS {
-        inner.pgp_prev_ts = Some(now_ts);
-        inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
-        inner.pgp_rates.clear();
-        return;
-    }
-
-    let mut rates = HashMap::with_capacity(plans.len());
-    for p in plans {
-        let mut r = PgStorePlansRates {
-            dt_secs: dt,
-            ..Default::default()
-        };
-        if let Some(prev) = inner.pgp_prev_sample.get(&p.planid) {
-            r.calls_s = di64(p.calls, prev.calls).map(|d| d as f64 / dt);
-            r.rows_s = di64(p.rows, prev.rows).map(|d| d as f64 / dt);
-            r.exec_time_ms_s = df64(p.total_time, prev.total_time).map(|d| d / dt);
-            r.shared_blks_read_s =
-                di64(p.shared_blks_read, prev.shared_blks_read).map(|d| d as f64 / dt);
-            r.shared_blks_hit_s =
-                di64(p.shared_blks_hit, prev.shared_blks_hit).map(|d| d as f64 / dt);
-            r.shared_blks_dirtied_s =
-                di64(p.shared_blks_dirtied, prev.shared_blks_dirtied).map(|d| d as f64 / dt);
-            r.shared_blks_written_s =
-                di64(p.shared_blks_written, prev.shared_blks_written).map(|d| d as f64 / dt);
-            r.temp_blks_read_s = di64(p.temp_blks_read, prev.temp_blks_read).map(|d| d as f64 / dt);
-            r.temp_blks_written_s =
-                di64(p.temp_blks_written, prev.temp_blks_written).map(|d| d as f64 / dt);
-        }
-        rates.insert(p.planid, r);
-    }
-
-    inner.pgp_rates = rates;
-    inner.pgp_prev_ts = Some(now_ts);
-    inner.pgp_prev_sample = plans.iter().map(|p| (p.planid, p.clone())).collect();
-}
-
-fn update_pgt_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
-    let Some(tables) = snapshot.blocks.iter().find_map(|b| {
-        if let DataBlock::PgStatUserTables(v) = b {
-            Some(v)
-        } else {
-            None
-        }
-    }) else {
-        inner.pgt_rates.clear();
-        return;
-    };
-
-    // Use collected_at from data (not snapshot.timestamp) to compute
-    // accurate rates when collector caches pg_stat_user_tables.
-    let now_ts = tables
-        .first()
-        .map(|t| t.collected_at)
-        .filter(|&t| t > 0)
-        .unwrap_or(snapshot.timestamp);
-
-    let Some(prev_ts) = inner.pgt_prev_ts else {
-        inner.pgt_prev_ts = Some(now_ts);
-        inner.pgt_prev_sample = tables.iter().map(|t| (t.relid, t.clone())).collect();
-        inner.pgt_rates.clear();
-        return;
-    };
-
-    if now_ts == prev_ts {
-        return; // Same collected_at, data unchanged
-    }
-
-    let dt = (now_ts - prev_ts) as f64;
-    if dt <= 0.0 {
-        return;
-    }
-
-    let mut rates = HashMap::with_capacity(tables.len());
-    for t in tables {
-        let mut r = PgTablesRates {
-            dt_secs: dt,
-            ..Default::default()
-        };
-        if let Some(prev) = inner.pgt_prev_sample.get(&t.relid) {
-            r.seq_scan_s = di64(t.seq_scan, prev.seq_scan).map(|d| d as f64 / dt);
-            r.seq_tup_read_s = di64(t.seq_tup_read, prev.seq_tup_read).map(|d| d as f64 / dt);
-            r.idx_scan_s = di64(t.idx_scan, prev.idx_scan).map(|d| d as f64 / dt);
-            r.idx_tup_fetch_s = di64(t.idx_tup_fetch, prev.idx_tup_fetch).map(|d| d as f64 / dt);
-            r.n_tup_ins_s = di64(t.n_tup_ins, prev.n_tup_ins).map(|d| d as f64 / dt);
-            r.n_tup_upd_s = di64(t.n_tup_upd, prev.n_tup_upd).map(|d| d as f64 / dt);
-            r.n_tup_del_s = di64(t.n_tup_del, prev.n_tup_del).map(|d| d as f64 / dt);
-            r.n_tup_hot_upd_s = di64(t.n_tup_hot_upd, prev.n_tup_hot_upd).map(|d| d as f64 / dt);
-            r.vacuum_count_s = di64(t.vacuum_count, prev.vacuum_count).map(|d| d as f64 / dt);
-            r.autovacuum_count_s =
-                di64(t.autovacuum_count, prev.autovacuum_count).map(|d| d as f64 / dt);
-            r.heap_blks_read_s = di64(t.heap_blks_read, prev.heap_blks_read).map(|d| d as f64 / dt);
-            r.heap_blks_hit_s = di64(t.heap_blks_hit, prev.heap_blks_hit).map(|d| d as f64 / dt);
-            r.idx_blks_read_s = di64(t.idx_blks_read, prev.idx_blks_read).map(|d| d as f64 / dt);
-            r.idx_blks_hit_s = di64(t.idx_blks_hit, prev.idx_blks_hit).map(|d| d as f64 / dt);
-            r.toast_blks_read_s =
-                di64(t.toast_blks_read, prev.toast_blks_read).map(|d| d as f64 / dt);
-            r.toast_blks_hit_s = di64(t.toast_blks_hit, prev.toast_blks_hit).map(|d| d as f64 / dt);
-            r.tidx_blks_read_s = di64(t.tidx_blks_read, prev.tidx_blks_read).map(|d| d as f64 / dt);
-            r.tidx_blks_hit_s = di64(t.tidx_blks_hit, prev.tidx_blks_hit).map(|d| d as f64 / dt);
-            r.analyze_count_s = di64(t.analyze_count, prev.analyze_count).map(|d| d as f64 / dt);
-            r.autoanalyze_count_s =
-                di64(t.autoanalyze_count, prev.autoanalyze_count).map(|d| d as f64 / dt);
-        }
-        rates.insert(t.relid, r);
-    }
-
-    inner.pgt_rates = rates;
-    inner.pgt_prev_ts = Some(now_ts);
-    inner.pgt_prev_sample = tables.iter().map(|t| (t.relid, t.clone())).collect();
-}
-
-fn update_pgi_rates(inner: &mut WebAppInner, snapshot: &Snapshot) {
-    let Some(indexes) = snapshot.blocks.iter().find_map(|b| {
-        if let DataBlock::PgStatUserIndexes(v) = b {
-            Some(v)
-        } else {
-            None
-        }
-    }) else {
-        inner.pgi_rates.clear();
-        return;
-    };
-
-    // Use collected_at from data (not snapshot.timestamp) to compute
-    // accurate rates when collector caches pg_stat_user_indexes.
-    let now_ts = indexes
-        .first()
-        .map(|i| i.collected_at)
-        .filter(|&t| t > 0)
-        .unwrap_or(snapshot.timestamp);
-
-    let Some(prev_ts) = inner.pgi_prev_ts else {
-        inner.pgi_prev_ts = Some(now_ts);
-        inner.pgi_prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
-        inner.pgi_rates.clear();
-        return;
-    };
-
-    if now_ts == prev_ts {
-        return; // Same collected_at, data unchanged
-    }
-
-    let dt = (now_ts - prev_ts) as f64;
-    if dt <= 0.0 {
-        return;
-    }
-
-    let mut rates = HashMap::with_capacity(indexes.len());
-    for i in indexes {
-        let mut r = PgIndexesRates {
-            dt_secs: dt,
-            ..Default::default()
-        };
-        if let Some(prev) = inner.pgi_prev_sample.get(&i.indexrelid) {
-            r.idx_scan_s = di64(i.idx_scan, prev.idx_scan).map(|d| d as f64 / dt);
-            r.idx_tup_read_s = di64(i.idx_tup_read, prev.idx_tup_read).map(|d| d as f64 / dt);
-            r.idx_tup_fetch_s = di64(i.idx_tup_fetch, prev.idx_tup_fetch).map(|d| d as f64 / dt);
-            r.idx_blks_read_s = di64(i.idx_blks_read, prev.idx_blks_read).map(|d| d as f64 / dt);
-            r.idx_blks_hit_s = di64(i.idx_blks_hit, prev.idx_blks_hit).map(|d| d as f64 / dt);
-        }
-        rates.insert(i.indexrelid, r);
-    }
-
-    inner.pgi_rates = rates;
-    inner.pgi_prev_ts = Some(now_ts);
-    inner.pgi_prev_sample = indexes.iter().map(|i| (i.indexrelid, i.clone())).collect();
-}
-
-fn di64(curr: i64, prev: i64) -> Option<i64> {
-    (curr >= prev).then_some(curr - prev)
-}
-
-fn df64(curr: f64, prev: f64) -> Option<f64> {
-    (curr >= prev).then_some(curr - prev)
 }
 
 // ============================================================

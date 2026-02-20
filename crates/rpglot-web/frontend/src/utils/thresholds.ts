@@ -592,6 +592,20 @@ const RULES: Record<string, Classifier> = {
 };
 
 /**
+ * Return the raw severity level for a cell value: "critical" | "warning" | "good" | "inactive" | undefined.
+ * Used by smartFilters to unify threshold logic.
+ */
+export function getThresholdLevel(
+  key: string,
+  value: unknown,
+  row?: Record<string, unknown>,
+): string | undefined {
+  const rule = RULES[key];
+  if (!rule) return undefined;
+  return rule(value, row ?? {});
+}
+
+/**
  * Return a CSS color class for a cell value based on threshold rules.
  * Returns empty string if no special coloring applies.
  */
@@ -600,9 +614,7 @@ export function getThresholdClass(
   value: unknown,
   row: Record<string, unknown>,
 ): string {
-  const rule = RULES[key];
-  if (!rule) return "";
-  const level = rule(value, row);
+  const level = getThresholdLevel(key, value, row);
   if (!level) return "";
   return LEVEL_CLASS[level] ?? "";
 }

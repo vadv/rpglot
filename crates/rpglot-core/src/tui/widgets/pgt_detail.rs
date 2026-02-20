@@ -155,7 +155,7 @@ pub fn render_pgt_detail(
         return;
     };
 
-    let prev = state.pgt.delta_base.get(&relid);
+    let prev = state.pgt.rate_state.prev_sample.get(&relid);
     let content = build_content(table, prev, interner, show_help);
 
     let scroll = match &mut state.popup {

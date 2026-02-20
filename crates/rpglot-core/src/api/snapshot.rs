@@ -554,6 +554,9 @@ pub struct PgStatementsRow {
     pub wal_bytes: i64,
     /// Cumulative total execution time (ms).
     pub total_exec_time: f64,
+    /// True when this row was not in the latest snapshot (carried from prev_sample).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// pg_store_plans row with pre-computed rates.
@@ -597,6 +600,9 @@ pub struct PgStorePlansRow {
     pub rows_per_call: Option<f64>,
     /// shared_blks_hit / (hit + read) * 100.
     pub hit_pct: Option<f64>,
+    /// True when this row was not in the latest snapshot (carried from prev_sample).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// pg_stat_user_tables row with pre-computed rates.

@@ -80,7 +80,8 @@ pub fn render_debug_popup(
         "prev_sample_ts",
         state
             .pgs
-            .prev_sample_ts
+            .rate_state
+            .prev_ts
             .map(|ts| format!("{}", ts))
             .unwrap_or_else(|| "--".to_string()),
     ));
@@ -88,7 +89,8 @@ pub fn render_debug_popup(
         "last_update_ts",
         state
             .pgs
-            .last_real_update_ts
+            .rate_state
+            .prev_ts
             .map(|ts| format!("{}", ts))
             .unwrap_or_else(|| "--".to_string()),
     ));
@@ -96,20 +98,25 @@ pub fn render_debug_popup(
         "dt_secs",
         state
             .pgs
-            .dt_secs
+            .rate_state
+            .rates
+            .values()
+            .next()
+            .map(|r| r.dt_secs)
             .map(|dt| format!("{:.1}s", dt))
             .unwrap_or_else(|| "--".to_string()),
     ));
     lines.push(format_info_line(
         "rates_count",
-        format!("{}", state.pgs.rates.len()),
+        format!("{}", state.pgs.rate_state.rates.len()),
     ));
     // Show current collected_at from PGS data (key for debugging dt issues)
     lines.push(format_info_line(
         "curr_collected_at",
         state
             .pgs
-            .current_collected_at
+            .rate_state
+            .prev_ts
             .map(|ts| format!("{}", ts))
             .unwrap_or_else(|| "--".to_string()),
     ));

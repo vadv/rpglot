@@ -239,7 +239,7 @@ pub fn build_statements_view(
         .iter()
         .map(|s| {
             let mut row = PgStatementsRowData::from_statement(s, interner);
-            if let Some(r) = state.rates.get(&s.queryid) {
+            if let Some(r) = state.rate_state.rates.get(&s.queryid) {
                 row.calls_s = r.calls_s;
                 row.rows_s = r.rows_s;
                 row.exec_time_ms_s = r.exec_time_ms_s;
@@ -312,7 +312,9 @@ pub fn build_statements_view(
         .collect();
 
     // Build sample info
-    let sample_info = match (state.dt_secs, state.last_real_update_ts) {
+    let dt_secs = state.rate_state.rates.values().next().map(|r| r.dt_secs);
+    let last_real_update_ts = state.rate_state.prev_ts;
+    let sample_info = match (dt_secs, last_real_update_ts) {
         (Some(dt), Some(last_ts)) => {
             let age = if is_live {
                 let now = SystemTime::now()

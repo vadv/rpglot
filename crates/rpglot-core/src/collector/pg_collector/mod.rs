@@ -160,33 +160,8 @@ pub struct PostgresCollector {
 }
 
 impl PostgresCollector {
-    /// Creates a new PostgreSQL collector from environment variables.
-    ///
-    /// Uses $USER as default if PGUSER is not set.
-    pub fn from_env() -> Result<Self, PgCollectError> {
-        let user = env::var("PGUSER")
-            .or_else(|_| env::var("USER"))
-            .map_err(|_| PgCollectError::EnvNotSet("PGUSER or USER".to_string()))?;
-
-        let host = env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
-        let password = env::var("PGPASSWORD").unwrap_or_default();
-        let explicit_database = env::var("PGDATABASE").is_ok();
-        let database = env::var("PGDATABASE").unwrap_or_else(|_| user.clone());
-
-        let connection_string = if password.is_empty() {
-            format!(
-                "host={} port={} user={} dbname={} application_name=rpglot",
-                host, port, user, database
-            )
-        } else {
-            format!(
-                "host={} port={} user={} password={} dbname={} application_name=rpglot",
-                host, port, user, password, database
-            )
-        };
-
-        Ok(Self {
+    fn new_inner(connection_string: String, explicit_database: bool) -> Self {
+        Self {
             connection_string,
             client: None,
             last_error: None,
@@ -226,54 +201,43 @@ impl PostgresCollector {
             replication_cache: None,
             replication_cache_time: None,
             log_collector: LogCollector::new(),
-        })
+        }
+    }
+
+    /// Creates a new PostgreSQL collector from environment variables.
+    ///
+    /// Uses $USER as default if PGUSER is not set.
+    pub fn from_env() -> Result<Self, PgCollectError> {
+        let user = env::var("PGUSER")
+            .or_else(|_| env::var("USER"))
+            .map_err(|_| PgCollectError::EnvNotSet("PGUSER or USER".to_string()))?;
+
+        let host = env::var("PGHOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("PGPORT").unwrap_or_else(|_| "5432".to_string());
+        let password = env::var("PGPASSWORD").unwrap_or_default();
+        let explicit_database = env::var("PGDATABASE").is_ok();
+        let database = env::var("PGDATABASE").unwrap_or_else(|_| user.clone());
+
+        let connection_string = if password.is_empty() {
+            format!(
+                "host={} port={} user={} dbname={} application_name=rpglot",
+                host, port, user, database
+            )
+        } else {
+            format!(
+                "host={} port={} user={} password={} dbname={} application_name=rpglot",
+                host, port, user, password, database
+            )
+        };
+
+        Ok(Self::new_inner(connection_string, explicit_database))
     }
 
     /// Creates a collector with explicit connection string.
     ///
     /// Multi-database collection is disabled (treated as explicit database).
     pub fn with_connection_string(connection_string: String) -> Self {
-        Self {
-            connection_string,
-            client: None,
-            last_error: None,
-            server_version_num: None,
-            largest_dbname: None,
-            statements_ext_version: None,
-            statements_last_check: None,
-            statements_client_idx: None,
-            statements_cache: Vec::new(),
-            statements_cache_time: None,
-            statements_collect_interval: STATEMENTS_COLLECT_INTERVAL,
-            tables_cache: Vec::new(),
-            tables_cache_time: None,
-            indexes_cache: Vec::new(),
-            indexes_cache_time: None,
-            settings_cache: Vec::new(),
-            settings_cache_time: None,
-            pgs_prev: HashMap::new(),
-            pgs_first_collect: true,
-            pgs_filtered_cache: Vec::new(),
-            store_plans_ext_version: None,
-            store_plans_last_check: None,
-            store_plans_fork: None,
-            store_plans_client_idx: None,
-            store_plans_cache: Vec::new(),
-            store_plans_cache_time: None,
-            pgp_filtered_cache: Vec::new(),
-            pgt_prev: HashMap::new(),
-            pgt_first_collect: true,
-            pgt_filtered_cache: Vec::new(),
-            pgi_prev: HashMap::new(),
-            pgi_first_collect: true,
-            pgi_filtered_cache: Vec::new(),
-            explicit_database: true,
-            db_clients: Vec::new(),
-            db_clients_last_check: None,
-            replication_cache: None,
-            replication_cache_time: None,
-            log_collector: LogCollector::new(),
-        }
+        Self::new_inner(connection_string, true)
     }
 
     /// Sets the interval for pg_stat_statements caching.

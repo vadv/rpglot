@@ -259,124 +259,20 @@ impl ChunkReader {
     }
 }
 
-/// Writes snapshots and interner in the chunk format with dictionary compression.
+/// Internal: writes a chunk file given a pre-trained dictionary and a callback
+/// that provides serialized snapshot data one at a time.
 ///
-/// A zstd dictionary is trained on all snapshots, then each snapshot is compressed
-/// with that dictionary for O(1) random access with cross-snapshot redundancy.
-/// The interner is compressed without the dictionary.
-///
+/// `get_raw_snapshot(index)` must return `(serialized_bytes, timestamp)`.
 /// The file is written atomically via a `.tmp` intermediate file.
-pub fn write_chunk(
-    path: &Path,
-    snapshots: &[Snapshot],
-    interner: &StringInterner,
-) -> io::Result<()> {
-    if snapshots.is_empty() {
-        return Err(io::Error::other("cannot write empty chunk"));
-    }
-    if snapshots.len() > u16::MAX as usize {
-        return Err(io::Error::other("too many snapshots for chunk format"));
-    }
-
-    let tmp_path = path.with_extension("tmp");
-    let mut file = fs::File::create(&tmp_path)?;
-
-    let snapshot_count = snapshots.len() as u16;
-
-    // Serialize all snapshots to postcard
-    let raw_snapshots: Vec<Vec<u8>> = snapshots
-        .iter()
-        .map(|s| postcard::to_allocvec(s).map_err(io::Error::other))
-        .collect::<Result<_, _>>()?;
-
-    // Train dictionary on all serialized snapshots.
-    // Fall back to empty dictionary (= regular zstd) if training fails
-    // (e.g. too few or too small samples for meaningful dictionary).
-    let dictionary = zstd::dict::from_samples(&raw_snapshots, DICT_MAX_SIZE).unwrap_or_default();
-
-    // Write placeholder header (will be updated later)
-    let header_placeholder = [0u8; HEADER_SIZE];
-    file.write_all(&header_placeholder)?;
-
-    // Write placeholder index (will be updated later)
-    let index_placeholder = vec![0u8; snapshot_count as usize * INDEX_ENTRY_SIZE];
-    file.write_all(&index_placeholder)?;
-
-    // Write dictionary (raw bytes, not zstd compressed)
-    let dict_offset = file.stream_position()?;
-    let dict_len = dictionary.len() as u64;
-    file.write_all(&dictionary)?;
-
-    // Compress and write each snapshot WITH dictionary
-    let mut compressor = zstd::bulk::Compressor::with_dictionary(3, &dictionary)?;
-    let mut index_entries: Vec<(u64, u64, i64, u32)> = Vec::with_capacity(snapshot_count as usize);
-
-    for (i, raw) in raw_snapshots.iter().enumerate() {
-        let offset = file.stream_position()?;
-        let compressed = compressor.compress(raw)?;
-        file.write_all(&compressed)?;
-        index_entries.push((
-            offset,
-            compressed.len() as u64,
-            snapshots[i].timestamp,
-            raw.len() as u32,
-        ));
-    }
-
-    // Write interner frame (without dictionary)
-    let interner_offset = file.stream_position()?;
-    let raw_interner = postcard::to_allocvec(interner).map_err(io::Error::other)?;
-    let compressed_interner = zstd::encode_all(&raw_interner[..], 3)?;
-    let interner_compressed_len = compressed_interner.len() as u64;
-    file.write_all(&compressed_interner)?;
-
-    // Seek back and write real header
-    file.seek(SeekFrom::Start(0))?;
-
-    let mut header = [0u8; HEADER_SIZE];
-    header[0..4].copy_from_slice(&MAGIC);
-    header[4..6].copy_from_slice(&VERSION.to_le_bytes());
-    header[6..8].copy_from_slice(&snapshot_count.to_le_bytes());
-    header[8..16].copy_from_slice(&interner_offset.to_le_bytes());
-    header[16..24].copy_from_slice(&interner_compressed_len.to_le_bytes());
-    header[24..32].copy_from_slice(&dict_offset.to_le_bytes());
-    header[32..40].copy_from_slice(&dict_len.to_le_bytes());
-    // bytes 40..44 = reserved (zeros)
-    file.write_all(&header)?;
-
-    // Write real index
-    for (offset, compressed_len, timestamp, uncompressed_len) in &index_entries {
-        file.write_all(&offset.to_le_bytes())?;
-        file.write_all(&compressed_len.to_le_bytes())?;
-        file.write_all(&timestamp.to_le_bytes())?;
-        file.write_all(&uncompressed_len.to_le_bytes())?;
-    }
-
-    file.sync_all()?;
-    drop(file);
-
-    // Atomic rename
-    fs::rename(tmp_path, path)?;
-
-    Ok(())
-}
-
-/// Writes a chunk file using a pre-trained dictionary and a callback that loads
-/// snapshots one at a time. This avoids holding all snapshots in memory simultaneously.
-///
-/// The `load_snapshot` callback receives the snapshot index (0-based) and must return
-/// the snapshot at that position. Snapshots are serialized, compressed with the provided
-/// dictionary, and written sequentially. The file is written atomically via a `.tmp`
-/// intermediate file.
-pub fn write_chunk_with_trained_dict<F>(
+fn write_chunk_inner<F>(
     path: &Path,
     snapshot_count: usize,
     dictionary: &[u8],
-    mut load_snapshot: F,
+    mut get_raw_snapshot: F,
     interner: &StringInterner,
 ) -> io::Result<()>
 where
-    F: FnMut(usize) -> io::Result<Snapshot>,
+    F: FnMut(usize) -> io::Result<(Vec<u8>, i64)>,
 {
     if snapshot_count == 0 {
         return Err(io::Error::other("cannot write empty chunk"));
@@ -402,24 +298,16 @@ where
     let dict_len = dictionary.len() as u64;
     file.write_all(dictionary)?;
 
-    // Compress and write each snapshot WITH dictionary, one at a time.
-    // Peak memory per snapshot: ~2× serialized size.
+    // Compress and write each snapshot WITH dictionary
     let mut compressor = zstd::bulk::Compressor::with_dictionary(3, dictionary)?;
     let mut index_entries: Vec<(u64, u64, i64, u32)> = Vec::with_capacity(snapshot_count);
 
     for i in 0..snapshot_count {
-        let snapshot = load_snapshot(i)?;
-        let raw = postcard::to_allocvec(&snapshot).map_err(io::Error::other)?;
+        let (raw, timestamp) = get_raw_snapshot(i)?;
         let offset = file.stream_position()?;
         let compressed = compressor.compress(&raw)?;
         file.write_all(&compressed)?;
-        index_entries.push((
-            offset,
-            compressed.len() as u64,
-            snapshot.timestamp,
-            raw.len() as u32,
-        ));
-        // snapshot + raw + compressed all dropped here
+        index_entries.push((offset, compressed.len() as u64, timestamp, raw.len() as u32));
     }
 
     // Write interner frame (without dictionary)
@@ -457,6 +345,68 @@ where
     fs::rename(tmp_path, path)?;
 
     Ok(())
+}
+
+/// Writes snapshots and interner in the chunk format with dictionary compression.
+///
+/// A zstd dictionary is trained on all snapshots, then each snapshot is compressed
+/// with that dictionary for O(1) random access with cross-snapshot redundancy.
+/// The interner is compressed without the dictionary.
+///
+/// The file is written atomically via a `.tmp` intermediate file.
+pub fn write_chunk(
+    path: &Path,
+    snapshots: &[Snapshot],
+    interner: &StringInterner,
+) -> io::Result<()> {
+    // Serialize all snapshots to postcard
+    let raw_snapshots: Vec<Vec<u8>> = snapshots
+        .iter()
+        .map(|s| postcard::to_allocvec(s).map_err(io::Error::other))
+        .collect::<Result<_, _>>()?;
+
+    // Train dictionary on all serialized snapshots.
+    // Fall back to empty dictionary (= regular zstd) if training fails
+    // (e.g. too few or too small samples for meaningful dictionary).
+    let dictionary = zstd::dict::from_samples(&raw_snapshots, DICT_MAX_SIZE).unwrap_or_default();
+
+    write_chunk_inner(
+        path,
+        snapshots.len(),
+        &dictionary,
+        |i| Ok((raw_snapshots[i].clone(), snapshots[i].timestamp)),
+        interner,
+    )
+}
+
+/// Writes a chunk file using a pre-trained dictionary and a callback that loads
+/// snapshots one at a time. This avoids holding all snapshots in memory simultaneously.
+///
+/// The `load_snapshot` callback receives the snapshot index (0-based) and must return
+/// the snapshot at that position. Snapshots are serialized, compressed with the provided
+/// dictionary, and written sequentially. The file is written atomically via a `.tmp`
+/// intermediate file.
+pub fn write_chunk_with_trained_dict<F>(
+    path: &Path,
+    snapshot_count: usize,
+    dictionary: &[u8],
+    mut load_snapshot: F,
+    interner: &StringInterner,
+) -> io::Result<()>
+where
+    F: FnMut(usize) -> io::Result<Snapshot>,
+{
+    write_chunk_inner(
+        path,
+        snapshot_count,
+        dictionary,
+        |i| {
+            let snapshot = load_snapshot(i)?;
+            let raw = postcard::to_allocvec(&snapshot).map_err(io::Error::other)?;
+            Ok((raw, snapshot.timestamp))
+        },
+        interner,
+    )
 }
 
 #[cfg(test)]
@@ -595,6 +545,47 @@ mod tests {
         let interner = StringInterner::new();
 
         assert!(write_chunk(&path, &[], &interner).is_err());
+    }
+
+    #[test]
+    fn test_write_chunk_and_trained_dict_produce_identical_data() {
+        let dir = tempdir().unwrap();
+        let path_a = dir.path().join("a.zst");
+        let path_b = dir.path().join("b.zst");
+        let snapshots = create_test_snapshots(10);
+        let interner = StringInterner::new();
+
+        // Path A: write_chunk (serializes all + trains dict internally)
+        write_chunk(&path_a, &snapshots, &interner).unwrap();
+
+        // Path B: write_chunk_with_trained_dict (pre-train dict, callback)
+        let raw_snapshots: Vec<Vec<u8>> = snapshots
+            .iter()
+            .map(|s| postcard::to_allocvec(s).unwrap())
+            .collect();
+        let dictionary =
+            zstd::dict::from_samples(&raw_snapshots, DICT_MAX_SIZE).unwrap_or_default();
+        write_chunk_with_trained_dict(
+            &path_b,
+            snapshots.len(),
+            &dictionary,
+            |i| Ok(snapshots[i].clone()),
+            &interner,
+        )
+        .unwrap();
+
+        // Both files should produce identical readable data
+        let reader_a = ChunkReader::open(&path_a).unwrap();
+        let reader_b = ChunkReader::open(&path_b).unwrap();
+
+        assert_eq!(reader_a.snapshot_count(), reader_b.snapshot_count());
+        assert_eq!(reader_a.timestamps(), reader_b.timestamps());
+
+        for i in 0..reader_a.snapshot_count() {
+            let snap_a = reader_a.read_snapshot(i).unwrap();
+            let snap_b = reader_b.read_snapshot(i).unwrap();
+            assert_eq!(snap_a, snap_b, "snapshot {} differs", i);
+        }
     }
 
     #[test]

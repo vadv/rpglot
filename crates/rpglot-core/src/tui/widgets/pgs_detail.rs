@@ -192,8 +192,8 @@ pub fn render_pgs_detail(
         return;
     };
 
-    let rates = state.pgs.rates.get(&queryid);
-    let prev_stmt = state.pgs.delta_base.get(&queryid);
+    let rates = state.pgs.rate_state.rates.get(&queryid);
+    let prev_stmt = state.pgs.rate_state.prev_sample.get(&queryid);
 
     let content = build_content(stmt, prev_stmt, rates, interner, show_help);
 

@@ -114,7 +114,7 @@ fn get_delta_time(current: &Snapshot, previous: Option<&Snapshot>) -> f64 {
         .unwrap_or(1.0)
 }
 
-fn resolve(interner: Option<&StringInterner>, hash: u64) -> String {
+pub fn resolve(interner: Option<&StringInterner>, hash: u64) -> String {
     if hash == 0 {
         return String::new();
     }
@@ -1393,6 +1393,7 @@ fn extract_pgs(
                 wal_records: s.wal_records,
                 wal_bytes: s.wal_bytes,
                 total_exec_time: s.total_exec_time,
+                stale: false,
             }
         })
         .collect()
@@ -1504,6 +1505,7 @@ fn extract_pgp(
                 temp_blks_written_s: r.and_then(|r| r.temp_blks_written_s),
                 rows_per_call,
                 hit_pct,
+                stale: false,
             }
         })
         .collect()

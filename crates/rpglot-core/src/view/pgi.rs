@@ -207,7 +207,7 @@ pub fn build_indexes_view(
         })
         .map(|i| {
             let mut row = PgIndexesRowData::from_index(i, interner);
-            if let Some(r) = state.rates.get(&i.indexrelid) {
+            if let Some(r) = state.rate_state.rates.get(&i.indexrelid) {
                 row.idx_scan_s = r.idx_scan_s;
                 row.idx_tup_read_s = r.idx_tup_read_s;
                 row.idx_tup_fetch_s = r.idx_tup_fetch_s;
@@ -266,7 +266,8 @@ pub fn build_indexes_view(
         .collect();
 
     // Sample info
-    let sample_info = match state.dt_secs {
+    let dt_secs = state.rate_state.rates.values().next().map(|r| r.dt_secs);
+    let sample_info = match dt_secs {
         Some(dt) => format!("[dt={:.0}s]", dt),
         None => String::new(),
     };

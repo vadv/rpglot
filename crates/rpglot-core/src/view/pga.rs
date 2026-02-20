@@ -436,7 +436,7 @@ pub fn build_activity_view(
             if row.query_id != 0
                 && let Some(pgs_info) = pgs_map.get(&row.query_id)
             {
-                let rates = pgs_state.rates.get(&row.query_id);
+                let rates = pgs_state.rate_state.rates.get(&row.query_id);
                 row.enrich_with_pgs_stats(pgs_info, rates);
             }
         }

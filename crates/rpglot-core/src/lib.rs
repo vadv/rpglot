@@ -24,6 +24,7 @@ pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), "-", env!("GIT_SHA"
 pub mod collector;
 pub mod fmt;
 pub mod models;
+pub mod rates;
 pub mod storage;
 pub mod table;
 pub mod util;
