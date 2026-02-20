@@ -258,7 +258,7 @@ export function AnalysisModal({
       let columnFilter: { column: string; value: string } | undefined;
 
       // Group A: PGT/PGI — entity name from title
-      const nameMatch = incident.title.match(/^(?:Table|Index)\s+(\S+)/);
+      const nameMatch = incident.title.match(/^(?:Table|Index)\s+([^:\s]+)/);
       if (nameMatch) {
         filter = nameMatch[1];
       }
