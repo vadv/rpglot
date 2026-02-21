@@ -172,6 +172,7 @@ export function useTabState(
       setActiveTab(targetTab);
       setSelectedId(null);
       setDetailOpen(false);
+      setGlobalFilterPreset("");
       setSmartFilterResetKey((k) => k + 1);
       urlSync({ tab: targetTab, view: null, filter: null });
     },

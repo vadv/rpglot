@@ -7,6 +7,7 @@ import {
   Check,
   ExternalLink,
   Maximize2,
+  Filter,
 } from "lucide-react";
 import type {
   TabKey,
@@ -34,6 +35,7 @@ interface DetailPanelProps {
     sourceRow: Record<string, unknown>,
   ) => void;
   snapshotTimestamp?: number;
+  onFilterField?: (column: string, value: string) => void;
 }
 
 interface Section {
@@ -427,6 +429,7 @@ export function DetailPanel({
   onClose,
   onDrillDown,
   snapshotTimestamp,
+  onFilterField,
 }: DetailPanelProps) {
   const sections = TAB_SECTIONS[tab];
   const colMap = new Map(columns.map((c) => [c.key, c]));
@@ -461,6 +464,7 @@ export function DetailPanel({
             colMap={colMap}
             overrideMap={overrideMap}
             snapshotTimestamp={snapshotTimestamp}
+            onFilterField={onFilterField}
           />
         ))}
       </div>
@@ -481,18 +485,26 @@ export function DetailPanel({
   );
 }
 
+const FILTER_EXCLUDED = new Set([
+  "query", "plan", "cmdline", "pg_query",
+  "queryid", "planid", "pid", "ppid", "relid", "indexrelid",
+  "root_pid", "event_id", "stmt_queryid", "query_id",
+]);
+
 function DetailSection({
   section,
   row,
   colMap,
   overrideMap,
   snapshotTimestamp,
+  onFilterField,
 }: {
   section: Section;
   row: Record<string, unknown>;
   colMap: Map<string, ColumnSchema>;
   overrideMap: Map<string, ColumnOverride>;
   snapshotTimestamp?: number;
+  onFilterField?: (column: string, value: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -559,7 +571,7 @@ function DetailSection({
         onToggle={() => setCollapsed(!collapsed)}
       />
       {!collapsed && (
-        <div className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+        <div className="mt-1.5 grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-0.5 text-xs">
           {fields.map((key) => {
             const col = colMap.get(key);
             const ovr = overrideMap.get(key);
@@ -578,6 +590,10 @@ function DetailSection({
                       snapshotTimestamp,
                     )
                   : String(val);
+            const isFilterable =
+              !!col?.filterable &&
+              !FILTER_EXCLUDED.has(key) &&
+              !!onFilterField;
 
             return (
               <KV
@@ -587,6 +603,12 @@ function DetailSection({
                 value={formatted}
                 rawValue={val}
                 row={row}
+                filterable={isFilterable}
+                onFilter={
+                  isFilterable
+                    ? () => onFilterField!(key, String(val))
+                    : undefined
+                }
               />
             );
           })}
@@ -652,12 +674,16 @@ function KV({
   value,
   rawValue,
   row,
+  filterable,
+  onFilter,
 }: {
   fieldKey: string;
   label: string;
   value: string;
   rawValue: unknown;
   row: Record<string, unknown>;
+  filterable?: boolean;
+  onFilter?: () => void;
 }) {
   const desc = COLUMN_DESCRIPTIONS[fieldKey];
   const colorClass = getThresholdClass(fieldKey, rawValue, row);
@@ -679,6 +705,17 @@ function KV({
       >
         {value}
       </span>
+      {filterable ? (
+        <button
+          onClick={onFilter}
+          className="text-[var(--text-tertiary)] hover:text-[var(--accent-text)] transition-colors p-0.5 leading-[20px]"
+          title={`Filter by ${label}`}
+        >
+          <Filter size={10} />
+        </button>
+      ) : (
+        <span />
+      )}
     </>
   );
 }

@@ -434,6 +434,9 @@ export function TabContent({
           onClose={handleCloseDetail}
           onDrillDown={handleDrillDown}
           snapshotTimestamp={snapshot.timestamp}
+          onFilterField={(column, value) => {
+            setColumnFilterPreset({ column, value });
+          }}
         />
       )}
     </div>

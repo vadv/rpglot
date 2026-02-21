@@ -3,8 +3,13 @@
 //! One `ApiSnapshot` = one complete point-in-time view of the system.
 //! All strings resolved from interner, all rates pre-computed.
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use utoipa::ToSchema;
+
+/// Serialize i64 as a JSON string to avoid JavaScript Number precision loss for 64-bit values.
+fn i64_as_string<S: Serializer>(val: &i64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&val.to_string())
+}
 
 /// Top-level atomic snapshot sent to clients.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -468,6 +473,7 @@ pub struct PgActivityRow {
     pub wait_event: String,
     pub backend_type: String,
     pub query: String,
+    #[serde(serialize_with = "i64_as_string")]
     pub query_id: i64,
     /// Query duration in seconds (now - query_start), None if no active query.
     pub query_duration_s: Option<f64>,
@@ -510,6 +516,7 @@ pub struct PgActivityRow {
 /// pg_stat_statements row with pre-computed rates.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PgStatementsRow {
+    #[serde(serialize_with = "i64_as_string")]
     pub queryid: i64,
     pub database: String,
     pub user: String,
@@ -562,7 +569,9 @@ pub struct PgStatementsRow {
 /// pg_store_plans row with pre-computed rates.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PgStorePlansRow {
+    #[serde(serialize_with = "i64_as_string")]
     pub planid: i64,
+    #[serde(serialize_with = "i64_as_string")]
     pub stmt_queryid: i64,
     pub database: String,
     pub user: String,

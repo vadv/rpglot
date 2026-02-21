@@ -1169,8 +1169,8 @@ fn generate_prc_schema() -> TabSchema {
             via: "pid".into(),
             target_field: None,
             description: "Navigate to session details for this PID".into(),
-            filter_via: None,
-            filter_target: None,
+            filter_via: Some("pid".into()),
+            filter_target: Some("pid".into()),
             condition: None,
         }],
     }
@@ -1182,7 +1182,7 @@ fn generate_pga_schema() -> TabSchema {
         description: "Active PostgreSQL backends".into(),
         entity_id: "pid".into(),
         columns: vec![
-            col("pid", "PID", DataType::Integer, None, None, true, false),
+            col("pid", "PID", DataType::Integer, None, None, true, true),
             col(
                 "database",
                 "Database",
@@ -1243,7 +1243,7 @@ fn generate_pga_schema() -> TabSchema {
             col(
                 "query_id",
                 "Query ID",
-                DataType::Integer,
+                DataType::String,
                 None,
                 None,
                 true,
@@ -1481,8 +1481,8 @@ fn generate_pga_schema() -> TabSchema {
                     field: "backend_type".into(),
                     equals: "autovacuum worker".into(),
                 }),
-                filter_via: None,
-                filter_target: None,
+                filter_via: Some("pid".into()),
+                filter_target: Some("pid".into()),
             },
             DrillDown {
                 target: "pgs".into(),
@@ -1490,8 +1490,8 @@ fn generate_pga_schema() -> TabSchema {
                 target_field: Some("queryid".into()),
                 description: "Navigate to statement stats by query_id".into(),
                 condition: None,
-                filter_via: None,
-                filter_target: None,
+                filter_via: Some("query_id".into()),
+                filter_target: Some("queryid".into()),
             },
         ],
     }
@@ -1506,7 +1506,7 @@ fn generate_pgs_schema() -> TabSchema {
             col(
                 "queryid",
                 "Query ID",
-                DataType::Integer,
+                DataType::String,
                 None,
                 None,
                 true,
@@ -1833,7 +1833,7 @@ fn generate_pgp_schema() -> TabSchema {
             col(
                 "planid",
                 "Plan ID",
-                DataType::Integer,
+                DataType::String,
                 None,
                 None,
                 true,
@@ -1842,11 +1842,11 @@ fn generate_pgp_schema() -> TabSchema {
             col(
                 "stmt_queryid",
                 "Query ID",
-                DataType::Integer,
+                DataType::String,
                 None,
                 None,
                 true,
-                false,
+                true,
             ),
             col(
                 "database",
@@ -2085,8 +2085,8 @@ fn generate_pgp_schema() -> TabSchema {
             via: "stmt_queryid".into(),
             target_field: Some("queryid".into()),
             description: "View parent statement in PGS".into(),
-            filter_via: None,
-            filter_target: None,
+            filter_via: Some("stmt_queryid".into()),
+            filter_target: Some("queryid".into()),
             condition: None,
         }],
     }
@@ -3297,8 +3297,8 @@ fn generate_pgl_schema() -> TabSchema {
             via: "pid".into(),
             target_field: None,
             description: "Navigate to session details for this PID".into(),
-            filter_via: None,
-            filter_target: None,
+            filter_via: Some("pid".into()),
+            filter_target: Some("pid".into()),
             condition: None,
         }],
     }
@@ -3310,7 +3310,7 @@ fn generate_pgv_schema() -> TabSchema {
         description: "Currently running VACUUM operations (PG 9.6+)".into(),
         entity_id: "pid".into(),
         columns: vec![
-            col("pid", "PID", DataType::Integer, None, None, true, false),
+            col("pid", "PID", DataType::Integer, None, None, true, true),
             col(
                 "database",
                 "Database",
@@ -3459,8 +3459,8 @@ fn generate_pgv_schema() -> TabSchema {
             via: "pid".into(),
             target_field: Some("pid".into()),
             description: "View session details".into(),
-            filter_via: None,
-            filter_target: None,
+            filter_via: Some("pid".into()),
+            filter_target: Some("pid".into()),
             condition: None,
         }],
     }

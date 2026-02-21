@@ -420,16 +420,32 @@ export function DataTable({
               className="pl-7 pr-2 py-1 text-xs bg-[var(--bg-elevated)] border border-[var(--border-default)] rounded text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] w-48 transition-colors"
             />
           </div>
-          {columnFilters.length > 0 && (
-            <button
-              onClick={() => setColumnFilters([])}
-              className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-[var(--accent-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent)] hover:text-white cursor-pointer transition-colors"
-            >
-              <Filter size={10} />
-              {columnFilters.length}
-              <X size={10} />
-            </button>
-          )}
+          {columnFilters.map((cf) => {
+            const colSchema = allColumns.find((c) => c.key === cf.id);
+            const label = colSchema?.label ?? cf.id;
+            const values = cf.value as string[];
+            const display =
+              values.length === 1
+                ? values[0]
+                : `${values.length} values`;
+            return (
+              <button
+                key={cf.id}
+                onClick={() =>
+                  setColumnFilters((prev) =>
+                    prev.filter((f) => f.id !== cf.id),
+                  )
+                }
+                className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-[var(--accent-subtle)] text-[var(--accent-text)] hover:bg-[var(--accent)] hover:text-white cursor-pointer transition-colors max-w-xs truncate"
+              >
+                <Filter size={10} className="shrink-0" />
+                <span className="truncate">
+                  {label}: {display}
+                </span>
+                <X size={10} className="shrink-0" />
+              </button>
+            );
+          })}
           <span className="text-xs text-[var(--text-tertiary)] tabular-nums font-mono">
             {table.getFilteredRowModel().rows.length} rows
           </span>

@@ -235,7 +235,7 @@ export interface PgActivityRow {
   wait_event: string;
   backend_type: string;
   query: string;
-  query_id: number;
+  query_id: string;
   query_duration_s: number | null;
   xact_duration_s: number | null;
   backend_duration_s: number | null;
@@ -255,7 +255,7 @@ export interface PgActivityRow {
 }
 
 export interface PgStatementsRow {
-  queryid: number;
+  queryid: string;
   database: string;
   user: string;
   query: string;
@@ -287,8 +287,8 @@ export interface PgStatementsRow {
 }
 
 export interface PgStorePlansRow {
-  planid: number;
-  stmt_queryid: number;
+  planid: string;
+  stmt_queryid: string;
   database: string;
   user: string;
   query: string;
