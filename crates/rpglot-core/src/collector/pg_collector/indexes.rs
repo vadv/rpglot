@@ -108,7 +108,7 @@ impl PostgresCollector {
         self.indexes_cache_time = Some(Instant::now());
 
         // Activity-only filtering: only keep rows where cumulative counters changed.
-        let filtered = filter_indexes(&all_results, &self.pgi_prev, self.pgi_first_collect);
+        let filtered = super::filter_active(&all_results, &self.pgi_prev, self.pgi_first_collect);
 
         // Update prev with the full (unfiltered) snapshot.
         self.pgi_prev = all_results
@@ -204,41 +204,14 @@ fn parse_index_statio_row(row: &postgres::Row) -> Option<IndexStatioRow> {
     })
 }
 
-/// Filters indexes to only include rows where any cumulative counter changed.
-///
-/// On first collect (`first_collect == true`), returns all rows (full snapshot).
-fn filter_indexes(
-    rows: &[PgStatUserIndexesInfo],
-    prev: &HashMap<u32, PgStatUserIndexesInfo>,
-    first_collect: bool,
-) -> Vec<PgStatUserIndexesInfo> {
-    if first_collect {
-        return rows.to_vec();
-    }
-    rows.iter()
-        .filter(|row| match prev.get(&row.indexrelid) {
-            Some(prev_row) => index_changed(row, prev_row),
-            None => true,
-        })
-        .cloned()
-        .collect()
-}
-
-/// Returns true if any cumulative counter changed between two snapshots of the same indexrelid.
-fn index_changed(curr: &PgStatUserIndexesInfo, prev: &PgStatUserIndexesInfo) -> bool {
-    curr.idx_scan != prev.idx_scan
-        || curr.idx_tup_read != prev.idx_tup_read
-        || curr.idx_tup_fetch != prev.idx_tup_fetch
-        || curr.idx_blks_read != prev.idx_blks_read
-        || curr.idx_blks_hit != prev.idx_blks_hit
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn filter_indexes_first_collect_returns_all() {
+    fn filter_active_first_collect_returns_all() {
+        use crate::collector::pg_collector::filter_active;
+
         let rows = vec![
             PgStatUserIndexesInfo {
                 indexrelid: 1,
@@ -252,12 +225,14 @@ mod tests {
             },
         ];
         let prev = HashMap::new();
-        let filtered = filter_indexes(&rows, &prev, true);
+        let filtered = filter_active(&rows, &prev, true);
         assert_eq!(filtered.len(), 2);
     }
 
     #[test]
-    fn filter_indexes_removes_unchanged() {
+    fn filter_active_removes_unchanged() {
+        use crate::collector::pg_collector::filter_active;
+
         let unchanged = PgStatUserIndexesInfo {
             indexrelid: 1,
             idx_scan: 10,
@@ -287,16 +262,18 @@ mod tests {
             },
         );
 
-        let filtered = filter_indexes(&rows, &prev, false);
+        let filtered = filter_active(&rows, &prev, false);
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].indexrelid, 2);
         assert_eq!(filtered[1].indexrelid, 3);
     }
 
     #[test]
-    fn index_changed_detects_all_cumulative_fields() {
+    fn activity_changed_detects_all_cumulative_fields() {
+        use crate::storage::model::ActivityFiltered;
+
         let base = PgStatUserIndexesInfo::default();
-        assert!(!index_changed(&base, &base));
+        assert!(!base.activity_changed(&base));
 
         let fields: Vec<fn(&mut PgStatUserIndexesInfo)> = vec![
             |i| i.idx_scan = 1,
@@ -309,16 +286,18 @@ mod tests {
         for mutator in fields {
             let mut m = base.clone();
             mutator(&mut m);
-            assert!(index_changed(&m, &base));
+            assert!(m.activity_changed(&base));
         }
     }
 
     #[test]
-    fn index_changed_ignores_non_cumulative_fields() {
+    fn activity_changed_ignores_non_cumulative_fields() {
+        use crate::storage::model::ActivityFiltered;
+
         let base = PgStatUserIndexesInfo::default();
 
         let mut m = base.clone();
         m.size_bytes = 999999;
-        assert!(!index_changed(&m, &base));
+        assert!(!m.activity_changed(&base));
     }
 }

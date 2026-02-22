@@ -3,7 +3,24 @@
 //! These structures store PostgreSQL server activity and statistics,
 //! enabling monitoring of database performance and query patterns.
 
+use std::hash::Hash;
+
 use serde::{Deserialize, Serialize};
+
+/// Trait for pg_stat_* rows that support activity-only filtering.
+///
+/// Implementations define the entity key and which cumulative counters
+/// indicate that the row has changed since the previous snapshot.
+/// Used by `filter_active()` in the collector to skip unchanged rows.
+pub trait ActivityFiltered: Clone {
+    type Key: Eq + Hash + Copy;
+
+    /// Returns the unique identity key for this row (e.g. queryid, relid, indexrelid).
+    fn activity_key(&self) -> Self::Key;
+
+    /// Returns true if any cumulative counter changed compared to `prev`.
+    fn activity_changed(&self, prev: &Self) -> bool;
+}
 
 /// Active session information from pg_stat_activity.
 ///
@@ -1010,4 +1027,80 @@ pub struct PgSettingEntry {
     pub setting: String,
     /// Unit reported by pg_settings.unit (e.g. "8kB", "ms", "s", "kB", or empty).
     pub unit: String,
+}
+
+// ============================================================
+// ActivityFiltered implementations
+// ============================================================
+
+impl ActivityFiltered for PgStatStatementsInfo {
+    type Key = i64;
+
+    fn activity_key(&self) -> i64 {
+        self.queryid
+    }
+
+    fn activity_changed(&self, prev: &Self) -> bool {
+        self.calls != prev.calls
+            || self.rows != prev.rows
+            || self.total_exec_time != prev.total_exec_time
+            || self.total_plan_time != prev.total_plan_time
+            || self.shared_blks_read != prev.shared_blks_read
+            || self.shared_blks_hit != prev.shared_blks_hit
+            || self.shared_blks_written != prev.shared_blks_written
+            || self.shared_blks_dirtied != prev.shared_blks_dirtied
+            || self.local_blks_read != prev.local_blks_read
+            || self.local_blks_written != prev.local_blks_written
+            || self.temp_blks_read != prev.temp_blks_read
+            || self.temp_blks_written != prev.temp_blks_written
+            || self.wal_records != prev.wal_records
+            || self.wal_bytes != prev.wal_bytes
+    }
+}
+
+impl ActivityFiltered for PgStatUserTablesInfo {
+    type Key = u32;
+
+    fn activity_key(&self) -> u32 {
+        self.relid
+    }
+
+    fn activity_changed(&self, prev: &Self) -> bool {
+        self.seq_scan != prev.seq_scan
+            || self.seq_tup_read != prev.seq_tup_read
+            || self.idx_scan != prev.idx_scan
+            || self.idx_tup_fetch != prev.idx_tup_fetch
+            || self.n_tup_ins != prev.n_tup_ins
+            || self.n_tup_upd != prev.n_tup_upd
+            || self.n_tup_del != prev.n_tup_del
+            || self.n_tup_hot_upd != prev.n_tup_hot_upd
+            || self.vacuum_count != prev.vacuum_count
+            || self.autovacuum_count != prev.autovacuum_count
+            || self.analyze_count != prev.analyze_count
+            || self.autoanalyze_count != prev.autoanalyze_count
+            || self.heap_blks_read != prev.heap_blks_read
+            || self.heap_blks_hit != prev.heap_blks_hit
+            || self.idx_blks_read != prev.idx_blks_read
+            || self.idx_blks_hit != prev.idx_blks_hit
+            || self.toast_blks_read != prev.toast_blks_read
+            || self.toast_blks_hit != prev.toast_blks_hit
+            || self.tidx_blks_read != prev.tidx_blks_read
+            || self.tidx_blks_hit != prev.tidx_blks_hit
+    }
+}
+
+impl ActivityFiltered for PgStatUserIndexesInfo {
+    type Key = u32;
+
+    fn activity_key(&self) -> u32 {
+        self.indexrelid
+    }
+
+    fn activity_changed(&self, prev: &Self) -> bool {
+        self.idx_scan != prev.idx_scan
+            || self.idx_tup_read != prev.idx_tup_read
+            || self.idx_tup_fetch != prev.idx_tup_fetch
+            || self.idx_blks_read != prev.idx_blks_read
+            || self.idx_blks_hit != prev.idx_blks_hit
+    }
 }

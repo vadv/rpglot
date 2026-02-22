@@ -107,7 +107,7 @@ impl PostgresCollector {
         self.tables_cache_time = Some(Instant::now());
 
         // Activity-only filtering: only keep rows where cumulative counters changed.
-        let filtered = filter_tables(&all_results, &self.pgt_prev, self.pgt_first_collect);
+        let filtered = super::filter_active(&all_results, &self.pgt_prev, self.pgt_first_collect);
 
         // Update prev with the full (unfiltered) snapshot.
         self.pgt_prev = all_results
@@ -239,56 +239,14 @@ fn parse_table_row(
     Some((info, schemaname, relname, tablespace))
 }
 
-/// Filters tables to only include rows where any cumulative counter changed.
-///
-/// On first collect (`first_collect == true`), returns all rows (full snapshot).
-fn filter_tables(
-    rows: &[PgStatUserTablesInfo],
-    prev: &HashMap<u32, PgStatUserTablesInfo>,
-    first_collect: bool,
-) -> Vec<PgStatUserTablesInfo> {
-    if first_collect {
-        return rows.to_vec();
-    }
-    rows.iter()
-        .filter(|row| match prev.get(&row.relid) {
-            Some(prev_row) => table_changed(row, prev_row),
-            None => true,
-        })
-        .cloned()
-        .collect()
-}
-
-/// Returns true if any cumulative counter changed between two snapshots of the same relid.
-fn table_changed(curr: &PgStatUserTablesInfo, prev: &PgStatUserTablesInfo) -> bool {
-    curr.seq_scan != prev.seq_scan
-        || curr.seq_tup_read != prev.seq_tup_read
-        || curr.idx_scan != prev.idx_scan
-        || curr.idx_tup_fetch != prev.idx_tup_fetch
-        || curr.n_tup_ins != prev.n_tup_ins
-        || curr.n_tup_upd != prev.n_tup_upd
-        || curr.n_tup_del != prev.n_tup_del
-        || curr.n_tup_hot_upd != prev.n_tup_hot_upd
-        || curr.vacuum_count != prev.vacuum_count
-        || curr.autovacuum_count != prev.autovacuum_count
-        || curr.analyze_count != prev.analyze_count
-        || curr.autoanalyze_count != prev.autoanalyze_count
-        || curr.heap_blks_read != prev.heap_blks_read
-        || curr.heap_blks_hit != prev.heap_blks_hit
-        || curr.idx_blks_read != prev.idx_blks_read
-        || curr.idx_blks_hit != prev.idx_blks_hit
-        || curr.toast_blks_read != prev.toast_blks_read
-        || curr.toast_blks_hit != prev.toast_blks_hit
-        || curr.tidx_blks_read != prev.tidx_blks_read
-        || curr.tidx_blks_hit != prev.tidx_blks_hit
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn filter_tables_first_collect_returns_all() {
+    fn filter_active_first_collect_returns_all() {
+        use crate::collector::pg_collector::filter_active;
+
         let rows = vec![
             PgStatUserTablesInfo {
                 relid: 1,
@@ -302,12 +260,14 @@ mod tests {
             },
         ];
         let prev = HashMap::new();
-        let filtered = filter_tables(&rows, &prev, true);
+        let filtered = filter_active(&rows, &prev, true);
         assert_eq!(filtered.len(), 2);
     }
 
     #[test]
-    fn filter_tables_removes_unchanged() {
+    fn filter_active_removes_unchanged() {
+        use crate::collector::pg_collector::filter_active;
+
         let unchanged = PgStatUserTablesInfo {
             relid: 1,
             seq_scan: 10,
@@ -334,15 +294,17 @@ mod tests {
             },
         );
 
-        let filtered = filter_tables(&rows, &prev, false);
+        let filtered = filter_active(&rows, &prev, false);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].relid, 2);
     }
 
     #[test]
-    fn table_changed_detects_all_cumulative_fields() {
+    fn activity_changed_detects_all_cumulative_fields() {
+        use crate::storage::model::ActivityFiltered;
+
         let base = PgStatUserTablesInfo::default();
-        assert!(!table_changed(&base, &base));
+        assert!(!base.activity_changed(&base));
 
         let fields: Vec<fn(&mut PgStatUserTablesInfo)> = vec![
             |t| t.seq_scan = 1,
@@ -370,12 +332,14 @@ mod tests {
         for mutator in fields {
             let mut m = base.clone();
             mutator(&mut m);
-            assert!(table_changed(&m, &base));
+            assert!(m.activity_changed(&base));
         }
     }
 
     #[test]
-    fn table_changed_ignores_gauge_fields() {
+    fn activity_changed_ignores_gauge_fields() {
+        use crate::storage::model::ActivityFiltered;
+
         let base = PgStatUserTablesInfo::default();
 
         // Gauge fields should NOT trigger change.
@@ -387,6 +351,6 @@ mod tests {
         m.last_autovacuum = 12345;
         m.last_analyze = 12345;
         m.last_autoanalyze = 12345;
-        assert!(!table_changed(&m, &base));
+        assert!(!m.activity_changed(&base));
     }
 }

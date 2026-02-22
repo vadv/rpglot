@@ -41,8 +41,8 @@ use tracing::{debug, info, warn};
 
 use super::log_collector::LogCollector;
 use crate::storage::model::{
-    PgSettingEntry, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
-    PgStorePlansInfo, ReplicationStatus,
+    ActivityFiltered, PgSettingEntry, PgStatStatementsInfo, PgStatUserIndexesInfo,
+    PgStatUserTablesInfo, PgStorePlansInfo, ReplicationStatus,
 };
 use indexes::PgStatUserIndexesCacheEntry;
 use queries::StorePlansFork;
@@ -80,6 +80,27 @@ impl std::error::Error for PgCollectError {}
 pub(crate) struct DatabaseClient {
     pub datname: String,
     pub client: Client,
+}
+
+/// Filters rows to only include those where cumulative counters changed.
+///
+/// On first collect (`first_collect == true`), returns all rows (full snapshot baseline).
+/// New rows (not present in `prev`) are always included.
+pub(crate) fn filter_active<T: ActivityFiltered>(
+    rows: &[T],
+    prev: &HashMap<T::Key, T>,
+    first_collect: bool,
+) -> Vec<T> {
+    if first_collect {
+        return rows.to_vec();
+    }
+    rows.iter()
+        .filter(|row| match prev.get(&row.activity_key()) {
+            Some(prev_row) => row.activity_changed(prev_row),
+            None => true,
+        })
+        .cloned()
+        .collect()
 }
 
 /// PostgreSQL metrics collector.

@@ -212,7 +212,7 @@ impl PostgresCollector {
                 self.statements_cache = entries;
 
                 // Activity-only filtering: only keep rows where cumulative counters changed.
-                let filtered = filter_statements(&out, &self.pgs_prev, self.pgs_first_collect);
+                let filtered = super::filter_active(&out, &self.pgs_prev, self.pgs_first_collect);
 
                 // Update prev with the full (unfiltered) snapshot.
                 self.pgs_prev = out
@@ -271,44 +271,6 @@ impl PostgresCollector {
             })
             .collect()
     }
-}
-
-/// Filters statements to only include rows where any cumulative counter changed.
-///
-/// On first collect (`first_collect == true`), returns all rows (full snapshot).
-fn filter_statements(
-    rows: &[PgStatStatementsInfo],
-    prev: &HashMap<i64, PgStatStatementsInfo>,
-    first_collect: bool,
-) -> Vec<PgStatStatementsInfo> {
-    if first_collect {
-        return rows.to_vec();
-    }
-    rows.iter()
-        .filter(|row| match prev.get(&row.queryid) {
-            Some(prev_row) => stmt_changed(row, prev_row),
-            None => true, // new row
-        })
-        .cloned()
-        .collect()
-}
-
-/// Returns true if any cumulative counter changed between two snapshots of the same queryid.
-fn stmt_changed(curr: &PgStatStatementsInfo, prev: &PgStatStatementsInfo) -> bool {
-    curr.calls != prev.calls
-        || curr.rows != prev.rows
-        || curr.total_exec_time != prev.total_exec_time
-        || curr.total_plan_time != prev.total_plan_time
-        || curr.shared_blks_read != prev.shared_blks_read
-        || curr.shared_blks_hit != prev.shared_blks_hit
-        || curr.shared_blks_written != prev.shared_blks_written
-        || curr.shared_blks_dirtied != prev.shared_blks_dirtied
-        || curr.local_blks_read != prev.local_blks_read
-        || curr.local_blks_written != prev.local_blks_written
-        || curr.temp_blks_read != prev.temp_blks_read
-        || curr.temp_blks_written != prev.temp_blks_written
-        || curr.wal_records != prev.wal_records
-        || curr.wal_bytes != prev.wal_bytes
 }
 
 #[cfg(test)]
@@ -386,7 +348,9 @@ mod tests {
     }
 
     #[test]
-    fn filter_statements_first_collect_returns_all() {
+    fn filter_active_first_collect_returns_all() {
+        use crate::collector::pg_collector::filter_active;
+
         let rows = vec![
             PgStatStatementsInfo {
                 queryid: 1,
@@ -400,12 +364,14 @@ mod tests {
             },
         ];
         let prev = HashMap::new();
-        let filtered = filter_statements(&rows, &prev, true);
+        let filtered = filter_active(&rows, &prev, true);
         assert_eq!(filtered.len(), 2);
     }
 
     #[test]
-    fn filter_statements_removes_unchanged() {
+    fn filter_active_removes_unchanged() {
+        use crate::collector::pg_collector::filter_active;
+
         let unchanged = PgStatStatementsInfo {
             queryid: 1,
             calls: 10,
@@ -440,74 +406,76 @@ mod tests {
         );
         // queryid 3 not in prev → new → should be kept
 
-        let filtered = filter_statements(&rows, &prev, false);
+        let filtered = filter_active(&rows, &prev, false);
         assert_eq!(filtered.len(), 2);
         assert_eq!(filtered[0].queryid, 2);
         assert_eq!(filtered[1].queryid, 3);
     }
 
     #[test]
-    fn stmt_changed_detects_all_cumulative_fields() {
+    fn activity_changed_detects_all_cumulative_fields() {
+        use crate::storage::model::ActivityFiltered;
+
         let base = PgStatStatementsInfo::default();
 
         // No change
-        assert!(!stmt_changed(&base, &base));
+        assert!(!base.activity_changed(&base));
 
         // Each cumulative field individually
         let mut m = base.clone();
         m.calls = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.rows = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.total_exec_time = 1.0;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.total_plan_time = 1.0;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.shared_blks_read = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.shared_blks_hit = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.shared_blks_written = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.shared_blks_dirtied = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.local_blks_read = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.local_blks_written = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.temp_blks_read = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.temp_blks_written = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.wal_records = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
 
         let mut m = base.clone();
         m.wal_bytes = 1;
-        assert!(stmt_changed(&m, &base));
+        assert!(m.activity_changed(&base));
     }
 }

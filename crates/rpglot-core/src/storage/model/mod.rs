@@ -21,10 +21,10 @@ mod system;
 // Re-export all public types for convenient access
 pub use cgroup::{CgroupCpuInfo, CgroupInfo, CgroupIoInfo, CgroupMemoryInfo, CgroupPidsInfo};
 pub use postgres::{
-    ErrorCategory, PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventType, PgLogEventsInfo,
-    PgLogSeverity, PgSettingEntry, PgStatActivityInfo, PgStatBgwriterInfo, PgStatDatabaseInfo,
-    PgStatProgressVacuumInfo, PgStatStatementsInfo, PgStatUserIndexesInfo, PgStatUserTablesInfo,
-    PgStorePlansInfo, ReplicaInfo, ReplicationStatus,
+    ActivityFiltered, ErrorCategory, PgLockTreeNode, PgLogEntry, PgLogEventEntry, PgLogEventType,
+    PgLogEventsInfo, PgLogSeverity, PgSettingEntry, PgStatActivityInfo, PgStatBgwriterInfo,
+    PgStatDatabaseInfo, PgStatProgressVacuumInfo, PgStatStatementsInfo, PgStatUserIndexesInfo,
+    PgStatUserTablesInfo, PgStorePlansInfo, ReplicaInfo, ReplicationStatus,
 };
 #[allow(unused_imports)]
 pub use process::{ProcessCpuInfo, ProcessDskInfo, ProcessInfo, ProcessMemInfo};
