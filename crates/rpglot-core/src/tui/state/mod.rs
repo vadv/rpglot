@@ -38,19 +38,6 @@ impl Tab {
     }
 }
 
-/// Per-tab state for filter, sort, and selection.
-#[derive(Debug, Clone, Default)]
-pub struct TabState {
-    /// Filter string.
-    pub filter: Option<String>,
-    /// Sort column index.
-    pub sort_column: usize,
-    /// Sort direction (true = ascending).
-    pub sort_ascending: bool,
-    /// Selected row index.
-    pub selected: usize,
-}
-
 impl Tab {
     /// Returns the display name of the tab.
     pub fn name(&self) -> &'static str {
