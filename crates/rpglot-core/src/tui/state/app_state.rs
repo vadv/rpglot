@@ -8,7 +8,7 @@ use crate::storage::Snapshot;
 use super::{
     CachedWidths, InputMode, PgActivityTabState, PgErrorsTabState, PgIndexesTabState,
     PgLocksTabState, PgStatementsTabState, PgStorePlansTabState, PgTablesTabState, PopupState,
-    ProcessRow, ProcessViewMode, Tab, TabState, TableState,
+    ProcessRow, ProcessViewMode, Tab, TableState,
 };
 
 /// Main application state.
@@ -52,60 +52,29 @@ pub struct AppState {
     pub cached_widths: Option<CachedWidths>,
     /// Terminal width for cache invalidation on resize.
     pub terminal_width: u16,
-    /// Disk filter (for Disk tab).
-    pub disk_filter: Option<String>,
-    /// Disk sort column index.
-    pub disk_sort_column: usize,
-    /// Disk sort direction.
-    pub disk_sort_ascending: bool,
-    /// Network filter (for Network tab).
-    pub net_filter: Option<String>,
-    /// Network sort column index.
-    pub net_sort_column: usize,
-    /// Network sort direction.
-    pub net_sort_ascending: bool,
     /// Active popup state. Only one popup can be open at a time.
     pub popup: PopupState,
-    /// Per-tab state for filter, sort, and selection.
-    pub tab_states: HashMap<Tab, TabState>,
     /// PostgreSQL Activity (PGA) tab state.
     pub pga: PgActivityTabState,
     /// Flag set when user requests drill-down navigation (>/J keys).
     /// Cleared after processing by app.rs.
     pub drill_down_requested: bool,
-
-    // ===== pg_stat_statements (PGS tab) =====
     /// pg_stat_statements (PGS) tab state.
     pub pgs: PgStatementsTabState,
-
-    // ===== pg_store_plans (PGP tab) =====
     /// pg_store_plans (PGP) tab state.
     pub pgp: PgStorePlansTabState,
-
-    // ===== pg_stat_user_tables (PGT tab) =====
     /// pg_stat_user_tables (PGT) tab state.
     pub pgt: PgTablesTabState,
-
-    // ===== pg_stat_user_indexes (PGI tab) =====
     /// pg_stat_user_indexes (PGI) tab state.
     pub pgi: PgIndexesTabState,
-
-    // ===== pg_log_errors (PGE tab) =====
     /// PostgreSQL log errors (PGE) tab state.
     pub pge: PgErrorsTabState,
-
-    // ===== pg_locks tree (PGL tab) =====
     /// pg_locks tree (PGL) tab state.
     pub pgl: PgLocksTabState,
-
-    // ===== Status message =====
     /// Temporary status message shown in the header (e.g., why an action was blocked).
     pub status_message: Option<String>,
-
-    // ===== Ratatui TableState for scrolling =====
     /// Ratatui table state for PRC tab (enables auto-scrolling).
     pub prc_ratatui_state: RatatuiTableState,
-
     /// Whether a popup was open on the previous frame.
     /// Used to force full redraw when popup closes.
     pub popup_was_open: bool,
@@ -139,14 +108,7 @@ impl AppState {
             horizontal_scroll: 0,
             cached_widths: None,
             terminal_width: 0,
-            disk_filter: None,
-            disk_sort_column: 0,
-            disk_sort_ascending: true,
-            net_filter: None,
-            net_sort_column: 0,
-            net_sort_ascending: true,
             popup: PopupState::None,
-            tab_states: HashMap::new(),
             pga: PgActivityTabState::default(),
             drill_down_requested: false,
             pgs: PgStatementsTabState::default(),
@@ -155,129 +117,9 @@ impl AppState {
             pgi: PgIndexesTabState::default(),
             pge: PgErrorsTabState::default(),
             pgl: PgLocksTabState::default(),
-
             status_message: None,
-
             prc_ratatui_state: RatatuiTableState::default(),
-
             popup_was_open: false,
-        }
-    }
-
-    /// Saves the current tab state before switching.
-    pub fn save_current_tab_state(&mut self) {
-        let state = match self.current_tab {
-            Tab::Processes => TabState {
-                filter: self.process_table.filter.clone(),
-                sort_column: self.process_table.sort_column,
-                sort_ascending: self.process_table.sort_ascending,
-                selected: self.process_table.selected,
-            },
-            Tab::PostgresActive => TabState {
-                filter: self.pga.filter.clone(),
-                sort_column: self.pga.sort_column,
-                sort_ascending: self.pga.sort_ascending,
-                selected: self.pga.selected,
-            },
-            Tab::PgStatements => TabState {
-                filter: self.pgs.filter.clone(),
-                sort_column: self.pgs.sort_column,
-                sort_ascending: self.pgs.sort_ascending,
-                selected: self.pgs.selected,
-            },
-            Tab::PgStorePlans => TabState {
-                filter: self.pgp.filter.clone(),
-                sort_column: self.pgp.sort_column,
-                sort_ascending: self.pgp.sort_ascending,
-                selected: self.pgp.selected,
-            },
-            Tab::PgTables => TabState {
-                filter: self.pgt.filter.clone(),
-                sort_column: self.pgt.sort_column,
-                sort_ascending: self.pgt.sort_ascending,
-                selected: self.pgt.selected,
-            },
-            Tab::PgIndexes => TabState {
-                filter: self.pgi.filter.clone(),
-                sort_column: self.pgi.sort_column,
-                sort_ascending: self.pgi.sort_ascending,
-                selected: self.pgi.selected,
-            },
-            Tab::PgErrors => TabState {
-                filter: self.pge.filter.clone(),
-                sort_column: self.pge.sort_column,
-                sort_ascending: self.pge.sort_ascending,
-                selected: self.pge.selected,
-            },
-            Tab::PgLocks => TabState {
-                filter: self.pgl.filter.clone(),
-                sort_column: 0,
-                sort_ascending: false,
-                selected: self.pgl.selected,
-            },
-        };
-        self.tab_states.insert(self.current_tab, state);
-    }
-
-    /// Restores tab state for the given tab.
-    pub fn restore_tab_state(&mut self, tab: Tab) {
-        if let Some(state) = self.tab_states.get(&tab) {
-            match tab {
-                Tab::Processes => {
-                    self.process_table.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.process_table.sort_column = state.sort_column;
-                    self.process_table.sort_ascending = state.sort_ascending;
-                    self.process_table.selected = state.selected;
-                }
-                Tab::PostgresActive => {
-                    self.pga.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pga.sort_column = state.sort_column;
-                    self.pga.sort_ascending = state.sort_ascending;
-                    self.pga.selected = state.selected;
-                }
-                Tab::PgStatements => {
-                    self.pgs.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pgs.sort_column = state.sort_column;
-                    self.pgs.sort_ascending = state.sort_ascending;
-                    self.pgs.selected = state.selected;
-                }
-                Tab::PgStorePlans => {
-                    self.pgp.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pgp.sort_column = state.sort_column;
-                    self.pgp.sort_ascending = state.sort_ascending;
-                    self.pgp.selected = state.selected;
-                }
-                Tab::PgTables => {
-                    self.pgt.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pgt.sort_column = state.sort_column;
-                    self.pgt.sort_ascending = state.sort_ascending;
-                    self.pgt.selected = state.selected;
-                }
-                Tab::PgIndexes => {
-                    self.pgi.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pgi.sort_column = state.sort_column;
-                    self.pgi.sort_ascending = state.sort_ascending;
-                    self.pgi.selected = state.selected;
-                }
-                Tab::PgErrors => {
-                    self.pge.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pge.sort_column = state.sort_column;
-                    self.pge.sort_ascending = state.sort_ascending;
-                    self.pge.selected = state.selected;
-                }
-                Tab::PgLocks => {
-                    self.pgl.filter = state.filter.clone();
-                    self.filter_input = state.filter.clone().unwrap_or_default();
-                    self.pgl.selected = state.selected;
-                }
-            }
         }
     }
 
@@ -286,7 +128,22 @@ impl AppState {
         self.popup.is_detail_open()
     }
 
-    /// Switches to a new tab, saving current and restoring target state.
+    /// Returns the filter string for the current tab.
+    pub fn get_current_filter(&self) -> Option<String> {
+        match self.current_tab {
+            Tab::Processes => self.process_table.filter.clone(),
+            Tab::PostgresActive => self.pga.filter.clone(),
+            Tab::PgStatements => self.pgs.filter.clone(),
+            Tab::PgStorePlans => self.pgp.filter.clone(),
+            Tab::PgTables => self.pgt.filter.clone(),
+            Tab::PgIndexes => self.pgi.filter.clone(),
+            Tab::PgErrors => self.pge.filter.clone(),
+            Tab::PgLocks => self.pgl.filter.clone(),
+        }
+    }
+
+    /// Switches to a new tab, clearing tracked entities on the old tab
+    /// and syncing the filter input buffer from the new tab's filter.
     pub fn switch_tab(&mut self, new_tab: Tab) {
         if self.current_tab != new_tab {
             match self.current_tab {
@@ -304,7 +161,7 @@ impl AppState {
                 }
                 Tab::PgIndexes => {
                     self.pgi.tracked_indexrelid = None;
-                    self.pgi.filter_relid = None; // clear drill-down filter on manual tab switch
+                    self.pgi.filter_relid = None;
                 }
                 Tab::PgErrors => {
                     self.pge.tracked_pattern_hash = None;
@@ -314,9 +171,9 @@ impl AppState {
                 }
                 Tab::Processes => {}
             }
-            self.save_current_tab_state();
             self.current_tab = new_tab;
-            self.restore_tab_state(new_tab);
+            // Sync filter_input from the new tab's filter
+            self.filter_input = self.get_current_filter().unwrap_or_default();
         }
     }
 
@@ -347,27 +204,5 @@ impl AppState {
                 .unwrap_or(std::cmp::Ordering::Equal);
             if asc { cmp } else { cmp.reverse() }
         });
-    }
-
-    /// Cycles to next sort column for disk tab.
-    pub fn next_disk_sort_column(&mut self) {
-        // 10 columns: Device r/s rMB/s rrqm/s r_await w/s wMB/s wrqm/s w_await %util
-        self.disk_sort_column = (self.disk_sort_column + 1) % 10;
-    }
-
-    /// Toggles sort direction for disk tab.
-    pub fn toggle_disk_sort_direction(&mut self) {
-        self.disk_sort_ascending = !self.disk_sort_ascending;
-    }
-
-    /// Cycles to next sort column for network tab.
-    pub fn next_net_sort_column(&mut self) {
-        // 9 columns: Interface rxMB/s rxPkt/s rxErr/s rxDrp/s txMB/s txPkt/s txErr/s txDrp/s
-        self.net_sort_column = (self.net_sort_column + 1) % 9;
-    }
-
-    /// Toggles sort direction for network tab.
-    pub fn toggle_net_sort_direction(&mut self) {
-        self.net_sort_ascending = !self.net_sort_ascending;
     }
 }

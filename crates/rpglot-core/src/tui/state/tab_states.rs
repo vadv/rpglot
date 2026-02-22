@@ -10,6 +10,42 @@ use super::{
 };
 use crate::tui::navigable::NavigableTable;
 
+/// Generic selection resolution: tracks entity by ID across sort/filter changes.
+///
+/// - Consumes `navigate_to` (drill-down target) if set.
+/// - Finds `tracked` entity in `row_ids`, updating `selected` index.
+/// - If entity disappeared, clears `tracked`.
+/// - Clamps `selected` to valid bounds and syncs ratatui state.
+pub fn resolve_selection_by_id<K: Eq + Copy>(
+    selected: &mut usize,
+    tracked: &mut Option<K>,
+    navigate_to: &mut Option<K>,
+    ratatui_state: &mut RatatuiTableState,
+    row_ids: &[K],
+) {
+    if let Some(target) = navigate_to.take() {
+        *tracked = Some(target);
+    }
+
+    if let Some(t) = *tracked {
+        if let Some(idx) = row_ids.iter().position(|id| *id == t) {
+            *selected = idx;
+        } else {
+            *tracked = None;
+        }
+    }
+
+    if !row_ids.is_empty() {
+        *selected = (*selected).min(row_ids.len() - 1);
+        *tracked = Some(row_ids[*selected]);
+    } else {
+        *selected = 0;
+        *tracked = None;
+    }
+
+    ratatui_state.select(Some(*selected));
+}
+
 // ===========================================================================
 // PGL (pg_locks tree) tab state
 // ===========================================================================
@@ -36,26 +72,14 @@ impl NavigableTable for PgLocksTabState {
 }
 
 impl PgLocksTabState {
-    /// Resolves selection after filtering: applies tracked PID,
-    /// clamps selected index, and syncs ratatui state.
     pub fn resolve_selection(&mut self, row_pids: &[i32]) {
-        if let Some(tracked) = self.tracked_pid {
-            if let Some(idx) = row_pids.iter().position(|&pid| pid == tracked) {
-                self.selected = idx;
-            } else {
-                self.tracked_pid = None;
-            }
-        }
-
-        if !row_pids.is_empty() {
-            self.selected = self.selected.min(row_pids.len() - 1);
-            self.tracked_pid = Some(row_pids[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_pid = None;
-        }
-
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_pid,
+            &mut None,
+            &mut self.ratatui_state,
+            row_pids,
+        );
     }
 }
 
@@ -111,26 +135,14 @@ impl PgErrorsTabState {
         self.sort_ascending = !self.sort_ascending;
     }
 
-    /// Resolves selection after filtering: applies tracked pattern_hash,
-    /// clamps selected index, and syncs ratatui state.
     pub fn resolve_selection(&mut self, row_hashes: &[u64]) {
-        if let Some(tracked) = self.tracked_pattern_hash {
-            if let Some(idx) = row_hashes.iter().position(|&h| h == tracked) {
-                self.selected = idx;
-            } else {
-                self.tracked_pattern_hash = None;
-            }
-        }
-
-        if !row_hashes.is_empty() {
-            self.selected = self.selected.min(row_hashes.len() - 1);
-            self.tracked_pattern_hash = Some(row_hashes[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_pattern_hash = None;
-        }
-
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_pattern_hash,
+            &mut None,
+            &mut self.ratatui_state,
+            row_hashes,
+        );
     }
 
     /// Accumulate errors from a snapshot into the current hour buffer.
@@ -229,35 +241,14 @@ impl PgActivityTabState {
         self.sort_ascending = !self.sort_ascending;
     }
 
-    /// Resolves selection after filtering/sorting: consumes navigate_to,
-    /// applies tracked PID, clamps selected index, and syncs ratatui state.
-    /// `row_pids` is the ordered list of PIDs in the current filtered/sorted view.
     pub fn resolve_selection(&mut self, row_pids: &[i32]) {
-        // Consume navigate_to_pid
-        if let Some(target_pid) = self.navigate_to_pid.take() {
-            self.tracked_pid = Some(target_pid);
-        }
-
-        // If tracked PID is set, find and select the row with that PID
-        if let Some(tracked_pid) = self.tracked_pid {
-            if let Some(idx) = row_pids.iter().position(|&pid| pid == tracked_pid) {
-                self.selected = idx;
-            } else {
-                self.tracked_pid = None;
-            }
-        }
-
-        // Clamp selected index and update tracked PID
-        if !row_pids.is_empty() {
-            self.selected = self.selected.min(row_pids.len() - 1);
-            self.tracked_pid = Some(row_pids[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_pid = None;
-        }
-
-        // Sync ratatui TableState for auto-scrolling
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_pid,
+            &mut self.navigate_to_pid,
+            &mut self.ratatui_state,
+            row_pids,
+        );
     }
 }
 
@@ -316,35 +307,14 @@ impl PgStatementsTabState {
         self.sort_ascending = !self.sort_ascending;
     }
 
-    /// Resolves selection after filtering/sorting: consumes navigate_to,
-    /// applies tracked queryid, clamps selected index, and syncs ratatui state.
-    /// `row_queryids` is the ordered list of queryids in the current filtered/sorted view.
     pub fn resolve_selection(&mut self, row_queryids: &[i64]) {
-        // Consume navigate_to_queryid
-        if let Some(target_qid) = self.navigate_to_queryid.take() {
-            self.tracked_queryid = Some(target_qid);
-        }
-
-        // If tracked queryid is set, find and select the row
-        if let Some(tracked_qid) = self.tracked_queryid {
-            if let Some(idx) = row_queryids.iter().position(|&qid| qid == tracked_qid) {
-                self.selected = idx;
-            } else {
-                self.tracked_queryid = None;
-            }
-        }
-
-        // Clamp selection and update tracked queryid
-        if !row_queryids.is_empty() {
-            self.selected = self.selected.min(row_queryids.len() - 1);
-            self.tracked_queryid = Some(row_queryids[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_queryid = None;
-        }
-
-        // Sync ratatui TableState for auto-scrolling
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_queryid,
+            &mut self.navigate_to_queryid,
+            &mut self.ratatui_state,
+            row_queryids,
+        );
     }
 }
 
@@ -406,23 +376,13 @@ impl PgStorePlansTabState {
     }
 
     pub fn resolve_selection(&mut self, row_planids: &[i64]) {
-        if let Some(tracked) = self.tracked_planid {
-            if let Some(idx) = row_planids.iter().position(|&pid| pid == tracked) {
-                self.selected = idx;
-            } else {
-                self.tracked_planid = None;
-            }
-        }
-
-        if !row_planids.is_empty() {
-            self.selected = self.selected.min(row_planids.len() - 1);
-            self.tracked_planid = Some(row_planids[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_planid = None;
-        }
-
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_planid,
+            &mut None,
+            &mut self.ratatui_state,
+            row_planids,
+        );
     }
 }
 
@@ -483,25 +443,14 @@ impl PgTablesTabState {
         self.sort_ascending = !self.sort_ascending;
     }
 
-    /// Resolves selection after filtering/sorting.
     pub fn resolve_selection(&mut self, row_relids: &[u32]) {
-        if let Some(tracked) = self.tracked_relid {
-            if let Some(idx) = row_relids.iter().position(|&r| r == tracked) {
-                self.selected = idx;
-            } else {
-                self.tracked_relid = None;
-            }
-        }
-
-        if !row_relids.is_empty() {
-            self.selected = self.selected.min(row_relids.len() - 1);
-            self.tracked_relid = Some(row_relids[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_relid = None;
-        }
-
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_relid,
+            &mut None,
+            &mut self.ratatui_state,
+            row_relids,
+        );
     }
 }
 
@@ -567,29 +516,13 @@ impl PgIndexesTabState {
         self.sort_ascending = !self.sort_ascending;
     }
 
-    /// Resolves selection after filtering/sorting.
     pub fn resolve_selection(&mut self, row_indexrelids: &[u32]) {
-        // Consume navigate_to
-        if let Some(target) = self.navigate_to_indexrelid.take() {
-            self.tracked_indexrelid = Some(target);
-        }
-
-        if let Some(tracked) = self.tracked_indexrelid {
-            if let Some(idx) = row_indexrelids.iter().position(|&r| r == tracked) {
-                self.selected = idx;
-            } else {
-                self.tracked_indexrelid = None;
-            }
-        }
-
-        if !row_indexrelids.is_empty() {
-            self.selected = self.selected.min(row_indexrelids.len() - 1);
-            self.tracked_indexrelid = Some(row_indexrelids[self.selected]);
-        } else {
-            self.selected = 0;
-            self.tracked_indexrelid = None;
-        }
-
-        self.ratatui_state.select(Some(self.selected));
+        resolve_selection_by_id(
+            &mut self.selected,
+            &mut self.tracked_indexrelid,
+            &mut self.navigate_to_indexrelid,
+            &mut self.ratatui_state,
+            row_indexrelids,
+        );
     }
 }
