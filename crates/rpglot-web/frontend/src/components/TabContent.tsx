@@ -96,10 +96,10 @@ export function TabContent({
     ],
   );
 
-  // Clear column filter preset when user manually switches view
+  // Preserve column filter across view switches — filterable columns
+  // (database, user, query) are shared across all views within a tab.
   const handleViewChangeWithReset = useCallback(
     (view: string) => {
-      setColumnFilterPreset(null);
       handleViewChange(view);
     },
     [handleViewChange],
