@@ -241,12 +241,12 @@ impl PostgresCollector {
 
         let connection_string = if password.is_empty() {
             format!(
-                "host={} port={} user={} dbname={} application_name=rpglot",
+                "host={} port={} user={} dbname={} application_name=rpglot options='-c statement_timeout=1000'",
                 host, port, user, database
             )
         } else {
             format!(
-                "host={} port={} user={} password={} dbname={} application_name=rpglot",
+                "host={} port={} user={} password={} dbname={} application_name=rpglot options='-c statement_timeout=1000'",
                 host, port, user, password, database
             )
         };
